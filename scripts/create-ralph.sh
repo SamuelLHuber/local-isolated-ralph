@@ -3,25 +3,32 @@
 # Create a new Ralph VM instance using NixOS
 # Usage: ./create-ralph.sh <name> [cpu] [memory_gb] [disk_gb]
 #
+# Options:
+#   --local-build    Build image locally instead of downloading
+#
 # Examples:
 #   ./create-ralph.sh ralph-1              # Default: 4 CPU, 6GB RAM, 30GB disk
 #   ./create-ralph.sh ralph-2 2 4 20       # Light: 2 CPU, 4GB RAM, 20GB disk
-#   ./create-ralph.sh ralph-3 6 8 50       # Heavy: 6 CPU, 8GB RAM, 50GB disk
+#   ./create-ralph.sh --local-build ralph-3 6 8 50  # Build locally
 #
-# This script uses the NixOS image built from nix/flake.nix.
-# All tools (claude, jj, git, etc.) are pre-installed via Nix.
-#
-# After VM creation, this script will copy to the VM:
-#   - ~/.claude (agent auth)
-#   - ~/.gitconfig, ~/.ssh, ~/.config/gh (git/GitHub credentials)
-#   - ralph-loop.sh to ~/ralph/
+# Environment:
+#   RALPH_REPO       GitHub repo for downloading images (owner/repo format)
+#                    Auto-detected from git remote if not set
+#   RALPH_CACHE_DIR  Where to cache downloaded images (default: ~/.cache/ralph)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NIX_DIR="$(dirname "$SCRIPT_DIR")/nix"
+CACHE_DIR="${RALPH_CACHE_DIR:-$HOME/.cache/ralph}"
 
-NAME="${1:?Usage: $0 <name> [cpu] [memory_gb] [disk_gb]}"
+LOCAL_BUILD=false
+if [[ "${1:-}" == "--local-build" ]]; then
+  LOCAL_BUILD=true
+  shift
+fi
+
+NAME="${1:?Usage: $0 [--local-build] <name> [cpu] [memory_gb] [disk_gb]}"
 CPU="${2:-4}"
 MEMORY="${3:-6}"
 DISK="${4:-30}"
@@ -39,11 +46,109 @@ detect_arch() {
   esac
 }
 
-SYSTEM=$(detect_arch)
+detect_github_repo() {
+  if [[ -n "${RALPH_REPO:-}" ]]; then
+    echo "$RALPH_REPO"
+    return
+  fi
+
+  local remote_url
+  remote_url=$(git -C "$SCRIPT_DIR" remote get-url origin 2>/dev/null || echo "")
+
+  if [[ -z "$remote_url" ]]; then
+    echo ""
+    return
+  fi
+
+  # Extract owner/repo from various URL formats
+  if [[ "$remote_url" =~ github\.com[:/]([^/]+/[^/.]+)(\.git)?$ ]]; then
+    echo "${BASH_REMATCH[1]}"
+  else
+    echo ""
+  fi
+}
+
+sha256_check() {
+  if command -v sha256sum &>/dev/null; then
+    sha256sum "$@"
+  else
+    shasum -a 256 "$@"
+  fi
+}
+
+download_image() {
+  local arch="$1"
+  local repo="$2"
+  local image_name="ralph-${arch}.qcow2"
+  local cached_image="$CACHE_DIR/$image_name"
+  local checksum_file="$CACHE_DIR/${image_name}.sha256"
+
+  mkdir -p "$CACHE_DIR"
+
+  local download_url="https://github.com/${repo}/releases/latest/download/${image_name}"
+  local checksum_url="https://github.com/${repo}/releases/latest/download/${image_name}.sha256"
+
+  echo ">>> Checking for cached image..."
+  if [[ -f "$cached_image" && -f "$checksum_file" ]]; then
+    echo "    Found cached image, verifying checksum..."
+    if (cd "$CACHE_DIR" && sha256_check -c "${image_name}.sha256") &>/dev/null; then
+      echo "    Checksum valid, using cached image."
+      echo "$cached_image"
+      return 0
+    else
+      echo "    Checksum mismatch, re-downloading..."
+      rm -f "$cached_image" "$checksum_file"
+    fi
+  fi
+
+  echo ">>> Downloading NixOS image from GitHub Releases..."
+  echo "    URL: $download_url"
+
+  if ! curl -fSL --progress-bar -o "$cached_image" "$download_url"; then
+    echo "Error: Failed to download image from $download_url" >&2
+    echo "" >&2
+    echo "Possible causes:" >&2
+    echo "  - Repository has no releases yet (push to main to trigger build)" >&2
+    echo "  - Repository is private (set up authentication)" >&2
+    echo "  - Network issue" >&2
+    echo "" >&2
+    echo "To build locally instead: $0 --local-build $NAME $CPU $MEMORY $DISK" >&2
+    rm -f "$cached_image"
+    exit 1
+  fi
+
+  echo ">>> Downloading checksum..."
+  if curl -fSL -o "$checksum_file" "$checksum_url" 2>/dev/null; then
+    echo ">>> Verifying checksum..."
+    if ! (cd "$CACHE_DIR" && sha256_check -c "${image_name}.sha256"); then
+      echo "Error: Checksum verification failed!" >&2
+      rm -f "$cached_image" "$checksum_file"
+      exit 1
+    fi
+  else
+    echo "    Warning: No checksum file available, skipping verification"
+  fi
+
+  echo "$cached_image"
+}
 
 build_nixos_image() {
   local format="$1"
   local image_path="${NIX_DIR}/result"
+
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    echo ">>> Checking for Linux builder (required for local builds on macOS)..."
+    if ! nix build --dry-run --expr '(import <nixpkgs> { system = "x86_64-linux"; }).hello' 2>/dev/null; then
+      echo "Error: No Linux builder available for local builds on macOS." >&2
+      echo "" >&2
+      echo "Options:" >&2
+      echo "  1. Download pre-built image (remove --local-build flag)" >&2
+      echo "  2. Set up a Linux builder: nix run nixpkgs#darwin.linux-builder" >&2
+      echo "" >&2
+      echo "See SETUP-MACOS.md for details." >&2
+      exit 1
+    fi
+  fi
 
   if [[ ! -L "$image_path" ]] || [[ ! -e "$image_path" ]]; then
     echo ">>> Building NixOS image ($format for $SYSTEM)..."
@@ -54,18 +159,36 @@ build_nixos_image() {
   fi
 
   local qcow_file
-  qcow_file=$(find "$image_path" -name "*.qcow2" -o -name "nixos.qcow2" 2>/dev/null | head -1)
+  qcow_file=$(find "$image_path" -name "*.qcow2" 2>/dev/null | head -1)
   if [[ -z "$qcow_file" ]]; then
     qcow_file="$image_path/nixos.qcow2"
   fi
 
   if [[ ! -f "$qcow_file" ]]; then
     echo "Error: Could not find QCOW2 image in $image_path" >&2
-    echo "Contents: $(ls -la "$image_path" 2>/dev/null || echo 'directory not found')" >&2
     exit 1
   fi
 
   echo "$qcow_file"
+}
+
+get_image() {
+  if [[ "$LOCAL_BUILD" == "true" ]]; then
+    build_nixos_image "qcow"
+    return
+  fi
+
+  local repo
+  repo=$(detect_github_repo)
+
+  if [[ -z "$repo" ]]; then
+    echo ">>> No GitHub repository configured, falling back to local build..."
+    echo "    (Set RALPH_REPO=owner/repo or add a git remote to enable downloads)"
+    build_nixos_image "qcow"
+    return
+  fi
+
+  download_image "$SYSTEM" "$repo"
 }
 
 wait_for_ssh() {
@@ -199,6 +322,7 @@ copy_credentials_lima() {
   echo "Credentials copied."
 }
 
+# Detect OS
 case "$(uname -s)" in
   Darwin) OS="macos" ;;
   Linux)  OS="linux" ;;
@@ -208,39 +332,13 @@ case "$(uname -s)" in
     ;;
 esac
 
-check_linux_builder() {
-  if ! nix build --dry-run --expr '(import <nixpkgs> { system = "x86_64-linux"; }).hello' 2>/dev/null; then
-    echo "Error: No Linux builder available."
-    echo ""
-    echo "macOS cannot build NixOS images natively. You need a Linux builder."
-    echo ""
-    echo "Options:"
-    echo "  1. Use a remote Linux machine:"
-    echo "     Add to ~/.config/nix/nix.conf:"
-    echo "       builders = ssh://user@linux-host x86_64-linux"
-    echo ""
-    echo "  2. Use Docker-based linux-builder (recommended):"
-    echo "     nix run nixpkgs#darwin.linux-builder"
-    echo "     Then add to ~/.config/nix/nix.conf:"
-    echo "       builders = ssh-ng://linux-builder aarch64-linux,x86_64-linux"
-    echo "       extra-trusted-users = \$(whoami)"
-    echo ""
-    echo "  3. Use nix-darwin with linux-builder module"
-    echo ""
-    echo "See SETUP-MACOS.md Section 2 for details."
-    exit 1
-  fi
-}
-
-if [[ "$OS" == "macos" ]]; then
-  echo "Checking for Linux builder (required on macOS)..."
-  check_linux_builder
-  echo "Linux builder available."
-  echo ""
-fi
+SYSTEM=$(detect_arch)
 
 echo "Creating Ralph VM: $NAME (CPU: $CPU, RAM: ${MEMORY}GB, Disk: ${DISK}GB)"
-echo "Using NixOS ($SYSTEM)"
+echo "Architecture: $SYSTEM"
+
+QCOW_IMAGE=$(get_image)
+echo ">>> Using NixOS image: $QCOW_IMAGE"
 
 if [[ "$OS" == "macos" ]]; then
   if ! command -v limactl &>/dev/null; then
@@ -252,9 +350,6 @@ if [[ "$OS" == "macos" ]]; then
     echo "Error: VM '$NAME' already exists. Delete it first: limactl delete $NAME"
     exit 1
   fi
-
-  QCOW_IMAGE=$(build_nixos_image "qcow")
-  echo ">>> Using NixOS image: $QCOW_IMAGE"
 
   LIMA_CONFIG=$(mktemp)
   cat > "$LIMA_CONFIG" << EOF
@@ -331,9 +426,6 @@ else
     echo "  virsh destroy $NAME 2>/dev/null; virsh undefine $NAME --remove-all-storage"
     exit 1
   fi
-
-  QCOW_IMAGE=$(build_nixos_image "qcow")
-  echo ">>> Using NixOS image: $QCOW_IMAGE"
 
   VM_DIR="${HOME}/vms/ralph"
   mkdir -p "$VM_DIR"

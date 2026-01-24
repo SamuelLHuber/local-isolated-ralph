@@ -1,0 +1,108 @@
+name: Build NixOS Images
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'nix/**'
+      - '.github/workflows/build-images.yml'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'nix/**'
+  workflow_dispatch:
+  release:
+    types: [created]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64-linux
+            runner: ubuntu-latest
+          - arch: aarch64-linux
+            runner: ubuntu-latest
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU (for aarch64 builds)
+        if: matrix.arch == 'aarch64-linux'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            extra-platforms = aarch64-linux
+
+      - name: Setup Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Build QCOW2 image
+        run: |
+          cd nix
+          nix build .#packages.${{ matrix.arch }}.qcow --print-build-logs
+
+          mkdir -p ../output
+          cp -L result/*.qcow2 ../output/ralph-${{ matrix.arch }}.qcow2 || \
+          cp -L result/nixos.qcow2 ../output/ralph-${{ matrix.arch }}.qcow2
+
+          ls -lh ../output/
+
+      - name: Generate checksum
+        run: |
+          cd output
+          sha256sum ralph-${{ matrix.arch }}.qcow2 > ralph-${{ matrix.arch }}.qcow2.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ralph-${{ matrix.arch }}
+          path: output/ralph-${{ matrix.arch }}.*
+          retention-days: 7
+
+  release:
+    needs: build
+    if: github.event_name == 'release' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lhR artifacts/
+
+      - name: Upload to Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/*
+
+      - name: Update latest release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: latest
+          name: Latest Build
+          prerelease: true
+          files: artifacts/*
+          body: |
+            Automated build from main branch.
+
+            Commit: ${{ github.sha }}
+
+            Download the image for your architecture:
+            - `ralph-x86_64-linux.qcow2` - Intel/AMD (most Linux servers, Intel Macs)
+            - `ralph-aarch64-linux.qcow2` - ARM64 (Apple Silicon Macs, ARM servers)
