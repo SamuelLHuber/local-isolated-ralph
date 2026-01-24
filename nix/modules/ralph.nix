@@ -131,9 +131,9 @@ in {
       # Agent CLI installer script
       installAgentCLIs
 
-      # Browser automation
+      # Browser automation (playwright-driver.browsers only supports x86_64)
       (mkIf cfg.browser.enable chromium)
-      (mkIf cfg.browser.enable playwright-driver.browsers)
+      (mkIf (cfg.browser.enable && pkgs.stdenv.hostPlatform.isx86_64) playwright-driver.browsers)
     ];
 
     # Ralph user account

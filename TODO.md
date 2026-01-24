@@ -93,10 +93,14 @@
 - [x] tmux-based visibility
 - [x] NixOS-based VM images (declarative, reproducible)
 - [x] All scripts use Nix (no imperative apt-get/nvm setup)
+- [x] Fix playwright-browsers x86_64-only issue in ralph.nix
+- [x] Document Linux builder requirement for macOS (SETUP-MACOS.md)
+- [x] Copy verification script to VM (setup-base-vm.sh → ~/ralph/verify.sh)
 
 ## Known Issues
 
-- Scripts not yet tested on real VMs
+- macOS requires a Linux builder to build NixOS images (see SETUP-MACOS.md Section 2)
+- Scripts not yet tested on real VMs (blocked by Linux builder setup on macOS)
 - `host.lima.internal` vs `192.168.122.1` (libvirt) - scripts handle this per-platform
 
 ## Questions to Answer

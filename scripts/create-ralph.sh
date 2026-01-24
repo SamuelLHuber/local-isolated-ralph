@@ -127,11 +127,15 @@ copy_credentials() {
     scp $ssh_opts -r ~/.config/gh "$user@$host:~/.config/" 2>/dev/null || echo "    Warning: Failed to copy ~/.config/gh"
   fi
 
-  echo "    Copying ralph-loop.sh..."
+  echo "    Copying ralph scripts..."
   ssh $ssh_opts "$user@$host" "mkdir -p ~/ralph" 2>/dev/null || true
   if [[ -f "$SCRIPT_DIR/ralph-loop.sh" ]]; then
     scp $ssh_opts "$SCRIPT_DIR/ralph-loop.sh" "$user@$host:~/ralph/loop.sh" 2>/dev/null || echo "    Warning: Failed to copy ralph-loop.sh"
     ssh $ssh_opts "$user@$host" "chmod +x ~/ralph/loop.sh" 2>/dev/null || true
+  fi
+  if [[ -f "$SCRIPT_DIR/setup-base-vm.sh" ]]; then
+    scp $ssh_opts "$SCRIPT_DIR/setup-base-vm.sh" "$user@$host:~/ralph/verify.sh" 2>/dev/null || echo "    Warning: Failed to copy setup-base-vm.sh"
+    ssh $ssh_opts "$user@$host" "chmod +x ~/ralph/verify.sh" 2>/dev/null || true
   fi
 
   echo "Credentials copied."
@@ -181,11 +185,15 @@ copy_credentials_lima() {
     tar -C ~/.config -cf - gh 2>/dev/null | limactl shell "$vm_name" sudo -u "$user" tar -C "/home/$user/.config" -xf - 2>/dev/null || echo "    Warning: Failed to copy ~/.config/gh"
   fi
 
-  echo "    Copying ralph-loop.sh..."
+  echo "    Copying ralph scripts..."
   limactl shell "$vm_name" sudo -u "$user" mkdir -p "/home/$user/ralph" 2>/dev/null || true
   if [[ -f "$SCRIPT_DIR/ralph-loop.sh" ]]; then
     cat "$SCRIPT_DIR/ralph-loop.sh" | limactl shell "$vm_name" sudo -u "$user" tee "/home/$user/ralph/loop.sh" > /dev/null 2>&1 || true
     limactl shell "$vm_name" sudo -u "$user" chmod +x "/home/$user/ralph/loop.sh" 2>/dev/null || true
+  fi
+  if [[ -f "$SCRIPT_DIR/setup-base-vm.sh" ]]; then
+    cat "$SCRIPT_DIR/setup-base-vm.sh" | limactl shell "$vm_name" sudo -u "$user" tee "/home/$user/ralph/verify.sh" > /dev/null 2>&1 || true
+    limactl shell "$vm_name" sudo -u "$user" chmod +x "/home/$user/ralph/verify.sh" 2>/dev/null || true
   fi
 
   echo "Credentials copied."

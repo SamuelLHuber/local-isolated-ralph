@@ -30,7 +30,77 @@ nix --version
 limactl --version
 ```
 
-## 2. Create Your First Ralph VM
+## 2. Set Up a Linux Builder
+
+Building NixOS images on macOS requires a Linux builder VM. Without this, `nix build` cannot compile Linux packages.
+
+### Option A: Use nix-darwin (Recommended if you use nix-darwin)
+
+Add to your `darwin-configuration.nix`:
+
+```nix
+nix.linux-builder = {
+  enable = true;
+  ephemeral = true;
+  maxJobs = 4;
+  config = {
+    virtualisation.cores = 4;
+    virtualisation.memorySize = 8192;
+  };
+};
+```
+
+Then rebuild: `darwin-rebuild switch`
+
+### Option B: Standalone Linux Builder VM
+
+If you don't use nix-darwin, create a dedicated builder VM with Nix installed:
+
+```bash
+# Create a Linux VM (uses Ubuntu by default)
+limactl create --name=nix-builder template://default --cpus=4 --memory=8
+limactl start nix-builder
+
+# Install Nix inside the VM
+limactl shell nix-builder -- sh -c 'curl --proto "=https" --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install'
+
+# The VM needs to be accessible via SSH. Get the port:
+BUILDER_PORT=$(limactl list nix-builder --format '{{.SSHLocalPort}}')
+echo "Builder SSH port: $BUILDER_PORT"
+
+# Add builder to Nix config (replace PORT with actual port)
+cat >> ~/.config/nix/nix.conf << EOF
+builders = ssh://127.0.0.1:${BUILDER_PORT} aarch64-linux - 4 1 big-parallel
+builders-use-substitutes = true
+EOF
+
+# Restart nix-daemon to pick up new config
+sudo launchctl kickstart -k system/org.nixos.nix-daemon
+```
+
+### Option C: Use a Remote Linux Machine
+
+If you have a Linux server available:
+
+```bash
+# Add to ~/.config/nix/nix.conf
+cat >> ~/.config/nix/nix.conf << EOF
+builders = ssh://user@linux-host aarch64-linux /path/to/ssh-key 4 1 big-parallel,kvm
+builders-use-substitutes = true
+EOF
+
+# Restart nix-daemon
+sudo launchctl kickstart -k system/org.nixos.nix-daemon
+```
+
+### Verify Builder Works
+
+```bash
+# Test that Linux builds work
+nix build --system aarch64-linux nixpkgs#hello
+```
+
+## 3. Create Your First Ralph VM
 
 The `create-ralph.sh` script builds a NixOS image (if needed) and creates a VM with all tools pre-installed.
 
@@ -55,7 +125,7 @@ limactl list                  # Shows all VMs
 limactl info ralph-1          # Details of specific VM
 ```
 
-## 3. Access the VM
+## 4. Access the VM
 
 ```bash
 # Shell into VM (as default user)
@@ -83,12 +153,12 @@ If needed, manually trigger installation:
 limactl shell ralph-1 sudo -u ralph install-agent-clis
 ```
 
-## 4. Verify Setup
+## 5. Verify Setup
 
 Run the verification script inside the VM:
 
 ```bash
-limactl shell ralph-1 sudo -u ralph bash /home/ralph/scripts/setup-base-vm.sh
+limactl shell ralph-1 sudo -u ralph ~/ralph/verify.sh
 ```
 
 This checks:
@@ -96,7 +166,7 @@ This checks:
 - Credentials copied (claude auth, git config, ssh keys)
 - Ralph loop script present
 
-## 5. Configure Networking (VM → Host)
+## 6. Configure Networking (VM → Host)
 
 Inside the VM, the host is reachable at `host.lima.internal`:
 
@@ -110,7 +180,7 @@ curl http://host.lima.internal:3100/ready        # Loki
 
 Environment variables are pre-configured in the NixOS image.
 
-## 6. Running Multiple Ralphs in Parallel
+## 7. Running Multiple Ralphs in Parallel
 
 ### Create a fleet of VMs
 
@@ -142,7 +212,7 @@ limactl shell ralph-2 -- -L 9223:localhost:9222 -N &
 wait
 ```
 
-## 7. Cleanup & Teardown
+## 8. Cleanup & Teardown
 
 ### Stop VMs (preserves state)
 
@@ -176,6 +246,19 @@ limactl delete ralph-1
 | Rebuild NixOS image | `cd nix && rm -f result && nix build .#qcow` |
 
 ## Troubleshooting
+
+### NixOS image build fails
+
+If you see errors like `required system 'aarch64-linux' not available`:
+
+```bash
+# You need a Linux builder - see Section 2
+# Check if builder is configured
+nix show-config | grep builders
+
+# Test with a simple build
+nix build --system aarch64-linux nixpkgs#hello
+```
 
 ### VM won't start
 
