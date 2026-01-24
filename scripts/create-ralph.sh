@@ -57,12 +57,18 @@ copy_auth_to_vm_linux() {
     echo "Note: ~/.gitconfig not found - git identity will need manual configuration"
   fi
 
-  if [[ -d ~/.ssh ]]; then
-    echo "Copying ~/.ssh..."
-    scp $ssh_opts -r ~/.ssh "dev@$vm_ip:~/" 2>/dev/null || echo "Warning: Failed to copy ~/.ssh"
-    ssh $ssh_opts "dev@$vm_ip" "chmod 700 ~/.ssh && chmod 600 ~/.ssh/* 2>/dev/null" || true
-  else
-    echo "Note: ~/.ssh not found - GitHub SSH access will need manual configuration"
+  local has_keys=false
+  for keyfile in ~/.ssh/id_ed25519 ~/.ssh/id_rsa; do
+    if [[ -f "$keyfile" ]]; then
+      has_keys=true
+      echo "Copying SSH key: $(basename "$keyfile")..."
+      ssh $ssh_opts "dev@$vm_ip" "mkdir -p ~/.ssh && chmod 700 ~/.ssh" 2>/dev/null || true
+      scp $ssh_opts "$keyfile" "$keyfile.pub" "dev@$vm_ip:~/.ssh/" 2>/dev/null || echo "Warning: Failed to copy $keyfile"
+      ssh $ssh_opts "dev@$vm_ip" "chmod 600 ~/.ssh/id_* 2>/dev/null" || true
+    fi
+  done
+  if [[ "$has_keys" == "false" ]]; then
+    echo "Note: No SSH keys found - GitHub SSH access will need manual configuration"
   fi
 
   if [[ -d ~/.config/gh ]]; then
@@ -112,12 +118,19 @@ copy_auth_to_vm_colima() {
     echo "Note: ~/.gitconfig not found - git identity will need manual configuration"
   fi
 
-  if [[ -d ~/.ssh ]]; then
-    echo "Copying ~/.ssh..."
-    tar -C ~ -cf - .ssh | colima ssh -p "$profile" -- tar -C ~ -xf - 2>/dev/null || echo "Warning: Failed to copy ~/.ssh"
-    colima ssh -p "$profile" -- "chmod 700 ~/.ssh && chmod 600 ~/.ssh/* 2>/dev/null" || true
-  else
-    echo "Note: ~/.ssh not found - GitHub SSH access will need manual configuration"
+  local has_keys=false
+  for keyfile in ~/.ssh/id_ed25519 ~/.ssh/id_rsa; do
+    if [[ -f "$keyfile" ]]; then
+      has_keys=true
+      local keyname=$(basename "$keyfile")
+      echo "Copying SSH key: $keyname..."
+      colima ssh -p "$profile" -- "mkdir -p ~/.ssh && chmod 700 ~/.ssh" 2>/dev/null || true
+      cat "$keyfile" | colima ssh -p "$profile" -- "cat > ~/.ssh/$keyname && chmod 600 ~/.ssh/$keyname" 2>/dev/null || echo "Warning: Failed to copy $keyname"
+      cat "$keyfile.pub" | colima ssh -p "$profile" -- "cat > ~/.ssh/$keyname.pub" 2>/dev/null || true
+    fi
+  done
+  if [[ "$has_keys" == "false" ]]; then
+    echo "Note: No SSH keys found - GitHub SSH access will need manual configuration"
   fi
 
   if [[ -d ~/.config/gh ]]; then
