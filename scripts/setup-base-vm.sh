@@ -1,206 +1,153 @@
 #!/usr/bin/env bash
 #
-# Setup script for Ralph base VM
-# Run inside a fresh VM to install all tools and configure for autonomous agent work
+# Verify Ralph VM setup
+# Run inside the VM to verify all tools are installed correctly
 #
-# Prerequisites:
-#   - Fresh Ubuntu VM (created by create-ralph.sh)
-#   - Auth folders should already be copied by create-ralph.sh
-#
-# After running this script, snapshot the VM as a template for fast cloning
+# This script is for verification only - the NixOS image includes all tools.
+# If something is missing, rebuild the image: cd nix && nix build .#qcow --rebuild
 #
 set -euo pipefail
 
-echo "=== Ralph Base VM Setup ==="
+echo "=== Ralph VM Verification ==="
 echo ""
 
-# Install system packages
-echo ">>> Installing system packages..."
-sudo apt-get update
-sudo apt-get install -y \
-  git \
-  curl \
-  wget \
-  jq \
-  tmux \
-  docker.io \
-  build-essential \
-  inotify-tools \
-  unzip
+ERRORS=0
 
-# Docker setup
-echo ">>> Configuring Docker..."
-sudo systemctl enable --now docker
-sudo usermod -aG docker $USER
+check_command() {
+  local cmd="$1"
+  local name="${2:-$1}"
+  if command -v "$cmd" &>/dev/null; then
+    local version
+    version=$("$cmd" --version 2>/dev/null | head -1 || echo "installed")
+    echo "[OK] $name: $version"
+  else
+    echo "[MISSING] $name"
+    ERRORS=$((ERRORS + 1))
+  fi
+}
 
-# Node.js via nvm
-echo ">>> Installing Node.js..."
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-export NVM_DIR="$HOME/.nvm"
-source "$NVM_DIR/nvm.sh"
-nvm install 20
+check_path_command() {
+  local path="$1"
+  local name="$2"
+  if [[ -x "$path" ]]; then
+    echo "[OK] $name: found at $path"
+  elif command -v "$name" &>/dev/null; then
+    echo "[OK] $name: $(command -v "$name")"
+  else
+    echo "[MISSING] $name (expected at $path)"
+    ERRORS=$((ERRORS + 1))
+  fi
+}
 
-# GitHub CLI
-echo ">>> Installing GitHub CLI..."
-curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-sudo apt-get update
-sudo apt-get install -y gh
+echo ">>> Core Tools"
+check_command git
+check_command jj "jujutsu"
+check_command tmux
+check_command jq
+check_command curl
+check_command wget
+check_command rg "ripgrep"
+check_command fd
+check_command htop
 
-# Jujutsu (jj) - recommended for parallel agent work
-echo ">>> Installing Jujutsu (jj)..."
-JJ_VERSION="0.24.0"
-ARCH=$(uname -m)
-case "$ARCH" in
-  x86_64)  JJ_ARCH="x86_64-unknown-linux-musl" ;;
-  aarch64) JJ_ARCH="aarch64-unknown-linux-musl" ;;
-  *)
-    echo "Note: Unsupported architecture $ARCH for jj, skipping..."
-    JJ_ARCH=""
-    ;;
-esac
-if [[ -n "$JJ_ARCH" ]]; then
-  curl -fsSL "https://github.com/martinvonz/jj/releases/download/v${JJ_VERSION}/jj-v${JJ_VERSION}-${JJ_ARCH}.tar.gz" | tar xz -C /tmp
-  sudo mv /tmp/jj /usr/local/bin/
-  jj version || echo "Note: jj installation may have failed, continuing..."
+echo ""
+echo ">>> Runtimes"
+check_command node "Node.js"
+check_command bun
+
+echo ""
+echo ">>> Agent CLIs"
+check_path_command "$HOME/.bun/bin/claude" "claude"
+check_path_command "$HOME/.bun/bin/codex" "codex"
+check_path_command "$HOME/.bun/bin/opencode" "opencode"
+
+if [[ ! -x "$HOME/.bun/bin/claude" ]]; then
+  echo ""
+  echo "Agent CLIs not found. Running install-agent-clis..."
+  if command -v install-agent-clis &>/dev/null; then
+    install-agent-clis
+    echo ""
+    echo "Re-checking agent CLIs..."
+    check_path_command "$HOME/.bun/bin/claude" "claude"
+    check_path_command "$HOME/.bun/bin/codex" "codex"
+    check_path_command "$HOME/.bun/bin/opencode" "opencode"
+  else
+    echo "[ERROR] install-agent-clis command not found"
+    ERRORS=$((ERRORS + 1))
+  fi
 fi
 
-# Claude Code CLI
-echo ">>> Installing Claude Code CLI..."
-npm install -g @anthropic-ai/claude-code
-
-# Codex CLI (OpenAI)
-echo ">>> Installing Codex CLI..."
-npm install -g @openai/codex || echo "Note: Codex CLI installation failed, continuing..."
-
-# Playwright + Chromium for browser automation
-echo ">>> Installing Playwright + Chromium..."
-npm install -g playwright
-npx playwright install --with-deps chromium
-
-# Create Ralph directories
-echo ">>> Setting up Ralph directories..."
-mkdir -p ~/ralph/state
-mkdir -p ~/work
-
-# Copy ralph-loop.sh to ~/ralph/
-# This will be done by create-ralph.sh, but create a placeholder
-cat > ~/ralph/loop.sh << 'LOOP_EOF'
-#!/usr/bin/env bash
-# Placeholder - real script should be copied from host
-echo "Error: ralph-loop.sh not installed. Copy from host."
-exit 1
-LOOP_EOF
-chmod +x ~/ralph/loop.sh
-
-# Configure Codex for autonomous mode
-echo ">>> Configuring Codex for autonomous mode..."
-mkdir -p ~/.codex
-cat > ~/.codex/config.toml << 'EOF'
-approval_policy = "never"
-sandbox_mode = "danger-full-access"
-EOF
-
-# Git configuration defaults (user identity should be copied from host)
-echo ">>> Setting up git configuration..."
-git config --global init.defaultBranch main
-git config --global pull.rebase true
-git config --global push.autoSetupRemote true
-
-# Add Ralph helpers to bashrc
-echo ">>> Adding Ralph helpers to .bashrc..."
-cat >> ~/.bashrc << 'BASHRC_EOF'
-
-# ===========================================
-# Ralph Agent Configuration
-# ===========================================
-
-# Host telemetry endpoints
-export HOST_ADDR="${HOST_ADDR:-host.lima.internal}"
-export OTEL_EXPORTER_OTLP_ENDPOINT="http://${HOST_ADDR}:4317"
-export LOKI_URL="http://${HOST_ADDR}:3100"
-
-# Ralph state
-export RALPH_STATE_DIR="${RALPH_STATE_DIR:-./state}"
-
-# Start Ralph loop
-ralph() {
-  ~/ralph/loop.sh "${1:-./PROMPT.md}" "${2:-./state}"
-}
-
-# Start Ralph in tmux session
-ralph-tmux() {
-  local session="${1:-ralph}"
-  local prompt="${2:-./PROMPT.md}"
-  tmux new-session -d -s "$session" "ralph '$prompt'; exec bash"
-  echo "Started Ralph in tmux session: $session"
-  echo "Attach with: tmux attach -t $session"
-}
-
-# Quick status check
-ralph-status() {
-  local state_dir="${RALPH_STATE_DIR:-./state}"
-  echo "Iteration: $(cat "$state_dir/iteration" 2>/dev/null || echo 'N/A')"
-  echo "Status:    $(cat "$state_dir/status" 2>/dev/null || echo 'N/A')"
-}
-BASHRC_EOF
-
-# Verify installations
 echo ""
-echo "=== Verifying installations ==="
-echo "Node.js: $(node --version 2>/dev/null || echo 'NOT INSTALLED')"
-echo "npm:     $(npm --version 2>/dev/null || echo 'NOT INSTALLED')"
-echo "Claude:  $(claude --version 2>/dev/null || echo 'NOT INSTALLED')"
-echo "gh:      $(gh --version 2>/dev/null | head -1 || echo 'NOT INSTALLED')"
-echo "jj:      $(jj version 2>/dev/null || echo 'NOT INSTALLED')"
-echo "Docker:  $(docker --version 2>/dev/null || echo 'NOT INSTALLED')"
-echo ""
+echo ">>> Services"
+if systemctl is-active --quiet docker 2>/dev/null; then
+  echo "[OK] Docker: running"
+else
+  echo "[WARN] Docker: not running (start with: sudo systemctl start docker)"
+fi
 
-# Check for auth and credentials
-echo "=== Checking credentials ==="
+if systemctl is-active --quiet sshd 2>/dev/null; then
+  echo "[OK] SSH: running"
+else
+  echo "[WARN] SSH: not running"
+fi
+
+echo ""
+echo ">>> Credentials"
+
 if [[ -d ~/.claude ]]; then
-  echo "Claude auth:   Found (~/.claude exists)"
+  if [[ -f ~/.claude/.credentials.json ]] || [[ -f ~/.claude/credentials.json ]]; then
+    echo "[OK] Claude auth: configured"
+  else
+    echo "[WARN] Claude auth: ~/.claude exists but no credentials found"
+  fi
 else
-  echo "Claude auth:   NOT FOUND - copy ~/.claude from host"
-fi
-
-if [[ -d ~/.codex ]]; then
-  echo "Codex auth:    Found (~/.codex exists)"
-else
-  echo "Codex auth:    Config created (API key may be needed)"
+  echo "[MISSING] Claude auth: ~/.claude not found (copy from host)"
 fi
 
 GIT_NAME=$(git config --global user.name 2>/dev/null || echo "")
 GIT_EMAIL=$(git config --global user.email 2>/dev/null || echo "")
 if [[ -n "$GIT_NAME" && -n "$GIT_EMAIL" ]]; then
-  echo "Git identity:  $GIT_NAME <$GIT_EMAIL>"
+  echo "[OK] Git identity: $GIT_NAME <$GIT_EMAIL>"
 else
-  echo "Git identity:  NOT CONFIGURED - copy ~/.gitconfig from host or run:"
-  echo "               git config --global user.name 'Your Name'"
-  echo "               git config --global user.email 'your@email.com'"
+  echo "[WARN] Git identity: not configured (copy ~/.gitconfig from host)"
 fi
 
-if gh auth status &>/dev/null; then
-  echo "GitHub CLI:    Authenticated"
+if gh auth status &>/dev/null 2>&1; then
+  echo "[OK] GitHub CLI: authenticated"
 else
-  echo "GitHub CLI:    NOT AUTHENTICATED - copy ~/.config/gh from host or run: gh auth login"
+  echo "[WARN] GitHub CLI: not authenticated (copy ~/.config/gh from host)"
 fi
 
-if [[ -f ~/.ssh/id_ed25519 || -f ~/.ssh/id_rsa ]]; then
-  echo "SSH keys:      Found"
+if [[ -f ~/.ssh/id_ed25519 ]] || [[ -f ~/.ssh/id_rsa ]]; then
+  echo "[OK] SSH keys: found"
 else
-  echo "SSH keys:      NOT FOUND - copy ~/.ssh from host for GitHub SSH access"
+  echo "[WARN] SSH keys: not found (copy from host for GitHub SSH access)"
 fi
 
 echo ""
-echo "=== Setup Complete ==="
+echo ">>> Ralph Loop"
+if [[ -x ~/ralph/loop.sh ]]; then
+  echo "[OK] ralph-loop.sh: ~/ralph/loop.sh"
+else
+  echo "[MISSING] ralph-loop.sh: ~/ralph/loop.sh not found (copy from host)"
+  ERRORS=$((ERRORS + 1))
+fi
+
 echo ""
-echo "Credentials should have been copied by create-ralph.sh."
-echo "If any are missing above, re-run create-ralph.sh or copy manually."
+echo ">>> Environment"
+echo "PATH includes ~/.bun/bin: $(echo "$PATH" | grep -q '.bun/bin' && echo 'yes' || echo 'no')"
+echo "RALPH_STATE_DIR: ${RALPH_STATE_DIR:-not set}"
+echo "BUN_INSTALL: ${BUN_INSTALL:-not set}"
+
 echo ""
-echo "Next steps:"
-echo "  1. Verify all credentials show as configured above"
-echo "  2. Snapshot this VM as a template for fast cloning"
-echo "  3. Log out and back in for group changes to take effect"
-echo ""
+echo "=== Summary ==="
+if [[ $ERRORS -eq 0 ]]; then
+  echo "All checks passed. VM is ready for use."
+  echo ""
+  echo "Quick start:"
+  echo "  cd /workspace"
+  echo "  ~/ralph/loop.sh ./PROMPT.md"
+else
+  echo "$ERRORS critical issues found. Check the output above."
+  exit 1
+fi

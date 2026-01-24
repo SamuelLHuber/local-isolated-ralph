@@ -17,7 +17,6 @@ set -euo pipefail
 TASKS_DIR="${1:?Usage: $0 <tasks-dir>}"
 TASKS_DIR=$(realpath "$TASKS_DIR")
 
-# Find all task directories with PROMPT.md
 TASKS=()
 for dir in "$TASKS_DIR"/*/; do
   if [[ -f "${dir}PROMPT.md" ]]; then
@@ -41,15 +40,13 @@ for task in "${TASKS[@]}"; do
 done
 echo ""
 
-# Detect OS
 case "$(uname -s)" in
   Darwin) OS="macos" ;;
   Linux)  OS="linux" ;;
 esac
 
-# Get available VMs
 if [[ "$OS" == "macos" ]]; then
-  VMS=($(colima list 2>/dev/null | tail -n +2 | awk '{print $1}' | grep -E '^ralph' || true))
+  VMS=($(limactl list --format '{{.Name}}' 2>/dev/null | grep -E '^ralph' || true))
 else
   VMS=($(virsh list --all --name 2>/dev/null | grep -E '^ralph' || true))
 fi
@@ -63,7 +60,6 @@ fi
 echo "Available VMs: ${VMS[*]}"
 echo ""
 
-# Match tasks to VMs
 FLEET_SESSION="ralph-fleet"
 tmux kill-session -t "$FLEET_SESSION" 2>/dev/null || true
 tmux new-session -d -s "$FLEET_SESSION"
@@ -81,26 +77,24 @@ for i in "${!TASKS[@]}"; do
 
   echo "Assigning $TASK_NAME -> $VM"
 
-  # Get SSH command
   if [[ "$OS" == "macos" ]]; then
-    SSH_CMD="colima ssh -p $VM --"
+    SSH_CMD="limactl shell $VM sudo -u ralph -i --"
   else
     VM_IP=$(virsh domifaddr "$VM" 2>/dev/null | grep ipv4 | awk '{print $4}' | cut -d/ -f1)
-    SSH_CMD="ssh dev@$VM_IP"
+    SSH_CMD="ssh ralph@$VM_IP"
   fi
 
-  # Create window for this Ralph
   if [[ $i -eq 0 ]]; then
     tmux rename-window -t "$FLEET_SESSION" "$VM"
   else
     tmux new-window -t "$FLEET_SESSION" -n "$VM"
   fi
 
-  # Start Ralph in this window
   tmux send-keys -t "$FLEET_SESSION:$VM" "
 echo '=== $VM: $TASK_NAME ==='
 $SSH_CMD bash -c '
   cd \"$TASK_DIR\"
+  export PATH=\"\$HOME/.bun/bin:\$PATH\"
   while true; do
     cat PROMPT.md | claude --dangerously-skip-permissions
     echo \"\"

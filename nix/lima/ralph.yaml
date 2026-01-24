@@ -1,89 +1,58 @@
 # Lima configuration for Ralph NixOS VM
-# Usage: limactl start ./nix/lima/ralph.yaml --name ralph-1
+#
+# This is a reference template. Normally you should use:
+#   ./scripts/create-ralph.sh ralph-1
+#
+# For manual usage:
+#   1. Build the NixOS image: cd nix && nix build .#qcow
+#   2. Start VM: limactl start ./nix/lima/ralph.yaml --name ralph-1
+#
+# The NixOS image includes all tools pre-installed via Nix:
+#   - claude, codex, opencode (agent CLIs via bun)
+#   - git, jj (jujutsu), gh
+#   - tmux, ripgrep, fd, jq
+#   - node.js, bun
+#   - chromium + playwright
 
-# Use NixOS image (aarch64 for Apple Silicon)
 images:
-  - location: "https://hydra.nixos.org/build/XXXXXX/download/1/nixos-24.05-aarch64-linux.qcow2"
+  - location: "../result/nixos.qcow2"
     arch: "aarch64"
-  - location: "https://hydra.nixos.org/build/XXXXXX/download/1/nixos-24.05-x86_64-linux.qcow2"
+  - location: "../result/nixos.qcow2"
     arch: "x86_64"
 
-# Or use our custom-built image (after running: nix build .#qcow)
-# images:
-#   - location: "./result/nixos.qcow2"
-#     arch: "aarch64"
-
-# VM resources
 cpus: 4
 memory: "6GiB"
 disk: "30GiB"
 
-# Use Apple Virtualization.framework on macOS
 vmType: "vz"
 rosetta:
-  enabled: true  # Run x86_64 binaries on aarch64
+  enabled: true
 
-# Mount host directories
 mounts:
-  # Read-only access to tasks
   - location: "~/tasks"
     mountPoint: "/mnt/tasks"
     writable: false
-
-  # Writable workspace
   - location: "~/ralph-workspaces"
     mountPoint: "/workspace"
     writable: true
 
-# Network
 networks:
   - lima: shared
 
-# Port forwards
 portForwards:
-  # Chrome DevTools
   - guestPort: 9222
     hostPort: 9222
-  # Any dev servers
   - guestPort: 3000
     hostPort: 3000
   - guestPort: 8080
     hostPort: 8080
 
-# Provision script - runs on first boot
-provision:
-  - mode: system
-    script: |
-      #!/bin/bash
-      set -eux
-
-      # Clone the ralph nix config if not present
-      if [ ! -d /etc/nixos/ralph ]; then
-        git clone https://github.com/YOUR_ORG/local-isolated-ralph /tmp/ralph-config
-        cp -r /tmp/ralph-config/nix/* /etc/nixos/
-      fi
-
-      # Rebuild with Ralph config
-      cd /etc/nixos
-      nixos-rebuild switch --flake .#ralph
-
-  - mode: user
-    script: |
-      #!/bin/bash
-      set -eux
-
-      # Install Claude Code globally
-      npm install -g @anthropic-ai/claude-code
-
-      # Create workspace structure
-      mkdir -p ~/workspace ~/state
-
-# SSH config
 ssh:
-  localPort: 0  # Random port, use `limactl shell ralph-1`
+  localPort: 0
   loadDotSSHPubKeys: true
 
-# Containerd not needed (we use docker inside)
 containerd:
   system: false
   user: false
+
+provision: []

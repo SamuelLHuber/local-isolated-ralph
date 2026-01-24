@@ -14,7 +14,6 @@ FORCE=false
 DELETE_ALL=false
 VMS_TO_DELETE=()
 
-# Parse arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --all)
@@ -36,26 +35,20 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Detect OS
 case "$(uname -s)" in
-  Darwin)
-    OS="macos"
-    ;;
-  Linux)
-    OS="linux"
-    ;;
+  Darwin) OS="macos" ;;
+  Linux)  OS="linux" ;;
   *)
     echo "Unsupported OS"
     exit 1
     ;;
 esac
 
-# Get list of VMs to delete
 if [[ "$DELETE_ALL" == "true" ]]; then
   if [[ "$OS" == "macos" ]]; then
-    mapfile -t VMS_TO_DELETE < <(colima list 2>/dev/null | tail -n +2 | awk '{print $1}')
+    mapfile -t VMS_TO_DELETE < <(limactl list --format '{{.Name}}' 2>/dev/null | grep -E '^ralph' || true)
   else
-    mapfile -t VMS_TO_DELETE < <(virsh list --all --name 2>/dev/null | grep -v '^$')
+    mapfile -t VMS_TO_DELETE < <(virsh list --all --name 2>/dev/null | grep -E '^ralph' || true)
   fi
 fi
 
@@ -71,7 +64,6 @@ for vm in "${VMS_TO_DELETE[@]}"; do
 done
 echo ""
 
-# Confirmation
 if [[ "$FORCE" != "true" ]]; then
   read -r -p "Delete these VMs? [y/N] " confirm
   if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
@@ -80,19 +72,17 @@ if [[ "$FORCE" != "true" ]]; then
   fi
 fi
 
-# Delete VMs
 for vm in "${VMS_TO_DELETE[@]}"; do
   echo "Deleting: $vm"
 
   if [[ "$OS" == "macos" ]]; then
-    colima stop -p "$vm" 2>/dev/null || true
-    colima delete -p "$vm" --force 2>/dev/null || true
+    limactl stop "$vm" 2>/dev/null || true
+    limactl delete "$vm" --force 2>/dev/null || true
   else
     virsh destroy "$vm" 2>/dev/null || true
     virsh undefine "$vm" --remove-all-storage 2>/dev/null || true
-    # Clean up cloud-init files
-    rm -rf "${HOME}/vms/wisp/${vm}-cloud-init" 2>/dev/null || true
-    rm -f "${HOME}/vms/wisp/${vm}-cloud-init.iso" 2>/dev/null || true
+    rm -rf "${HOME}/vms/ralph/${vm}-cloud-init" 2>/dev/null || true
+    rm -f "${HOME}/vms/ralph/${vm}-cloud-init.iso" 2>/dev/null || true
   fi
 
   echo "  Deleted: $vm"

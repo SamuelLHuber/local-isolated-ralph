@@ -1,13 +1,12 @@
 # macOS Setup Guide
 
-This guide sets up isolated VMs using Colima for running Ralph agents safely. Supports running multiple VMs in parallel.
+This guide sets up isolated NixOS VMs using Lima for running Ralph agents. All tools are pre-installed via Nix.
 
 ## Prerequisites
 
-- macOS 13+ (Ventura or later) for `--vm-type vz`
-- Homebrew installed
-- Docker installed on host (for telemetry stack)
-- SSH key: `ls ~/.ssh/id_rsa.pub || ssh-keygen -t rsa -b 4096`
+- macOS 13+ (Ventura or later)
+- Nix package manager with flakes enabled
+- SSH key: `ls ~/.ssh/id_ed25519.pub || ssh-keygen -t ed25519`
 
 **Resource requirements per VM:**
 
@@ -20,151 +19,103 @@ This guide sets up isolated VMs using Colima for running Ralph agents safely. Su
 ## 1. Install Dependencies
 
 ```bash
-# Install Colima and Docker CLI
-brew install colima docker docker-compose
+# Install Nix (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
 
-# Verify installation
-colima version  # Should be 0.6.0+
-docker --version
+# Install Lima
+brew install lima
+
+# Verify
+nix --version
+limactl --version
 ```
 
 ## 2. Create Your First Ralph VM
 
-### Quick method (using script)
+The `create-ralph.sh` script builds a NixOS image (if needed) and creates a VM with all tools pre-installed.
 
 ```bash
-# From local-setup directory
+# Create VM (builds NixOS image on first run - takes a few minutes)
 ./scripts/create-ralph.sh ralph-1
 
 # With custom resources
 ./scripts/create-ralph.sh ralph-1 4 6 30  # 4 CPU, 6GB RAM, 30GB disk
 ```
 
-### Manual method
-
-```bash
-# Create VM with profile name
-colima start \
-  --profile ralph-1 \
-  --cpu 4 \
-  --memory 6 \
-  --disk 30 \
-  --vm-type vz \
-  --mount-type virtiofs \
-  --network-address
-```
-
-**Options explained:**
-- `--profile ralph-1`: Names this VM instance (allows multiple VMs)
-- `--vm-type vz`: Apple Virtualization.framework (fast, efficient)
-- `--mount-type virtiofs`: Fast file sharing
-- `--network-address`: Stable IP for the VM
+The script will:
+1. Build the NixOS QCOW2 image from `nix/flake.nix`
+2. Create a Lima VM with the image
+3. Copy credentials from host (~/.claude, ~/.ssh, ~/.gitconfig, ~/.config/gh)
+4. Copy ralph-loop.sh to the VM
 
 ### Verify VM is running
 
 ```bash
-colima list                  # Shows all VMs
-colima status -p ralph-1     # Status of specific VM
+limactl list                  # Shows all VMs
+limactl info ralph-1          # Details of specific VM
 ```
 
-## 3. Install Tools Inside the VM
+## 3. Access the VM
 
 ```bash
-# Enter the VM
-colima ssh -p ralph-1
+# Shell into VM (as default user)
+limactl shell ralph-1
 
-# Inside VM: Update and install packages
-sudo apt-get update && sudo apt-get upgrade -y
-sudo apt-get install -y git curl wget jq docker.io
+# Run as ralph user
+limactl shell ralph-1 sudo -u ralph -i
 
-# Enable Docker
-sudo systemctl enable --now docker
-sudo usermod -aG docker $USER
-newgrp docker
-
-# Install Node.js
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
-source ~/.bashrc
-nvm install 20
-
-# Install Claude CLI
-npm install -g @anthropic-ai/claude-code
-
-# Install Playwright + Chromium
-npm install -g playwright
-npx playwright install --with-deps chromium
-
-# Authenticate Claude (opens browser on host)
-claude auth login
-
-exit
+# Verify tools are installed
+limactl shell ralph-1 sudo -u ralph -i -- claude --version
+limactl shell ralph-1 sudo -u ralph -i -- jj version
 ```
 
-## 4. Configure Networking (VM → Host)
+### First-time setup
 
-Inside Colima VMs, reach the host at `host.lima.internal`:
+On first boot, agent CLIs are installed via systemd. Check status:
 
 ```bash
-colima ssh -p ralph-1
+limactl shell ralph-1 sudo systemctl status ralph-install-agents
+```
+
+If needed, manually trigger installation:
+
+```bash
+limactl shell ralph-1 sudo -u ralph install-agent-clis
+```
+
+## 4. Verify Setup
+
+Run the verification script inside the VM:
+
+```bash
+limactl shell ralph-1 sudo -u ralph bash /home/ralph/scripts/setup-base-vm.sh
+```
+
+This checks:
+- All tools installed (git, jj, claude, node, bun, etc.)
+- Credentials copied (claude auth, git config, ssh keys)
+- Ralph loop script present
+
+## 5. Configure Networking (VM → Host)
+
+Inside the VM, the host is reachable at `host.lima.internal`:
+
+```bash
+limactl shell ralph-1
 
 # Test connectivity to host telemetry
 curl http://host.lima.internal:3000/api/health   # Grafana
 curl http://host.lima.internal:3100/ready        # Loki
-curl http://host.lima.internal:4317              # Tempo OTLP
-
-# Set up environment variables
-cat >> ~/.bashrc << 'EOF'
-
-# Host telemetry endpoints
-export HOST_ADDR="host.lima.internal"
-export OTEL_EXPORTER_OTLP_ENDPOINT="http://${HOST_ADDR}:4317"
-export LOKI_URL="http://${HOST_ADDR}:3100"
-export GRAFANA_URL="http://${HOST_ADDR}:3000"
-EOF
-
-source ~/.bashrc
-exit
 ```
 
-> **Note:** `host.docker.internal` works inside Docker containers running in the VM, but when SSH'd directly into the Lima VM, use `host.lima.internal`.
-
-## 5. Chrome DevTools Setup
-
-```bash
-colima ssh -p ralph-1
-
-# Create launcher script
-cat > ~/start-chrome-debug.sh << 'EOF'
-#!/bin/bash
-chromium-browser \
-  --remote-debugging-port=9222 \
-  --remote-debugging-address=0.0.0.0 \
-  --no-first-run \
-  --no-default-browser-check \
-  --disable-gpu \
-  --headless=new \
-  "$@"
-EOF
-chmod +x ~/start-chrome-debug.sh
-
-exit
-```
-
-### Forward DevTools port to host
-
-```bash
-# Forward port 9222 from ralph-1 to localhost:9222
-colima ssh -p ralph-1 -- -L 9222:localhost:9222 -N &
-
-# Access DevTools at: chrome://inspect or http://localhost:9222
-```
+Environment variables are pre-configured in the NixOS image.
 
 ## 6. Running Multiple Ralphs in Parallel
 
 ### Create a fleet of VMs
 
 ```bash
-# Create 4 worker VMs (runs sequentially, ~30s each)
+# Create 4 worker VMs
 for i in 1 2 3 4; do
   ./scripts/create-ralph.sh ralph-$i 4 6 30
 done
@@ -175,162 +126,91 @@ done
 
 ### Port mapping for multiple VMs
 
-Each VM's Chrome DevTools needs a unique host port:
+Each VM's Chrome DevTools needs a unique host port (configured by NixOS):
 
 ```bash
 # Forward DevTools for each VM to different host ports
-colima ssh -p ralph-1 -- -L 9222:localhost:9222 -N &
-colima ssh -p ralph-2 -- -L 9223:localhost:9222 -N &
-colima ssh -p ralph-3 -- -L 9224:localhost:9222 -N &
-colima ssh -p ralph-4 -- -L 9225:localhost:9222 -N &
+limactl shell ralph-1 -- -L 9222:localhost:9222 -N &
+limactl shell ralph-2 -- -L 9223:localhost:9222 -N &
 ```
 
 ### Dispatch tasks to the fleet
 
 ```bash
-# Run tasks in parallel (each in background)
 ./scripts/dispatch.sh ralph-1 ~/tasks/feature-a/PROMPT.md &
 ./scripts/dispatch.sh ralph-2 ~/tasks/feature-b/PROMPT.md &
-./scripts/dispatch.sh ralph-3 ~/tasks/bugfix-c/PROMPT.md &
-./scripts/dispatch.sh ralph-4 ~/tasks/refactor-d/PROMPT.md &
-
-# Wait for all to complete
 wait
 ```
 
-### Monitor all Ralphs
-
-```bash
-# View logs from all Ralphs in Grafana
-open "http://localhost:3000/explore?query={job=\"ralph\"}"
-
-# Filter by specific VM
-# Loki query: {job="ralph", vm="ralph-1"}
-```
-
-## 7. Create a Template VM (Fast Cloning)
-
-Set up one VM completely, then clone it for faster scaling:
-
-```bash
-# 1. Create and fully configure a template VM
-./scripts/create-ralph.sh ralph-template 4 6 30
-# ... install all tools, authenticate Claude, etc.
-
-# 2. Stop and snapshot the template
-colima stop -p ralph-template
-colima snapshot create -p ralph-template ready-to-use
-
-# 3. Create workers from template (future improvement - currently need to create fresh)
-# For now, use the create script which is fast enough (~30s per VM)
-```
-
-## 8. Cleanup & Teardown
+## 7. Cleanup & Teardown
 
 ### Stop VMs (preserves state)
 
 ```bash
-# Stop one VM
-colima stop -p ralph-1
+limactl stop ralph-1
 
 # Stop all Ralph VMs
-colima list | grep ralph | awk '{print $1}' | xargs -I{} colima stop -p {}
+limactl list | grep ralph | awk '{print $1}' | xargs -I{} limactl stop {}
 ```
 
-### Delete VMs (removes completely)
+### Delete VMs
 
 ```bash
-# Delete one VM
-colima delete -p ralph-1
-
-# Delete specific VMs
-./scripts/cleanup-ralphs.sh ralph-1 ralph-2
+limactl delete ralph-1
 
 # Delete all Ralph VMs
 ./scripts/cleanup-ralphs.sh --all
-
-# Delete all without confirmation
-./scripts/cleanup-ralphs.sh --all --force
-```
-
-### Full cleanup (nuclear)
-
-```bash
-# Delete ALL Colima VMs (including non-Ralph ones)
-colima delete --force
-rm -rf ~/.colima
-
-# Stop telemetry stack
-cd telemetry && docker compose down -v
 ```
 
 ## Quick Reference
 
-### Single VM Commands
-
 | Task | Command |
 |------|---------|
 | Create VM | `./scripts/create-ralph.sh ralph-1` |
-| Start VM | `colima start -p ralph-1` |
-| Stop VM | `colima stop -p ralph-1` |
-| SSH into VM | `colima ssh -p ralph-1` |
-| Delete VM | `colima delete -p ralph-1` |
-| VM status | `colima status -p ralph-1` |
-
-### Multi-VM Commands
-
-| Task | Command |
-|------|---------|
-| List all VMs | `./scripts/list-ralphs.sh` |
-| Create fleet | `for i in 1 2 3 4; do ./scripts/create-ralph.sh ralph-$i; done` |
-| Stop all | `colima list \| grep ralph \| awk '{print $1}' \| xargs -I{} colima stop -p {}` |
-| Delete all | `./scripts/cleanup-ralphs.sh --all` |
-
-### Snapshots
-
-| Task | Command |
-|------|---------|
-| Create snapshot | `colima stop -p ralph-1 && colima snapshot create -p ralph-1 NAME` |
-| List snapshots | `colima snapshot list -p ralph-1` |
-| Restore snapshot | `colima snapshot restore -p ralph-1 NAME` |
+| Start VM | `limactl start ralph-1` |
+| Stop VM | `limactl stop ralph-1` |
+| Shell into VM | `limactl shell ralph-1` |
+| Run as ralph | `limactl shell ralph-1 sudo -u ralph -i` |
+| Delete VM | `limactl delete ralph-1` |
+| List VMs | `limactl list` |
+| Rebuild NixOS image | `cd nix && rm -f result && nix build .#qcow` |
 
 ## Troubleshooting
 
-### VM won't start with vz
+### VM won't start
 
 ```bash
-# Fall back to QEMU (slower but more compatible)
-colima start -p ralph-1 --vm-type qemu --cpu 4 --memory 6 --disk 30
+# Check Lima logs
+limactl logs ralph-1
+
+# Try with QEMU instead of vz
+limactl delete ralph-1
+# Edit the generated lima config to use vmType: qemu
 ```
 
-### Can't reach host.lima.internal
+### Tools not installed
 
 ```bash
-# Inside VM, find the gateway IP
-ip route | grep default | awk '{print $3}'
+# Run the agent installer manually
+limactl shell ralph-1 sudo -u ralph install-agent-clis
 
-# Add to /etc/hosts if needed
-echo "$(ip route | grep default | awk '{print $3}') host.lima.internal host.docker.internal" | sudo tee -a /etc/hosts
+# Check systemd service
+limactl shell ralph-1 sudo journalctl -u ralph-install-agents
 ```
 
-### Out of disk space
+### Credentials not copied
+
+Re-run the create script credentials copy:
 
 ```bash
-# Check disk usage inside VM
-colima ssh -p ralph-1 -- df -h
-
-# Recreate with larger disk
-colima delete -p ralph-1
-./scripts/create-ralph.sh ralph-1 4 6 50  # 50GB disk
+# Or manually copy
+tar -C ~ -cf - .claude | limactl shell ralph-1 sudo -u ralph tar -C /home/ralph -xf -
 ```
 
-### VM is slow
+### Rebuild NixOS image
 
 ```bash
-# Check host resources
-top -l 1 | head -10
-
-# Reduce parallel VMs or increase per-VM resources
-colima stop -p ralph-1
-colima start -p ralph-1 --cpu 6 --memory 8
+cd nix
+rm -f result
+nix build .#qcow
 ```

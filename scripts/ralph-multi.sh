@@ -20,20 +20,18 @@ if [[ ${#TASK_DIRS[@]} -gt 4 ]]; then
   echo "Warning: More than 4 Ralphs per VM may cause resource contention"
 fi
 
-# Detect OS and get SSH command
 case "$(uname -s)" in
   Darwin)
-    SSH_CMD="colima ssh -p $VM_NAME --"
+    SSH_CMD="limactl shell $VM_NAME sudo -u ralph -i --"
     ;;
   Linux)
     VM_IP=$(virsh domifaddr "$VM_NAME" 2>/dev/null | grep ipv4 | awk '{print $4}' | cut -d/ -f1)
-    SSH_CMD="ssh -t dev@$VM_IP"
+    SSH_CMD="ssh -t ralph@$VM_IP"
     ;;
 esac
 
 echo "Starting ${#TASK_DIRS[@]} Ralphs in VM: $VM_NAME"
 
-# Create tmux session inside VM with multiple panes
 TMUX_SETUP="tmux new-session -d -s ralphs"
 
 for i in "${!TASK_DIRS[@]}"; do
@@ -41,15 +39,12 @@ for i in "${!TASK_DIRS[@]}"; do
   TASK_NAME=$(basename "$TASK_DIR")
 
   if [[ $i -eq 0 ]]; then
-    # First pane
-    TMUX_SETUP="$TMUX_SETUP -n '$TASK_NAME' 'cd $TASK_DIR && while true; do cat PROMPT.md | claude --dangerously-skip-permissions; sleep 2; done'"
+    TMUX_SETUP="$TMUX_SETUP -n '$TASK_NAME' 'export PATH=\"\$HOME/.bun/bin:\$PATH\" && cd $TASK_DIR && while true; do cat PROMPT.md | claude --dangerously-skip-permissions; sleep 2; done'"
   else
-    # Split and add more panes
-    TMUX_SETUP="$TMUX_SETUP \\; split-window 'cd $TASK_DIR && while true; do cat PROMPT.md | claude --dangerously-skip-permissions; sleep 2; done'"
+    TMUX_SETUP="$TMUX_SETUP \\; split-window 'export PATH=\"\$HOME/.bun/bin:\$PATH\" && cd $TASK_DIR && while true; do cat PROMPT.md | claude --dangerously-skip-permissions; sleep 2; done'"
   fi
 done
 
-# Tile the panes evenly
 TMUX_SETUP="$TMUX_SETUP \\; select-layout tiled"
 
 echo "Connecting to VM and starting tmux session..."
