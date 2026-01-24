@@ -14,9 +14,9 @@
   - [ ] Test that `~/.claude` or equivalent persists correctly
   - [ ] Add auth check to `setup-base-vm.sh`
 
-- [ ] **Git credentials in VMs**
-  - [ ] Add git config to `setup-base-vm.sh`
-  - [ ] Document SSH key or token setup for GitHub
+- [x] **Git credentials in VMs**
+  - [x] Add git config to `setup-base-vm.sh`
+  - [x] Copy ~/.gitconfig, ~/.ssh, ~/.config/gh from host in `create-ralph.sh`
   - [ ] Test PR creation from inside VM
 
 - [ ] **Install jj (Jujutsu) in base VM**

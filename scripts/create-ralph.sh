@@ -8,9 +8,10 @@
 #   ./create-ralph.sh ralph-2 2 4 20       # Light: 2 CPU, 4GB RAM, 20GB disk
 #   ./create-ralph.sh ralph-3 6 8 50       # Heavy: 6 CPU, 8GB RAM, 50GB disk
 #
-# After VM creation, this script will:
-#   - Copy ~/.claude and ~/.codex auth folders to the VM
-#   - Copy ralph-loop.sh to ~/ralph/ in the VM
+# After VM creation, this script will copy to the VM:
+#   - ~/.claude, ~/.codex (agent auth)
+#   - ~/.gitconfig, ~/.ssh, ~/.config/gh (git/GitHub credentials)
+#   - ralph-loop.sh to ~/ralph/
 
 set -euo pipefail
 
@@ -29,7 +30,6 @@ copy_auth_to_vm_linux() {
   echo ""
   echo ">>> Copying auth folders and scripts to VM..."
 
-  # Wait for SSH to be ready
   echo "Waiting for SSH to be ready..."
   for i in {1..30}; do
     if ssh $ssh_opts "dev@$vm_ip" "echo 'SSH ready'" 2>/dev/null; then
@@ -38,7 +38,6 @@ copy_auth_to_vm_linux() {
     sleep 2
   done
 
-  # Copy Claude auth folder
   if [[ -d ~/.claude ]]; then
     echo "Copying ~/.claude..."
     scp $ssh_opts -r ~/.claude "dev@$vm_ip:~/" 2>/dev/null || echo "Warning: Failed to copy ~/.claude"
@@ -46,13 +45,34 @@ copy_auth_to_vm_linux() {
     echo "Note: ~/.claude not found on host (run 'claude auth login' first)"
   fi
 
-  # Copy Codex auth folder
   if [[ -d ~/.codex ]]; then
     echo "Copying ~/.codex..."
     scp $ssh_opts -r ~/.codex "dev@$vm_ip:~/" 2>/dev/null || echo "Warning: Failed to copy ~/.codex"
   fi
 
-  # Create ralph directory and copy loop script
+  if [[ -f ~/.gitconfig ]]; then
+    echo "Copying ~/.gitconfig..."
+    scp $ssh_opts ~/.gitconfig "dev@$vm_ip:~/" 2>/dev/null || echo "Warning: Failed to copy ~/.gitconfig"
+  else
+    echo "Note: ~/.gitconfig not found - git identity will need manual configuration"
+  fi
+
+  if [[ -d ~/.ssh ]]; then
+    echo "Copying ~/.ssh..."
+    scp $ssh_opts -r ~/.ssh "dev@$vm_ip:~/" 2>/dev/null || echo "Warning: Failed to copy ~/.ssh"
+    ssh $ssh_opts "dev@$vm_ip" "chmod 700 ~/.ssh && chmod 600 ~/.ssh/* 2>/dev/null" || true
+  else
+    echo "Note: ~/.ssh not found - GitHub SSH access will need manual configuration"
+  fi
+
+  if [[ -d ~/.config/gh ]]; then
+    echo "Copying ~/.config/gh..."
+    ssh $ssh_opts "dev@$vm_ip" "mkdir -p ~/.config" 2>/dev/null || true
+    scp $ssh_opts -r ~/.config/gh "dev@$vm_ip:~/.config/" 2>/dev/null || echo "Warning: Failed to copy ~/.config/gh"
+  else
+    echo "Note: ~/.config/gh not found - run 'gh auth login' for GitHub CLI access"
+  fi
+
   ssh $ssh_opts "dev@$vm_ip" "mkdir -p ~/ralph" 2>/dev/null || true
   if [[ -f "$SCRIPT_DIR/ralph-loop.sh" ]]; then
     echo "Copying ralph-loop.sh..."
@@ -70,14 +90,9 @@ copy_auth_to_vm_colima() {
   echo ""
   echo ">>> Copying auth folders and scripts to VM..."
 
-  # Wait for SSH to be ready
   echo "Waiting for VM to be ready..."
   sleep 5
 
-  # Colima mounts /Users by default, so we copy to the VM's home directory
-  # using tar over SSH since scp doesn't work directly with colima
-
-  # Copy Claude auth folder
   if [[ -d ~/.claude ]]; then
     echo "Copying ~/.claude..."
     tar -C ~ -cf - .claude | colima ssh -p "$profile" -- tar -C ~ -xf - 2>/dev/null || echo "Warning: Failed to copy ~/.claude"
@@ -85,13 +100,34 @@ copy_auth_to_vm_colima() {
     echo "Note: ~/.claude not found on host (run 'claude auth login' first)"
   fi
 
-  # Copy Codex auth folder
   if [[ -d ~/.codex ]]; then
     echo "Copying ~/.codex..."
     tar -C ~ -cf - .codex | colima ssh -p "$profile" -- tar -C ~ -xf - 2>/dev/null || echo "Warning: Failed to copy ~/.codex"
   fi
 
-  # Create ralph directory and copy loop script
+  if [[ -f ~/.gitconfig ]]; then
+    echo "Copying ~/.gitconfig..."
+    tar -C ~ -cf - .gitconfig | colima ssh -p "$profile" -- tar -C ~ -xf - 2>/dev/null || echo "Warning: Failed to copy ~/.gitconfig"
+  else
+    echo "Note: ~/.gitconfig not found - git identity will need manual configuration"
+  fi
+
+  if [[ -d ~/.ssh ]]; then
+    echo "Copying ~/.ssh..."
+    tar -C ~ -cf - .ssh | colima ssh -p "$profile" -- tar -C ~ -xf - 2>/dev/null || echo "Warning: Failed to copy ~/.ssh"
+    colima ssh -p "$profile" -- "chmod 700 ~/.ssh && chmod 600 ~/.ssh/* 2>/dev/null" || true
+  else
+    echo "Note: ~/.ssh not found - GitHub SSH access will need manual configuration"
+  fi
+
+  if [[ -d ~/.config/gh ]]; then
+    echo "Copying ~/.config/gh..."
+    colima ssh -p "$profile" -- "mkdir -p ~/.config" 2>/dev/null || true
+    tar -C ~/.config -cf - gh | colima ssh -p "$profile" -- tar -C ~/.config -xf - 2>/dev/null || echo "Warning: Failed to copy ~/.config/gh"
+  else
+    echo "Note: ~/.config/gh not found - run 'gh auth login' for GitHub CLI access"
+  fi
+
   colima ssh -p "$profile" -- "mkdir -p ~/ralph" 2>/dev/null || true
   if [[ -f "$SCRIPT_DIR/ralph-loop.sh" ]]; then
     echo "Copying ralph-loop.sh..."

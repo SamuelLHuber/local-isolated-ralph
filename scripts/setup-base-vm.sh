@@ -102,20 +102,11 @@ approval_policy = "never"
 sandbox_mode = "danger-full-access"
 EOF
 
-# Git configuration placeholder
+# Git configuration defaults (user identity should be copied from host)
 echo ">>> Setting up git configuration..."
-cat >> ~/.gitconfig << 'EOF'
-[user]
-	# Set your name and email here or via environment variables
-	# name = Your Name
-	# email = your.email@example.com
-[init]
-	defaultBranch = main
-[pull]
-	rebase = true
-[push]
-	autoSetupRemote = true
-EOF
+git config --global init.defaultBranch main
+git config --global pull.rebase true
+git config --global push.autoSetupRemote true
 
 # Add Ralph helpers to bashrc
 echo ">>> Adding Ralph helpers to .bashrc..."
@@ -166,33 +157,50 @@ echo "jj:      $(jj version 2>/dev/null || echo 'NOT INSTALLED')"
 echo "Docker:  $(docker --version 2>/dev/null || echo 'NOT INSTALLED')"
 echo ""
 
-# Check for auth folders
-echo "=== Checking auth folders ==="
+# Check for auth and credentials
+echo "=== Checking credentials ==="
 if [[ -d ~/.claude ]]; then
-  echo "Claude auth: Found (~/.claude exists)"
+  echo "Claude auth:   Found (~/.claude exists)"
 else
-  echo "Claude auth: NOT FOUND - copy ~/.claude from host"
+  echo "Claude auth:   NOT FOUND - copy ~/.claude from host"
 fi
 
 if [[ -d ~/.codex ]]; then
-  echo "Codex auth:  Found (~/.codex exists)"
+  echo "Codex auth:    Found (~/.codex exists)"
 else
-  echo "Codex auth:  Config created (API key may be needed)"
+  echo "Codex auth:    Config created (API key may be needed)"
+fi
+
+GIT_NAME=$(git config --global user.name 2>/dev/null || echo "")
+GIT_EMAIL=$(git config --global user.email 2>/dev/null || echo "")
+if [[ -n "$GIT_NAME" && -n "$GIT_EMAIL" ]]; then
+  echo "Git identity:  $GIT_NAME <$GIT_EMAIL>"
+else
+  echo "Git identity:  NOT CONFIGURED - copy ~/.gitconfig from host or run:"
+  echo "               git config --global user.name 'Your Name'"
+  echo "               git config --global user.email 'your@email.com'"
+fi
+
+if gh auth status &>/dev/null; then
+  echo "GitHub CLI:    Authenticated"
+else
+  echo "GitHub CLI:    NOT AUTHENTICATED - copy ~/.config/gh from host or run: gh auth login"
+fi
+
+if [[ -f ~/.ssh/id_ed25519 || -f ~/.ssh/id_rsa ]]; then
+  echo "SSH keys:      Found"
+else
+  echo "SSH keys:      NOT FOUND - copy ~/.ssh from host for GitHub SSH access"
 fi
 
 echo ""
 echo "=== Setup Complete ==="
 echo ""
+echo "Credentials should have been copied by create-ralph.sh."
+echo "If any are missing above, re-run create-ralph.sh or copy manually."
+echo ""
 echo "Next steps:"
-echo "  1. Copy auth folders from host if not already done:"
-echo "     scp -r ~/.claude dev@<vm-ip>:~/"
-echo "     scp -r ~/.codex dev@<vm-ip>:~/"
-echo ""
-echo "  2. Configure git identity:"
-echo "     git config --global user.name 'Your Name'"
-echo "     git config --global user.email 'your@email.com'"
-echo ""
-echo "  3. Snapshot this VM as a template for fast cloning"
-echo ""
-echo "  4. Log out and back in for group changes to take effect"
+echo "  1. Verify all credentials show as configured above"
+echo "  2. Snapshot this VM as a template for fast cloning"
+echo "  3. Log out and back in for group changes to take effect"
 echo ""
