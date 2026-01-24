@@ -208,6 +208,37 @@ case "$(uname -s)" in
     ;;
 esac
 
+check_linux_builder() {
+  if ! nix build --dry-run --expr '(import <nixpkgs> { system = "x86_64-linux"; }).hello' 2>/dev/null; then
+    echo "Error: No Linux builder available."
+    echo ""
+    echo "macOS cannot build NixOS images natively. You need a Linux builder."
+    echo ""
+    echo "Options:"
+    echo "  1. Use a remote Linux machine:"
+    echo "     Add to ~/.config/nix/nix.conf:"
+    echo "       builders = ssh://user@linux-host x86_64-linux"
+    echo ""
+    echo "  2. Use Docker-based linux-builder (recommended):"
+    echo "     nix run nixpkgs#darwin.linux-builder"
+    echo "     Then add to ~/.config/nix/nix.conf:"
+    echo "       builders = ssh-ng://linux-builder aarch64-linux,x86_64-linux"
+    echo "       extra-trusted-users = \$(whoami)"
+    echo ""
+    echo "  3. Use nix-darwin with linux-builder module"
+    echo ""
+    echo "See SETUP-MACOS.md Section 2 for details."
+    exit 1
+  fi
+}
+
+if [[ "$OS" == "macos" ]]; then
+  echo "Checking for Linux builder (required on macOS)..."
+  check_linux_builder
+  echo "Linux builder available."
+  echo ""
+fi
+
 echo "Creating Ralph VM: $NAME (CPU: $CPU, RAM: ${MEMORY}GB, Disk: ${DISK}GB)"
 echo "Using NixOS ($SYSTEM)"
 
