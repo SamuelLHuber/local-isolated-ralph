@@ -108,32 +108,6 @@ git config --global init.defaultBranch main
 git config --global pull.rebase true
 git config --global push.autoSetupRemote true
 
-# SSH configuration for GitHub
-echo ">>> Setting up SSH configuration..."
-mkdir -p ~/.ssh
-chmod 700 ~/.ssh
-
-cat > ~/.ssh/config << 'EOF'
-Host github.com
-    HostName github.com
-    User git
-    IdentityFile ~/.ssh/id_ed25519
-    IdentitiesOnly yes
-    AddKeysToAgent yes
-
-Host github.com-rsa
-    HostName github.com
-    User git
-    IdentityFile ~/.ssh/id_rsa
-    IdentitiesOnly yes
-    AddKeysToAgent yes
-EOF
-chmod 600 ~/.ssh/config
-
-# Pre-populate GitHub's SSH host keys to avoid prompts
-ssh-keyscan -t ed25519,rsa github.com >> ~/.ssh/known_hosts 2>/dev/null || true
-chmod 600 ~/.ssh/known_hosts
-
 # Add Ralph helpers to bashrc
 echo ">>> Adding Ralph helpers to .bashrc..."
 cat >> ~/.bashrc << 'BASHRC_EOF'
