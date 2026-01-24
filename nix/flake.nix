@@ -15,12 +15,15 @@
 
   outputs = { self, nixpkgs, nixpkgs-unstable, nixos-generators, ... }:
     let
-      # Support both architectures
       systems = [ "x86_64-linux" "aarch64-linux" ];
 
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f system);
 
-      # The core Ralph module - shared across all targets
+      # Overlay to use jujutsu from unstable (24.11 version is marked insecure)
+      jujutsuOverlay = final: prev: {
+        jujutsu = nixpkgs-unstable.legacyPackages.${prev.system}.jujutsu;
+      };
+
       ralphModule = import ./modules/ralph.nix;
 
     in {
@@ -30,15 +33,13 @@
         default = ralphModule;
       };
 
-      # Ready-to-use NixOS configurations (for direct deployment, not generators)
       nixosConfigurations = {
-        # Full NixOS VM/machine config (aarch64)
         ralph = nixpkgs.lib.nixosSystem {
           system = "aarch64-linux";
           modules = [
+            { nixpkgs.overlays = [ jujutsuOverlay ]; }
             ralphModule
             ./hosts/vm.nix
-            # Boot configuration for standalone VM
             {
               boot.loader.grub.enable = true;
               boot.loader.grub.device = "/dev/vda";
@@ -50,13 +51,12 @@
           ];
         };
 
-        # x86_64 variant for cloud/Linux machines
         ralph-x86 = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
+            { nixpkgs.overlays = [ jujutsuOverlay ]; }
             ralphModule
             ./hosts/vm.nix
-            # Boot configuration for standalone VM
             {
               boot.loader.grub.enable = true;
               boot.loader.grub.device = "/dev/vda";
@@ -69,69 +69,44 @@
         };
       };
 
-      # VM/Container images for different platforms
       packages = forAllSystems (system:
         let
-          pkgs = nixpkgs.legacyPackages.${system};
+          overlayModule = { nixpkgs.overlays = [ jujutsuOverlay ]; };
         in {
-          # QCOW2 image for QEMU/Lima/libvirt
           qcow = nixos-generators.nixosGenerate {
             inherit system;
             format = "qcow";
-            modules = [
-              ralphModule
-              ./hosts/vm.nix
-            ];
+            modules = [ overlayModule ralphModule ./hosts/vm.nix ];
           };
 
-          # Raw disk image (works with Lima)
           raw = nixos-generators.nixosGenerate {
             inherit system;
             format = "raw";
-            modules = [
-              ralphModule
-              ./hosts/vm.nix
-            ];
+            modules = [ overlayModule ralphModule ./hosts/vm.nix ];
           };
 
-          # Docker image for k8s swarms
           docker = nixos-generators.nixosGenerate {
             inherit system;
             format = "docker";
-            modules = [
-              ralphModule
-              ./hosts/container.nix
-            ];
+            modules = [ overlayModule ralphModule ./hosts/container.nix ];
           };
 
-          # ISO for bare metal installation
           iso = nixos-generators.nixosGenerate {
             inherit system;
             format = "iso";
-            modules = [
-              ralphModule
-              ./hosts/vm.nix
-            ];
+            modules = [ overlayModule ralphModule ./hosts/vm.nix ];
           };
 
-          # Amazon EC2 AMI
           amazon = nixos-generators.nixosGenerate {
             inherit system;
             format = "amazon";
-            modules = [
-              ralphModule
-              ./hosts/cloud.nix
-            ];
+            modules = [ overlayModule ralphModule ./hosts/cloud.nix ];
           };
 
-          # Google Cloud image
           gce = nixos-generators.nixosGenerate {
             inherit system;
             format = "gce";
-            modules = [
-              ralphModule
-              ./hosts/cloud.nix
-            ];
+            modules = [ overlayModule ralphModule ./hosts/cloud.nix ];
           };
         }
       );

@@ -48,12 +48,23 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githu
 sudo apt-get update
 sudo apt-get install -y gh
 
-# Jujutsu (jj) - optional but recommended for parallel work
+# Jujutsu (jj) - recommended for parallel agent work
 echo ">>> Installing Jujutsu (jj)..."
 JJ_VERSION="0.24.0"
-curl -fsSL "https://github.com/martinvonz/jj/releases/download/v${JJ_VERSION}/jj-v${JJ_VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar xz -C /tmp
-sudo mv /tmp/jj /usr/local/bin/
-jj version || echo "Note: jj installation may have failed, continuing..."
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64)  JJ_ARCH="x86_64-unknown-linux-musl" ;;
+  aarch64) JJ_ARCH="aarch64-unknown-linux-musl" ;;
+  *)
+    echo "Note: Unsupported architecture $ARCH for jj, skipping..."
+    JJ_ARCH=""
+    ;;
+esac
+if [[ -n "$JJ_ARCH" ]]; then
+  curl -fsSL "https://github.com/martinvonz/jj/releases/download/v${JJ_VERSION}/jj-v${JJ_VERSION}-${JJ_ARCH}.tar.gz" | tar xz -C /tmp
+  sudo mv /tmp/jj /usr/local/bin/
+  jj version || echo "Note: jj installation may have failed, continuing..."
+fi
 
 # Claude Code CLI
 echo ">>> Installing Claude Code CLI..."

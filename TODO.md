@@ -20,7 +20,8 @@
   - [ ] Test PR creation from inside VM
 
 - [ ] **Install jj (Jujutsu) in base VM**
-  - [ ] Add jj install to `setup-base-vm.sh`
+  - [x] Add jj install to `setup-base-vm.sh` (supports x86_64 + aarch64)
+  - [x] Add jj to Nix module (uses nixpkgs-unstable)
   - [ ] Test shared spec workflow with jj
 
 ## Medium Priority (Polish)

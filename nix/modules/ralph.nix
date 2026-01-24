@@ -113,10 +113,12 @@ in {
       htop
       ripgrep
       fd
-      unzip  # Required by bun
+      unzip
+
+      # Jujutsu - VCS for parallel agent work
+      jujutsu
 
       # Bun - fast JS runtime and package manager
-      # Used to install agent CLIs globally
       bun
 
       # Node.js (still useful for compatibility)
