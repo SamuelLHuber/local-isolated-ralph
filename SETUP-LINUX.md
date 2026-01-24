@@ -100,7 +100,45 @@ echo "VM IP: $VM_IP"
 ssh ralph@$VM_IP
 ```
 
-## 3. Access the VM
+## 3. Set Up Claude Authentication
+
+Claude credentials from your host don't automatically transfer to VMs. You have two options:
+
+### Option A: API Key (Recommended for VMs)
+
+Set the `ANTHROPIC_API_KEY` environment variable in the VM:
+
+```bash
+# Get your API key from https://console.anthropic.com/
+VM_IP=$(virsh domifaddr ralph-1 | grep ipv4 | awk '{print $4}' | cut -d/ -f1)
+ssh ralph@$VM_IP
+
+# Add to shell profile
+echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Option B: Long-lived Token
+
+Generate a token that persists across sessions:
+
+```bash
+# On host, generate a token
+claude setup-token
+
+# This creates ~/.claude/.credentials.json
+# Copy it to the VM
+VM_IP=$(virsh domifaddr ralph-1 | grep ipv4 | awk '{print $4}' | cut -d/ -f1)
+scp ~/.claude/.credentials.json ralph@$VM_IP:~/.claude/
+```
+
+### Verify auth works
+
+```bash
+ssh ralph@$VM_IP "~/ralph/verify.sh"
+```
+
+## 4. Access the VM
 
 ```bash
 # Get VM IP
@@ -128,7 +166,7 @@ If needed, manually trigger installation:
 ssh ralph@$VM_IP "install-agent-clis"
 ```
 
-## 4. Verify Setup
+## 5. Verify Setup
 
 Run the verification script inside the VM:
 
@@ -141,7 +179,7 @@ This checks:
 - Credentials copied (claude auth, git config, ssh keys)
 - Ralph loop script present
 
-## 5. Configure Networking (VM → Host)
+## 6. Configure Networking (VM → Host)
 
 The host is reachable at `192.168.122.1` (default libvirt gateway):
 
@@ -164,7 +202,7 @@ sudo ufw allow in on virbr0
 sudo iptables -I INPUT -i virbr0 -j ACCEPT
 ```
 
-## 6. Running Multiple Ralphs in Parallel
+## 7. Running Multiple Ralphs in Parallel
 
 ### Create a fleet of VMs
 
@@ -199,7 +237,7 @@ done
 wait
 ```
 
-## 7. Create a Template VM (Fast Cloning)
+## 8. Create a Template VM (Fast Cloning)
 
 Set up one VM completely, then clone it:
 
@@ -223,7 +261,7 @@ for i in 1 2 3 4; do
 done
 ```
 
-## 8. Cleanup & Teardown
+## 9. Cleanup & Teardown
 
 ### Stop VMs
 

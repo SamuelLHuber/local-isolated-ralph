@@ -125,7 +125,44 @@ limactl list                  # Shows all VMs
 limactl info ralph-1          # Details of specific VM
 ```
 
-## 4. Access the VM
+## 4. Set Up Claude Authentication
+
+On macOS, Claude stores credentials in the system keychain. These don't automatically transfer to VMs. You have two options:
+
+### Option A: API Key (Recommended for VMs)
+
+Set the `ANTHROPIC_API_KEY` environment variable in the VM:
+
+```bash
+# Get your API key from https://console.anthropic.com/
+limactl shell ralph-1 sudo -u ralph -i
+
+# Add to shell profile
+echo 'export ANTHROPIC_API_KEY="sk-ant-..."' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Option B: Long-lived Token
+
+Generate a token that persists across sessions:
+
+```bash
+# On host (macOS), generate a token
+claude setup-token
+
+# This creates ~/.claude/.credentials.json
+# Copy it to the VM
+tar -C ~ -cf - .claude/.credentials.json | \
+  limactl shell ralph-1 sudo -u ralph tar -C /home/ralph -xf -
+```
+
+### Verify auth works
+
+```bash
+limactl shell ralph-1 sudo -u ralph -i -- ~/ralph/verify.sh
+```
+
+## 5. Access the VM
 
 ```bash
 # Shell into VM (as default user)
@@ -153,7 +190,7 @@ If needed, manually trigger installation:
 limactl shell ralph-1 sudo -u ralph install-agent-clis
 ```
 
-## 5. Verify Setup
+## 6. Verify Setup
 
 Run the verification script inside the VM:
 
@@ -166,7 +203,7 @@ This checks:
 - Credentials copied (claude auth, git config, ssh keys)
 - Ralph loop script present
 
-## 6. Configure Networking (VM → Host)
+## 7. Configure Networking (VM → Host)
 
 Inside the VM, the host is reachable at `host.lima.internal`:
 
@@ -180,7 +217,7 @@ curl http://host.lima.internal:3100/ready        # Loki
 
 Environment variables are pre-configured in the NixOS image.
 
-## 7. Running Multiple Ralphs in Parallel
+## 8. Running Multiple Ralphs in Parallel
 
 ### Create a fleet of VMs
 
@@ -212,7 +249,7 @@ limactl shell ralph-2 -- -L 9223:localhost:9222 -N &
 wait
 ```
 
-## 8. Cleanup & Teardown
+## 9. Cleanup & Teardown
 
 ### Stop VMs (preserves state)
 

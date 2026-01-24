@@ -10,9 +10,9 @@
   - [ ] Test `ralph-multi.sh` (multiple Ralphs per VM)
 
 - [ ] **Claude authentication flow**
-  - [ ] Document how to persist auth across VM snapshots
+  - [x] Document how to persist auth across VM snapshots
   - [ ] Test that `~/.claude` or equivalent persists correctly
-  - [ ] Add auth check to `setup-base-vm.sh`
+  - [x] Add auth check to `setup-base-vm.sh`
 
 - [x] **Git credentials in VMs**
   - [x] Add git config to `setup-base-vm.sh`
@@ -96,6 +96,8 @@
 - [x] Fix playwright-browsers x86_64-only issue in ralph.nix
 - [x] Document Linux builder requirement for macOS (SETUP-MACOS.md)
 - [x] Copy verification script to VM (setup-base-vm.sh → ~/ralph/verify.sh)
+- [x] Claude auth documentation (SETUP-MACOS.md, SETUP-LINUX.md Section 3/4)
+- [x] Improved Claude auth check in setup-base-vm.sh (checks ANTHROPIC_API_KEY + token file)
 
 ## Known Issues
 

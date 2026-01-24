@@ -94,15 +94,32 @@ fi
 echo ""
 echo ">>> Credentials"
 
-if [[ -d ~/.claude ]]; then
-  if [[ -f ~/.claude/.credentials.json ]] || [[ -f ~/.claude/credentials.json ]]; then
-    echo "[OK] Claude auth: configured"
-  else
-    echo "[WARN] Claude auth: ~/.claude exists but no credentials found"
+check_claude_auth() {
+  if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+    echo "[OK] Claude auth: ANTHROPIC_API_KEY set"
+    return 0
   fi
-else
-  echo "[MISSING] Claude auth: ~/.claude not found (copy from host)"
-fi
+
+  if [[ -f ~/.claude/.credentials.json ]]; then
+    echo "[OK] Claude auth: credentials file found"
+    return 0
+  fi
+
+  if [[ -d ~/.claude ]] && command -v claude &>/dev/null; then
+    if claude --version &>/dev/null; then
+      echo "[WARN] Claude auth: binary works but no credentials detected"
+      echo "       Run 'claude setup-token' or set ANTHROPIC_API_KEY"
+      return 1
+    fi
+  fi
+
+  echo "[MISSING] Claude auth: not configured"
+  echo "         Option 1: Set ANTHROPIC_API_KEY environment variable"
+  echo "         Option 2: Run 'claude setup-token' for long-lived token"
+  return 1
+}
+
+check_claude_auth || true
 
 GIT_NAME=$(git config --global user.name 2>/dev/null || echo "")
 GIT_EMAIL=$(git config --global user.email 2>/dev/null || echo "")
