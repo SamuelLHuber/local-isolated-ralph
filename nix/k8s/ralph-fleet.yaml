@@ -1,0 +1,203 @@
+# Kubernetes deployment for Ralph agent fleet
+# Deploy with: kubectl apply -f ralph-fleet.yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ralph-system
+---
+# ConfigMap for shared agent configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ralph-config
+  namespace: ralph-system
+data:
+  claude-settings.json: |
+    {
+      "permissions": {
+        "defaultMode": "bypassPermissions"
+      }
+    }
+---
+# Secret for API keys (create separately)
+# kubectl create secret generic ralph-secrets \
+#   --from-literal=ANTHROPIC_API_KEY=sk-... \
+#   -n ralph-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ralph-agents
+  namespace: ralph-system
+  labels:
+    app: ralph
+    component: agent
+spec:
+  replicas: 4  # Scale this up/down
+  selector:
+    matchLabels:
+      app: ralph
+  template:
+    metadata:
+      labels:
+        app: ralph
+        component: agent
+    spec:
+      containers:
+        - name: ralph
+          # Built with: nix build .#docker && docker load < result
+          image: ralph:latest
+          imagePullPolicy: IfNotPresent
+
+          resources:
+            requests:
+              memory: "4Gi"
+              cpu: "2"
+            limits:
+              memory: "8Gi"
+              cpu: "4"
+
+          env:
+            # Which agent to use: claude, codex, or opencode
+            - name: RALPH_AGENT
+              value: "claude"
+
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ralph-secrets
+                  key: ANTHROPIC_API_KEY
+                  optional: true
+
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ralph-secrets
+                  key: OPENAI_API_KEY
+                  optional: true
+
+            - name: RALPH_AGENT_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://telemetry.ralph-system.svc.cluster.local:4317"
+
+          volumeMounts:
+            - name: config
+              mountPath: /home/ralph/.claude
+            - name: workspace
+              mountPath: /workspace
+            - name: tasks
+              mountPath: /mnt/tasks
+              readOnly: true
+
+          # Health checks
+          livenessProbe:
+            exec:
+              command: ["pgrep", "-f", "claude"]
+            initialDelaySeconds: 30
+            periodSeconds: 60
+
+      volumes:
+        - name: config
+          configMap:
+            name: ralph-config
+        - name: workspace
+          emptyDir: {}
+        - name: tasks
+          # Mount your task specs here
+          # Option 1: PVC
+          # persistentVolumeClaim:
+          #   claimName: ralph-tasks
+          # Option 2: ConfigMap per task
+          configMap:
+            name: ralph-tasks
+            optional: true
+
+      # Spread across nodes
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: ralph
+---
+# HorizontalPodAutoscaler for dynamic scaling
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ralph-agents-hpa
+  namespace: ralph-system
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ralph-agents
+  minReplicas: 1
+  maxReplicas: 50
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+# Service for inter-agent communication (if needed)
+apiVersion: v1
+kind: Service
+metadata:
+  name: ralph-agents
+  namespace: ralph-system
+spec:
+  selector:
+    app: ralph
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  clusterIP: None  # Headless for direct pod addressing
+---
+# Job template for one-off tasks
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ralph-task-example
+  namespace: ralph-system
+spec:
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: ralph
+          image: ralph:latest
+          env:
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ralph-secrets
+                  key: ANTHROPIC_API_KEY
+          volumeMounts:
+            - name: task
+              mountPath: /workspace
+          command:
+            - /bin/bash
+            - -c
+            - |
+              cd /workspace
+              AGENT="${RALPH_AGENT:-claude}"
+              case "$AGENT" in
+                claude) exec claude --dangerously-skip-permissions -p "$(cat PROMPT.md)" ;;
+                codex) exec codex --dangerously-bypass-approvals-and-sandbox -p "$(cat PROMPT.md)" ;;
+                opencode) exec opencode -p "$(cat PROMPT.md)" ;;
+                *) echo "Unknown agent: $AGENT"; exit 1 ;;
+              esac
+      volumes:
+        - name: task
+          configMap:
+            name: my-task-spec
