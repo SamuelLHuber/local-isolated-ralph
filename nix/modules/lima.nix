@@ -1,5 +1,5 @@
 # Lima guest support module
-# Provides lima-init and lima-guestagent for VM integration with Lima
+# Provides lima-init for SSH key setup when running under Lima
 { config, lib, pkgs, ... }:
 
 with lib;
@@ -9,19 +9,6 @@ let
 
   # Use ralph user (defined in ralph.nix) - NixOS manages users declaratively
   targetUser = config.services.ralph.user or "ralph";
-
-  # Guest agent is only available for aarch64 in nixpkgs lima package
-  # It's only needed for VZ driver (macOS Virtualization Framework) anyway
-  isAarch64 = pkgs.stdenv.hostPlatform.isAarch64;
-
-  # Extract lima-guestagent from the compressed archive (aarch64 only)
-  limaGuestAgent = if isAarch64 then
-    pkgs.runCommand "lima-guestagent" { } ''
-      mkdir -p $out/bin
-      ${pkgs.gzip}/bin/gunzip -c ${pkgs.lima}/share/lima/lima-guestagent.Linux-aarch64.gz > $out/bin/lima-guestagent
-      chmod +x $out/bin/lima-guestagent
-    ''
-  else null;
 
   limaInit = pkgs.writeShellScriptBin "lima-init" ''
     set -e
@@ -100,21 +87,8 @@ in {
       };
     };
 
-    # Lima guest agent (port forwarding via vsock)
-    # Only available on aarch64 - VZ driver is macOS-only anyway
-    systemd.services.lima-guestagent = mkIf isAarch64 {
-      description = "Lima guest agent";
-      wantedBy = [ "multi-user.target" ];
-      after = [ "lima-init.service" "network-online.target" ];
-      wants = [ "network-online.target" ];
-
-      serviceConfig = {
-        Type = "simple";
-        ExecStart = "${limaGuestAgent}/bin/lima-guestagent daemon --vsock-port 2222";
-        Restart = "always";
-        RestartSec = "5s";
-      };
-    };
+    # Note: lima-guestagent is not included in nixpkgs lima package
+    # Lima falls back to SSH port forwarding which works fine
 
     # Packages needed for Lima integration
     environment.systemPackages = with pkgs; [
@@ -123,7 +97,5 @@ in {
       fuse3
     ];
 
-    # Enable vsock for VZ driver communication
-    boot.kernelModules = [ "vsock" ];
   };
 }
