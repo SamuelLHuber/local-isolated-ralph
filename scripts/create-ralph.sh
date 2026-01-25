@@ -418,7 +418,14 @@ EOF
   echo "  1. Shell into VM:   limactl shell $NAME"
   echo "  2. Run as ralph:    limactl shell $NAME sudo -u ralph -i"
   echo "  3. Stop VM:         limactl stop $NAME"
-  echo "  4. Delete VM:       limactl delete $NAME"
+  echo "  4. Start VM:        limactl start $NAME"
+  echo "  5. Delete VM:       limactl delete $NAME"
+  echo ""
+  echo "Cleanup commands:"
+  echo "  List all VMs:       limactl list"
+  echo "  Delete this VM:     limactl delete $NAME"
+  echo "  Delete all VMs:     limactl delete --all"
+  echo "  Clear image cache:  rm -rf ~/.cache/ralph/"
 
 else
   if ! command -v virsh &>/dev/null; then
@@ -481,6 +488,12 @@ else
     echo "Next steps:"
     echo "  1. SSH into VM:     ssh ralph@$VM_IP"
     echo "  2. Stop VM:         virsh shutdown $NAME"
-    echo "  3. Delete VM:       virsh destroy $NAME; virsh undefine $NAME --remove-all-storage"
+    echo "  3. Start VM:        virsh start $NAME"
+    echo "  4. Delete VM:       virsh destroy $NAME; virsh undefine $NAME --remove-all-storage"
+    echo ""
+    echo "Cleanup commands:"
+    echo "  List all VMs:       virsh list --all"
+    echo "  Delete this VM:     virsh destroy $NAME 2>/dev/null; virsh undefine $NAME --remove-all-storage"
+    echo "  Clear image cache:  rm -rf ~/.cache/ralph/"
   fi
 fi
