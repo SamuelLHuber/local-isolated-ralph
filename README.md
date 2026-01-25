@@ -182,4 +182,12 @@ After:   Human writes spec ─────────────────�
                            (agents do the rest)
 ```
 
+## Disk Usage
+
+Disk usage to watch:
+  - ~/.lima/ - VM disks (20GB+ per VM)
+  - ~/.cache/ralph/ - Downloaded images (~6GB per
+  architecture)
+  - ~/vms/ralph/ - libvirt VM disks on Linux
+
 For the cloud-hosted version of this, see [Sprites](https://sprites.dev) + [Wisp](https://github.com/thruflo/wisp).
