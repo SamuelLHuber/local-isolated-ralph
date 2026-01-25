@@ -391,6 +391,10 @@ ssh:
   localPort: 0
   loadDotSSHPubKeys: true
 
+user:
+  name: ralph
+  home: /home/ralph
+
 containerd:
   system: false
   user: false
