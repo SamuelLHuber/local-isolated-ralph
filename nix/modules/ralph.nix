@@ -17,7 +17,8 @@ let
   agentPackages =
     (optional cfg.agents.claude "@anthropic-ai/claude-code") ++
     (optional cfg.agents.codex "@openai/codex") ++
-    (optional cfg.agents.opencode "opencode-ai@latest");
+    (optional cfg.agents.opencode "opencode-ai@latest") ++
+    (optional cfg.browser.mcp "@playwright/mcp@latest");
 
   # Script to install agent CLIs via bun
   installAgentCLIs = pkgs.writeShellScriptBin "install-agent-clis" ''
@@ -36,6 +37,7 @@ let
     ${optionalString cfg.agents.claude ''echo "  - claude (Claude Code)"''}
     ${optionalString cfg.agents.codex ''echo "  - codex (OpenAI Codex)"''}
     ${optionalString cfg.agents.opencode ''echo "  - opencode (OpenCode AI)"''}
+    ${optionalString cfg.browser.mcp ''echo "  - mcp (Playwright MCP for browser automation)"''}
   '';
 
 in {
@@ -87,6 +89,12 @@ in {
         type = types.bool;
         default = false;
         description = "Enable Chrome remote debugging on port 9222";
+      };
+
+      mcp = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Install Playwright MCP and configure it to connect to headless Chrome";
       };
     };
 
@@ -171,17 +179,41 @@ in {
       mode = "0644";
     };
 
-    # Symlink agent configs to user home
-    system.activationScripts.ralphConfig = mkIf cfg.autonomousMode ''
-      # Claude Code config
-      mkdir -p /home/${cfg.user}/.claude
-      ln -sf /etc/ralph/claude-settings.json /home/${cfg.user}/.claude/settings.json
-      chown -R ${cfg.user}:users /home/${cfg.user}/.claude
+    # MCP configuration for browser automation (connects to local headless Chrome)
+    environment.etc."ralph/claude-mcp.json" = mkIf cfg.browser.mcp {
+      text = builtins.toJSON {
+        mcpServers = {
+          browser = {
+            command = "/home/${cfg.user}/.bun/bin/mcp";
+            args = [ "--cdp-endpoint" "http://localhost:9222" ];
+          };
+        };
+      };
+      mode = "0644";
+    };
 
+    # Symlink agent configs to user home
+    system.activationScripts.ralphConfig = ''
+      # Claude Code config directory
+      mkdir -p /home/${cfg.user}/.claude
+      chown ${cfg.user}:users /home/${cfg.user}/.claude
+
+      ${optionalString cfg.autonomousMode ''
+      # Claude Code autonomous mode settings
+      ln -sf /etc/ralph/claude-settings.json /home/${cfg.user}/.claude/settings.json
+      ''}
+
+      ${optionalString cfg.browser.mcp ''
+      # MCP configuration for browser automation
+      ln -sf /etc/ralph/claude-mcp.json /home/${cfg.user}/.claude/mcp.json
+      ''}
+
+      ${optionalString cfg.autonomousMode ''
       # Codex config
       mkdir -p /home/${cfg.user}/.codex
       ln -sf /etc/ralph/codex-config.toml /home/${cfg.user}/.codex/config.toml
       chown -R ${cfg.user}:users /home/${cfg.user}/.codex
+      ''}
     '';
 
     # Install agent CLIs on first boot via systemd

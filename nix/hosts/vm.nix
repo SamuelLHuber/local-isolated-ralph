@@ -13,6 +13,7 @@
     enable = true;
     browser.enable = true;
     browser.remoteDebugging = true;
+    browser.mcp = true;
     telemetry.enable = true;
     autonomousMode = true;
   };
