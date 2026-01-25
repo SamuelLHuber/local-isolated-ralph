@@ -75,7 +75,7 @@ jobs:
 
   release:
     needs: build
-    if: github.event_name == 'release' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'release' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -105,7 +105,7 @@ jobs:
           prerelease: true
           files: artifacts/*
           body: |
-            Automated build from main branch.
+            Automated build from ${{ github.ref_name }} branch.
 
             Commit: ${{ github.sha }}
 
