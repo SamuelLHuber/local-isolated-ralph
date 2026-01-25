@@ -10,12 +10,18 @@ let
   # Use ralph user (defined in ralph.nix) - NixOS manages users declaratively
   targetUser = config.services.ralph.user or "ralph";
 
-  # Extract lima-guestagent from the compressed archive
-  limaGuestAgent = pkgs.runCommand "lima-guestagent" { } ''
-    mkdir -p $out/bin
-    ${pkgs.gzip}/bin/gunzip -c ${pkgs.lima}/share/lima/lima-guestagent.Linux-${pkgs.stdenv.hostPlatform.linuxArch}.gz > $out/bin/lima-guestagent
-    chmod +x $out/bin/lima-guestagent
-  '';
+  # Guest agent is only available for aarch64 in nixpkgs lima package
+  # It's only needed for VZ driver (macOS Virtualization Framework) anyway
+  isAarch64 = pkgs.stdenv.hostPlatform.isAarch64;
+
+  # Extract lima-guestagent from the compressed archive (aarch64 only)
+  limaGuestAgent = if isAarch64 then
+    pkgs.runCommand "lima-guestagent" { } ''
+      mkdir -p $out/bin
+      ${pkgs.gzip}/bin/gunzip -c ${pkgs.lima}/share/lima/lima-guestagent.Linux-aarch64.gz > $out/bin/lima-guestagent
+      chmod +x $out/bin/lima-guestagent
+    ''
+  else null;
 
   limaInit = pkgs.writeShellScriptBin "lima-init" ''
     set -e
@@ -94,8 +100,9 @@ in {
       };
     };
 
-    # Lima guest agent (port forwarding)
-    systemd.services.lima-guestagent = {
+    # Lima guest agent (port forwarding via vsock)
+    # Only available on aarch64 - VZ driver is macOS-only anyway
+    systemd.services.lima-guestagent = mkIf isAarch64 {
       description = "Lima guest agent";
       wantedBy = [ "multi-user.target" ];
       after = [ "lima-init.service" "network-online.target" ];
