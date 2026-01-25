@@ -115,7 +115,7 @@ download_image() {
   echo ">>> Downloading checksum..." >&2
   if curl -fSL -o "${cached_compressed}.sha256" "$checksum_url" 2>/dev/null; then
     echo ">>> Verifying checksum..." >&2
-    if ! (cd "$CACHE_DIR" && sha256_check -c "${compressed_name}.sha256"); then
+    if ! (cd "$CACHE_DIR" && sha256_check -c "${compressed_name}.sha256" >&2); then
       echo "Error: Checksum verification failed!" >&2
       rm -f "$cached_compressed" "${cached_compressed}.sha256"
       exit 1

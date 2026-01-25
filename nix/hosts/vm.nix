@@ -5,6 +5,7 @@
 {
   imports = [
     (modulesPath + "/profiles/qemu-guest.nix")
+    ../modules/lima.nix
   ];
 
   # Enable Ralph with full features
@@ -16,14 +17,11 @@
     autonomousMode = true;
   };
 
-  # Cloud-init for Lima/cloud VM compatibility
-  services.cloud-init = {
-    enable = true;
-    network.enable = true;
-  };
+  # Lima guest support for macOS integration
+  services.lima-guest.enable = true;
 
   # VM optimizations
-  boot.kernelParams = [ "console=ttyS0" ];
+  boot.kernelParams = [ "console=ttyS0" "console=hvc0" ];
 
   # For Lima/Colima - optional mount for host directories
   fileSystems."/mnt/host" = {
