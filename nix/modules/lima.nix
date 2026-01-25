@@ -7,60 +7,64 @@ with lib;
 let
   cfg = config.services.lima-guest;
 
+  # Use ralph user (defined in ralph.nix) - NixOS manages users declaratively
+  targetUser = config.services.ralph.user or "ralph";
+
+  # Extract lima-guestagent from the compressed archive
+  limaGuestAgent = pkgs.runCommand "lima-guestagent" { } ''
+    mkdir -p $out/bin
+    ${pkgs.gzip}/bin/gunzip -c ${pkgs.lima}/share/lima/lima-guestagent.Linux-${pkgs.stdenv.hostPlatform.linuxArch}.gz > $out/bin/lima-guestagent
+    chmod +x $out/bin/lima-guestagent
+  '';
+
   limaInit = pkgs.writeShellScriptBin "lima-init" ''
     set -e
     LIMA_CIDATA=/mnt/lima-cidata
+    TARGET_USER="${targetUser}"
+
+    echo "lima-init: Starting initialization for user $TARGET_USER"
 
     if [[ ! -d "$LIMA_CIDATA" ]]; then
-      echo "lima-init: No cidata found, skipping"
+      echo "lima-init: No cidata found at $LIMA_CIDATA, skipping"
       exit 0
     fi
 
-    # Read user data
-    if [[ -f "$LIMA_CIDATA/user-data" ]]; then
-      USER_DATA="$LIMA_CIDATA/user-data"
-    else
-      echo "lima-init: No user-data found"
-      exit 0
-    fi
-
-    # Extract username from Lima's user-data (YAML)
-    LIMA_USER=$(grep -A1 "^users:" "$USER_DATA" 2>/dev/null | grep "name:" | head -1 | sed 's/.*name: *//' || echo "")
-
-    if [[ -z "$LIMA_USER" ]]; then
-      echo "lima-init: Could not determine user from user-data"
-      exit 0
-    fi
-
-    echo "lima-init: Setting up user $LIMA_USER"
-
-    # Create user if it doesn't exist
-    if ! id "$LIMA_USER" &>/dev/null; then
-      useradd -m -G wheel,docker "$LIMA_USER" || true
-    fi
-
-    # Setup SSH keys from meta-data or user-data
-    SSH_DIR="/home/$LIMA_USER/.ssh"
+    # Setup SSH keys for the ralph user
+    SSH_DIR="/home/$TARGET_USER/.ssh"
     mkdir -p "$SSH_DIR"
 
-    # Lima puts SSH keys in meta-data
+    # Clear any existing keys from cidata (keep manually added ones)
+    touch "$SSH_DIR/authorized_keys"
+
+    # Lima cloud-config format: ssh-authorized-keys under users section
+    if [[ -f "$LIMA_CIDATA/user-data" ]]; then
+      echo "lima-init: Reading SSH keys from user-data"
+      # Extract SSH keys from cloud-config format (handles both ssh-authorized-keys and ssh_authorized_keys)
+      # Keys are listed as "      - ssh-rsa ..." or "      - ssh-ed25519 ..."
+      ${pkgs.gnugrep}/bin/grep -E '^\s+- "?ssh-' "$LIMA_CIDATA/user-data" 2>/dev/null | \
+        ${pkgs.gnused}/bin/sed 's/^\s*- "//; s/"$//' >> "$SSH_DIR/authorized_keys" || true
+    fi
+
+    # Also check meta-data for public-keys (EC2-style format)
     if [[ -f "$LIMA_CIDATA/meta-data" ]]; then
-      # Extract SSH keys (Lima format)
-      grep -A100 "public-keys:" "$LIMA_CIDATA/meta-data" 2>/dev/null | \
-        grep -E "^\s+-" | sed 's/^\s*- //' > "$SSH_DIR/authorized_keys" || true
+      echo "lima-init: Reading SSH keys from meta-data"
+      ${pkgs.gnugrep}/bin/grep -A100 "public-keys:" "$LIMA_CIDATA/meta-data" 2>/dev/null | \
+        ${pkgs.gnugrep}/bin/grep -E '^\s+-' | ${pkgs.gnused}/bin/sed 's/^\s*- //' >> "$SSH_DIR/authorized_keys" || true
     fi
 
-    # Also check user-data for ssh_authorized_keys
-    if [[ -f "$USER_DATA" ]]; then
-      grep -A100 "ssh_authorized_keys:" "$USER_DATA" 2>/dev/null | \
-        grep -E "^\s+-" | sed 's/^\s*- //' >> "$SSH_DIR/authorized_keys" || true
+    # Deduplicate keys
+    if [[ -f "$SSH_DIR/authorized_keys" ]]; then
+      sort -u "$SSH_DIR/authorized_keys" > "$SSH_DIR/authorized_keys.tmp" && \
+        mv "$SSH_DIR/authorized_keys.tmp" "$SSH_DIR/authorized_keys"
     fi
 
-    chown -R "$LIMA_USER:$LIMA_USER" "$SSH_DIR"
+    # Fix ownership and permissions
+    chown -R "$TARGET_USER:users" "$SSH_DIR"
     chmod 700 "$SSH_DIR"
     chmod 600 "$SSH_DIR/authorized_keys" 2>/dev/null || true
 
-    echo "lima-init: Setup complete for $LIMA_USER"
+    KEY_COUNT=$(wc -l < "$SSH_DIR/authorized_keys" 2>/dev/null || echo 0)
+    echo "lima-init: Setup complete - $KEY_COUNT SSH keys installed for $TARGET_USER"
   '';
 
 in {
@@ -99,7 +103,7 @@ in {
 
       serviceConfig = {
         Type = "simple";
-        ExecStart = "${pkgs.lima}/share/lima/lima-guestagent daemon --vsock-port 2222";
+        ExecStart = "${limaGuestAgent}/bin/lima-guestagent daemon --vsock-port 2222";
         Restart = "always";
         RestartSec = "5s";
       };
