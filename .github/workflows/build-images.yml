@@ -61,10 +61,14 @@ jobs:
 
           ls -lh ../output/
 
-      - name: Generate checksum
+      - name: Compress and checksum
         run: |
           cd output
-          sha256sum ralph-${{ matrix.arch }}.qcow2 > ralph-${{ matrix.arch }}.qcow2.sha256
+          echo "Compressing image with zstd..."
+          zstd -T0 -19 ralph-${{ matrix.arch }}.qcow2 -o ralph-${{ matrix.arch }}.qcow2.zst
+          rm ralph-${{ matrix.arch }}.qcow2
+          sha256sum ralph-${{ matrix.arch }}.qcow2.zst > ralph-${{ matrix.arch }}.qcow2.zst.sha256
+          ls -lh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

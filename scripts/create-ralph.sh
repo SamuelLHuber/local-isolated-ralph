@@ -80,31 +80,26 @@ download_image() {
   local arch="$1"
   local repo="$2"
   local image_name="ralph-${arch}.qcow2"
+  local compressed_name="${image_name}.zst"
   local cached_image="$CACHE_DIR/$image_name"
-  local checksum_file="$CACHE_DIR/${image_name}.sha256"
+  local cached_compressed="$CACHE_DIR/$compressed_name"
 
   mkdir -p "$CACHE_DIR"
 
-  local download_url="https://github.com/${repo}/releases/latest/download/${image_name}"
-  local checksum_url="https://github.com/${repo}/releases/latest/download/${image_name}.sha256"
+  local download_url="https://github.com/${repo}/releases/latest/download/${compressed_name}"
+  local checksum_url="https://github.com/${repo}/releases/latest/download/${compressed_name}.sha256"
 
   echo ">>> Checking for cached image..."
-  if [[ -f "$cached_image" && -f "$checksum_file" ]]; then
-    echo "    Found cached image, verifying checksum..."
-    if (cd "$CACHE_DIR" && sha256_check -c "${image_name}.sha256") &>/dev/null; then
-      echo "    Checksum valid, using cached image."
-      echo "$cached_image"
-      return 0
-    else
-      echo "    Checksum mismatch, re-downloading..."
-      rm -f "$cached_image" "$checksum_file"
-    fi
+  if [[ -f "$cached_image" ]]; then
+    echo "    Using cached image."
+    echo "$cached_image"
+    return 0
   fi
 
   echo ">>> Downloading NixOS image from GitHub Releases..."
   echo "    URL: $download_url"
 
-  if ! curl -fSL --progress-bar -o "$cached_image" "$download_url"; then
+  if ! curl -fSL --progress-bar -o "$cached_compressed" "$download_url"; then
     echo "Error: Failed to download image from $download_url" >&2
     echo "" >&2
     echo "Possible causes:" >&2
@@ -113,21 +108,32 @@ download_image() {
     echo "  - Network issue" >&2
     echo "" >&2
     echo "To build locally instead: $0 --local-build $NAME $CPU $MEMORY $DISK" >&2
-    rm -f "$cached_image"
+    rm -f "$cached_compressed"
     exit 1
   fi
 
   echo ">>> Downloading checksum..."
-  if curl -fSL -o "$checksum_file" "$checksum_url" 2>/dev/null; then
+  if curl -fSL -o "${cached_compressed}.sha256" "$checksum_url" 2>/dev/null; then
     echo ">>> Verifying checksum..."
-    if ! (cd "$CACHE_DIR" && sha256_check -c "${image_name}.sha256"); then
+    if ! (cd "$CACHE_DIR" && sha256_check -c "${compressed_name}.sha256"); then
       echo "Error: Checksum verification failed!" >&2
-      rm -f "$cached_image" "$checksum_file"
+      rm -f "$cached_compressed" "${cached_compressed}.sha256"
       exit 1
     fi
   else
     echo "    Warning: No checksum file available, skipping verification"
   fi
+
+  echo ">>> Decompressing image..."
+  if command -v zstd &>/dev/null; then
+    zstd -d "$cached_compressed" -o "$cached_image"
+  elif command -v unzstd &>/dev/null; then
+    unzstd "$cached_compressed" -o "$cached_image"
+  else
+    echo "Error: zstd not installed. Install with: brew install zstd (macOS) or apt install zstd (Linux)" >&2
+    exit 1
+  fi
+  rm -f "$cached_compressed" "${cached_compressed}.sha256"
 
   echo "$cached_image"
 }
