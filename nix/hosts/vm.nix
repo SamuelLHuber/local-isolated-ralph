@@ -16,6 +16,12 @@
     autonomousMode = true;
   };
 
+  # Cloud-init for Lima/cloud VM compatibility
+  services.cloud-init = {
+    enable = true;
+    network.enable = true;
+  };
+
   # VM optimizations
   boot.kernelParams = [ "console=ttyS0" ];
 

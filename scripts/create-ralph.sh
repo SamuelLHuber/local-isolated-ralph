@@ -86,18 +86,18 @@ download_image() {
 
   mkdir -p "$CACHE_DIR"
 
-  local download_url="https://github.com/${repo}/releases/latest/download/${compressed_name}"
-  local checksum_url="https://github.com/${repo}/releases/latest/download/${compressed_name}.sha256"
+  local download_url="https://github.com/${repo}/releases/download/latest/${compressed_name}"
+  local checksum_url="https://github.com/${repo}/releases/download/latest/${compressed_name}.sha256"
 
-  echo ">>> Checking for cached image..."
+  echo ">>> Checking for cached image..." >&2
   if [[ -f "$cached_image" ]]; then
-    echo "    Using cached image."
+    echo "    Using cached image." >&2
     echo "$cached_image"
     return 0
   fi
 
-  echo ">>> Downloading NixOS image from GitHub Releases..."
-  echo "    URL: $download_url"
+  echo ">>> Downloading NixOS image from GitHub Releases..." >&2
+  echo "    URL: $download_url" >&2
 
   if ! curl -fSL --progress-bar -o "$cached_compressed" "$download_url"; then
     echo "Error: Failed to download image from $download_url" >&2
@@ -112,23 +112,23 @@ download_image() {
     exit 1
   fi
 
-  echo ">>> Downloading checksum..."
+  echo ">>> Downloading checksum..." >&2
   if curl -fSL -o "${cached_compressed}.sha256" "$checksum_url" 2>/dev/null; then
-    echo ">>> Verifying checksum..."
+    echo ">>> Verifying checksum..." >&2
     if ! (cd "$CACHE_DIR" && sha256_check -c "${compressed_name}.sha256"); then
       echo "Error: Checksum verification failed!" >&2
       rm -f "$cached_compressed" "${cached_compressed}.sha256"
       exit 1
     fi
   else
-    echo "    Warning: No checksum file available, skipping verification"
+    echo "    Warning: No checksum file available, skipping verification" >&2
   fi
 
-  echo ">>> Decompressing image..."
+  echo ">>> Decompressing image..." >&2
   if command -v zstd &>/dev/null; then
-    zstd -d "$cached_compressed" -o "$cached_image"
+    zstd -d "$cached_compressed" -o "$cached_image" >&2
   elif command -v unzstd &>/dev/null; then
-    unzstd "$cached_compressed" -o "$cached_image"
+    unzstd "$cached_compressed" -o "$cached_image" >&2
   else
     echo "Error: zstd not installed. Install with: brew install zstd (macOS) or apt install zstd (Linux)" >&2
     exit 1
@@ -143,7 +143,7 @@ build_nixos_image() {
   local image_path="${NIX_DIR}/result"
 
   if [[ "$(uname -s)" == "Darwin" ]]; then
-    echo ">>> Checking for Linux builder (required for local builds on macOS)..."
+    echo ">>> Checking for Linux builder (required for local builds on macOS)..." >&2
     if ! nix build --dry-run --expr '(import <nixpkgs> { system = "x86_64-linux"; }).hello' 2>/dev/null; then
       echo "Error: No Linux builder available for local builds on macOS." >&2
       echo "" >&2
@@ -157,11 +157,11 @@ build_nixos_image() {
   fi
 
   if [[ ! -L "$image_path" ]] || [[ ! -e "$image_path" ]]; then
-    echo ">>> Building NixOS image ($format for $SYSTEM)..."
-    echo "    This may take a few minutes on first run..."
+    echo ">>> Building NixOS image ($format for $SYSTEM)..." >&2
+    echo "    This may take a few minutes on first run..." >&2
     (cd "$NIX_DIR" && nix build ".#packages.${SYSTEM}.${format}" -o result)
   else
-    echo ">>> Using cached NixOS image at $image_path"
+    echo ">>> Using cached NixOS image at $image_path" >&2
   fi
 
   local qcow_file
@@ -188,8 +188,8 @@ get_image() {
   repo=$(detect_github_repo)
 
   if [[ -z "$repo" ]]; then
-    echo ">>> No GitHub repository configured, falling back to local build..."
-    echo "    (Set RALPH_REPO=owner/repo or add a git remote to enable downloads)"
+    echo ">>> No GitHub repository configured, falling back to local build..." >&2
+    echo "    (Set RALPH_REPO=owner/repo or add a git remote to enable downloads)" >&2
     build_nixos_image "qcow"
     return
   fi
@@ -379,9 +379,6 @@ mounts:
     mountPoint: "/workspace"
     writable: true
 
-networks:
-  - lima: shared
-
 portForwards:
   - guestPort: 9222
     hostPort: 9222
@@ -397,8 +394,6 @@ ssh:
 containerd:
   system: false
   user: false
-
-provision: []
 EOF
 
   echo ">>> Starting Lima VM..."
