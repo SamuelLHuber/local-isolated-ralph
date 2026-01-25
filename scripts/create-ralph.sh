@@ -256,6 +256,13 @@ copy_credentials() {
     scp $ssh_opts -r ~/.config/gh "$user@$host:~/.config/" 2>/dev/null || echo "    Warning: Failed to copy ~/.config/gh"
   fi
 
+  if [[ -f ~/.codex/auth.json ]]; then
+    echo "    Copying ~/.codex/auth.json..."
+    ssh $ssh_opts "$user@$host" "mkdir -p ~/.codex && chmod 700 ~/.codex" 2>/dev/null || true
+    scp $ssh_opts ~/.codex/auth.json "$user@$host:~/.codex/" 2>/dev/null || echo "    Warning: Failed to copy ~/.codex/auth.json"
+    ssh $ssh_opts "$user@$host" "chmod 600 ~/.codex/auth.json" 2>/dev/null || true
+  fi
+
   echo "    Copying ralph scripts..."
   ssh $ssh_opts "$user@$host" "mkdir -p ~/ralph" 2>/dev/null || true
   if [[ -f "$SCRIPT_DIR/ralph-loop.sh" ]]; then
@@ -312,6 +319,14 @@ copy_credentials_lima() {
     echo "    Copying ~/.config/gh..."
     limactl shell "$vm_name" sudo -u "$user" mkdir -p "/home/$user/.config" 2>/dev/null || true
     tar -C ~/.config -cf - gh 2>/dev/null | limactl shell "$vm_name" sudo -u "$user" tar -C "/home/$user/.config" -xf - 2>/dev/null || echo "    Warning: Failed to copy ~/.config/gh"
+  fi
+
+  if [[ -f ~/.codex/auth.json ]]; then
+    echo "    Copying ~/.codex/auth.json..."
+    limactl shell "$vm_name" sudo -u "$user" mkdir -p "/home/$user/.codex" 2>/dev/null || true
+    limactl shell "$vm_name" sudo -u "$user" chmod 700 "/home/$user/.codex" 2>/dev/null || true
+    cat ~/.codex/auth.json | limactl shell "$vm_name" sudo -u "$user" tee "/home/$user/.codex/auth.json" > /dev/null 2>&1 || echo "    Warning: Failed to copy ~/.codex/auth.json"
+    limactl shell "$vm_name" sudo -u "$user" chmod 600 "/home/$user/.codex/auth.json" 2>/dev/null || true
   fi
 
   echo "    Copying ralph scripts..."
