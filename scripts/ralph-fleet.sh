@@ -27,7 +27,7 @@ case "$RALPH_AGENT" in
     AGENT_CMD="claude --dangerously-skip-permissions"
     ;;
   codex)
-    AGENT_CMD="codex --yolo"
+    AGENT_CMD="codex exec --dangerously-bypass-approvals-and-sandbox"
     ;;
   opencode)
     AGENT_CMD="opencode"

@@ -26,7 +26,7 @@ case "$RALPH_AGENT" in
     AGENT_CMD="claude --dangerously-skip-permissions"
     ;;
   codex)
-    AGENT_CMD="codex --yolo"
+    AGENT_CMD="codex exec --dangerously-bypass-approvals-and-sandbox"
     ;;
   opencode)
     AGENT_CMD="opencode"
@@ -63,55 +63,62 @@ if [[ "$OS" == "macos" ]]; then
   fi
 
   VM_WORK_DIR="/home/ralph/work/${VM_NAME}"
-  limactl shell "$VM_NAME" sudo -u ralph mkdir -p "$VM_WORK_DIR" "$VM_WORK_DIR/project"
+  limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph mkdir -p "$VM_WORK_DIR" "$VM_WORK_DIR/project"
 
-  cat "$PROMPT_FILE" | limactl shell "$VM_NAME" sudo -u ralph tee "${VM_WORK_DIR}/PROMPT.md" > /dev/null
+  cat "$PROMPT_FILE" | limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph tee "${VM_WORK_DIR}/PROMPT.md" > /dev/null
 
   if [[ -n "$PROJECT_DIR" ]]; then
     echo "[$VM_NAME] Syncing project directory..."
-    tar -C "$PROJECT_DIR" --no-xattrs --exclude='node_modules' --exclude='.git' -cf - . | limactl shell "$VM_NAME" sudo -u ralph tar -C "${VM_WORK_DIR}/project" -xf -
+    tar -C "$PROJECT_DIR" --no-xattrs --exclude='node_modules' --exclude='.git' -cf - . | limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph tar -C "${VM_WORK_DIR}/project" -xf -
     VM_PROJECT_DIR="${VM_WORK_DIR}/project"
+
+    # Install dependencies if package.json exists
+    if [[ -f "$PROJECT_DIR/package.json" ]]; then
+      echo "[$VM_NAME] Installing dependencies (bun install)..."
+      limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph bash -c "cd '${VM_PROJECT_DIR}' && export PATH=\"\$HOME/.bun/bin:\$PATH\" && bun install" 2>&1 | tail -5
+    fi
   else
     VM_PROJECT_DIR="$VM_WORK_DIR"
   fi
 
   echo "[$VM_NAME] Starting Ralph loop (max iterations: $MAX_ITERATIONS)..."
-  limactl shell "$VM_NAME" sudo -u ralph -i bash -c "
-    cd '$VM_PROJECT_DIR'
-    echo '[$VM_NAME] Working in: \$(pwd)'
-    echo '[$VM_NAME] Starting loop...'
-    export PATH=\"\$HOME/.bun/bin:\$PATH\"
-    export MAX_ITERATIONS=$MAX_ITERATIONS
+  limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph bash <<EOF
+    cd "${VM_PROJECT_DIR}"
+    echo "[$VM_NAME] Working in: \$(pwd)"
+    echo "[$VM_NAME] Starting loop..."
+    export PATH="\$HOME/.bun/bin:\$PATH"
+    export MAX_ITERATIONS=${MAX_ITERATIONS}
+    export RALPH_AGENT=${RALPH_AGENT}
 
     # Use ralph-loop.sh if available, otherwise inline loop
     if [[ -x ~/ralph/loop.sh ]]; then
-      ~/ralph/loop.sh '${VM_WORK_DIR}/PROMPT.md'
+      ~/ralph/loop.sh "${VM_WORK_DIR}/PROMPT.md"
     else
       ITERATION=0
-      while [[ $MAX_ITERATIONS -eq 0 ]] || [[ \$ITERATION -lt $MAX_ITERATIONS ]]; do
+      while [[ ${MAX_ITERATIONS} -eq 0 ]] || [[ \$ITERATION -lt ${MAX_ITERATIONS} ]]; do
         ITERATION=\$((ITERATION + 1))
-        echo ''
-        echo '=== Iteration \$ITERATION / $MAX_ITERATIONS ==='
-        cat '${VM_WORK_DIR}/PROMPT.md' | $AGENT_CMD 2>&1 | tee /tmp/ralph-output.txt
+        echo ""
+        echo "=== Iteration \$ITERATION / ${MAX_ITERATIONS} ==="
+        cat "${VM_WORK_DIR}/PROMPT.md" | ${AGENT_CMD} 2>&1 | tee /tmp/ralph-output.txt
         EXIT_CODE=\${PIPESTATUS[1]}
         if [[ \$EXIT_CODE -ne 0 ]]; then
-          echo '[$VM_NAME] Agent exited with code \$EXIT_CODE'
+          echo "[$VM_NAME] Agent exited with code \$EXIT_CODE"
         fi
         # Check for DONE status
-        if grep -q '\"status\":[[:space:]]*\"DONE\"' /tmp/ralph-output.txt 2>/dev/null; then
-          echo '[$VM_NAME] Status: DONE - task complete!'
+        if grep -q '"status":[[:space:]]*"DONE"' /tmp/ralph-output.txt 2>/dev/null; then
+          echo "[$VM_NAME] Status: DONE - task complete!"
           exit 0
         fi
         # Check for BLOCKED status
-        if grep -q '\"status\":[[:space:]]*\"BLOCKED\"' /tmp/ralph-output.txt 2>/dev/null; then
-          echo '[$VM_NAME] Status: BLOCKED - needs human input'
+        if grep -q '"status":[[:space:]]*"BLOCKED"' /tmp/ralph-output.txt 2>/dev/null; then
+          echo "[$VM_NAME] Status: BLOCKED - needs human input"
           exit 0
         fi
         sleep 1
       done
-      echo '[$VM_NAME] Max iterations ($MAX_ITERATIONS) reached'
+      echo "[$VM_NAME] Max iterations (${MAX_ITERATIONS}) reached"
     fi
-  "
+EOF
 
 else
   VM_IP=$(virsh domifaddr "$VM_NAME" 2>/dev/null | grep ipv4 | awk '{print $4}' | cut -d/ -f1)
@@ -136,8 +143,14 @@ else
 
   if [[ -n "$PROJECT_DIR" ]]; then
     echo "[$VM_NAME] Syncing project directory..."
-    rsync -az --delete "$PROJECT_DIR/" "ralph@${VM_IP}:${VM_WORK_DIR}/project/"
+    rsync -az --delete --exclude='node_modules' --exclude='.git' "$PROJECT_DIR/" "ralph@${VM_IP}:${VM_WORK_DIR}/project/"
     VM_PROJECT_DIR="${VM_WORK_DIR}/project"
+
+    # Install dependencies if package.json exists
+    if [[ -f "$PROJECT_DIR/package.json" ]]; then
+      echo "[$VM_NAME] Installing dependencies (bun install)..."
+      ssh "ralph@${VM_IP}" "cd '${VM_PROJECT_DIR}' && export PATH=\"\$HOME/.bun/bin:\$PATH\" && bun install" 2>&1 | tail -5
+    fi
   else
     VM_PROJECT_DIR="$VM_WORK_DIR"
   fi

@@ -150,10 +150,16 @@ Generate a token that persists across sessions:
 # On host (macOS), generate a token
 claude setup-token
 
-# This creates ~/.claude/.credentials.json
-# Copy it to the VM
-tar -C ~ -cf - .claude/.credentials.json | \
-  limactl shell ralph-1 sudo -u ralph tar -C /home/ralph -xf -
+# Put the token in ralph.env so it can be synced to VMs
+./scripts/create-ralph-env.sh
+# Edit ~/.config/ralph/ralph.env and set:
+# export CLAUDE_CODE_OAUTH_TOKEN="..."
+
+# Sync credentials to the VM
+./scripts/sync-credentials.sh ralph-1
+
+# Or sync all credentials at once
+./scripts/sync-credentials.sh ralph-1
 ```
 
 ### Verify auth works
@@ -210,12 +216,23 @@ Inside the VM, the host is reachable at `host.lima.internal`:
 ```bash
 limactl shell ralph-1
 
-# Test connectivity to host telemetry
-curl http://host.lima.internal:3000/api/health   # Grafana
+# Test connectivity to LAOS on host
+curl http://host.lima.internal:3010/api/health   # Grafana
 curl http://host.lima.internal:3100/ready        # Loki
+curl http://host.lima.internal:3200/ready        # Tempo
 ```
 
-Environment variables are pre-configured in the NixOS image.
+LAOS source of truth: https://github.com/dtechvision/laos
+
+Set env vars in the VM or project to point to LAOS on the host (recommended: use `./scripts/create-ralph-env.sh` and re-sync credentials):
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://host.lima.internal:4317"
+export LOKI_URL="http://host.lima.internal:3100"
+export SENTRY_DSN="http://<key>@host.lima.internal:9000/1"
+export POSTHOG_HOST="http://host.lima.internal:8001"
+export POSTHOG_API_KEY="phc_xxx"
+```
 
 ## 8. Running Multiple Ralphs in Parallel
 

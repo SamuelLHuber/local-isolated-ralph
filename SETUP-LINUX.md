@@ -126,10 +126,13 @@ Generate a token that persists across sessions:
 # On host, generate a token
 claude setup-token
 
-# This creates ~/.claude/.credentials.json
-# Copy it to the VM
-VM_IP=$(virsh domifaddr ralph-1 | grep ipv4 | awk '{print $4}' | cut -d/ -f1)
-scp ~/.claude/.credentials.json ralph@$VM_IP:~/.claude/
+# Put the token in ralph.env so it can be synced to VMs
+./scripts/create-ralph-env.sh
+# Edit ~/.config/ralph/ralph.env and set:
+# export CLAUDE_CODE_OAUTH_TOKEN="..."
+
+# Sync credentials to the VM
+./scripts/sync-credentials.sh ralph-1
 ```
 
 ### Verify auth works
@@ -186,12 +189,23 @@ The host is reachable at `192.168.122.1` (default libvirt gateway):
 ```bash
 ssh ralph@$VM_IP
 
-# Test connectivity to host telemetry
-curl http://192.168.122.1:3000/api/health   # Grafana
+# Test connectivity to LAOS on host
+curl http://192.168.122.1:3010/api/health   # Grafana
 curl http://192.168.122.1:3100/ready        # Loki
+curl http://192.168.122.1:3200/ready        # Tempo
 ```
 
-Environment variables are pre-configured in the NixOS image.
+LAOS source of truth: https://github.com/dtechvision/laos
+
+Set env vars in the VM or project to point to LAOS on the host (recommended: use `./scripts/create-ralph-env.sh` and re-sync credentials):
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://192.168.122.1:4317"
+export LOKI_URL="http://192.168.122.1:3100"
+export SENTRY_DSN="http://<key>@192.168.122.1:9000/1"
+export POSTHOG_HOST="http://192.168.122.1:8001"
+export POSTHOG_API_KEY="phc_xxx"
+```
 
 ### If VMs can't reach host
 

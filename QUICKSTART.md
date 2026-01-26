@@ -25,19 +25,36 @@ virsh list --all  # Should work without errors
 
 ---
 
-## Step 1: Start Telemetry (Optional but Recommended)
+## Step 1: Start LAOS (Optional but Recommended)
 
-The telemetry stack lets you monitor your agent's progress in Grafana.
+The LAOS stack lets you monitor your agent's progress in Grafana, plus Sentry/PostHog.
 
 ```bash
-cd telemetry
+# Source of truth: https://github.com/dtechvision/laos
+mkdir -p ~/git
+if [[ -d ~/git/laos/.git ]]; then
+  (cd ~/git/laos && git pull)
+else
+  git clone https://github.com/dtechvision/laos.git ~/git/laos
+fi
+cd ~/git/laos
 docker compose up -d
 
 # Verify it's running
-curl http://localhost:3000/api/health  # Grafana
+curl http://localhost:3010/api/health  # Grafana
 ```
 
-Open http://localhost:3000 (login: admin/admin) to see dashboards.
+Open http://localhost:3010 (login: admin/admin) to see dashboards.
+
+Optional: create a shared env file so LAOS endpoints get copied into VMs:
+
+```bash
+cd /path/to/local-isolated-ralph
+./scripts/create-ralph-env.sh
+# Edit ~/.config/ralph/ralph.env and set:
+# macOS (Lima):  LAOS_HOST=host.lima.internal
+# Linux (libvirt): LAOS_HOST=192.168.122.1
+```
 
 ---
 
@@ -108,6 +125,20 @@ claude --version
 ```
 
 Exit the VM when done: `exit`
+
+If you need to re-sync credentials later:
+
+```bash
+./scripts/sync-credentials.sh ralph-1
+```
+
+To store a Claude Code token for syncing:
+
+```bash
+./scripts/create-ralph-env.sh
+# Edit ~/.config/ralph/ralph.env and set:
+# export CLAUDE_CODE_OAUTH_TOKEN="..."
+```
 
 ---
 
@@ -200,7 +231,7 @@ The agent will:
 **Monitor progress:**
 
 - Watch the terminal output directly
-- Or check Grafana at http://localhost:3000 for logs
+- Or check Grafana at http://localhost:3010 for logs
 - Check iteration status: `cat ~/work/state/status`
 
 **If the agent gets blocked:**
@@ -280,13 +311,13 @@ scp -r ~/.claude dev@<VM_IP>:~/
 - The agent stops on DONE, BLOCKED, or NEEDS_INPUT
 - Set `MAX_ITERATIONS=10` to limit loops during testing
 
-### Can't reach telemetry from VM
+### Can't reach LAOS from VM
 
 **macOS**: Use `host.lima.internal`
 **Linux**: Use `192.168.122.1` (libvirt default gateway)
 
 Test from inside VM:
 ```bash
-curl http://host.lima.internal:3000/api/health   # macOS
-curl http://192.168.122.1:3000/api/health        # Linux
+curl http://host.lima.internal:3010/api/health   # macOS
+curl http://192.168.122.1:3010/api/health        # Linux
 ```

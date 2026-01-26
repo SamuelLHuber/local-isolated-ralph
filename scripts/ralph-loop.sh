@@ -19,6 +19,15 @@ PROMPT_FILE="${1:-./PROMPT.md}"
 STATE_DIR="${2:-${RALPH_STATE_DIR:-./state}}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-100}"
 RALPH_AGENT="${RALPH_AGENT:-claude}"
+TOKEN_ENV_FILE="${HOME}/.config/ralph/ralph.env"
+
+if [[ -f "$TOKEN_ENV_FILE" ]]; then
+  # Make token available for non-interactive runs.
+  set -a
+  # shellcheck disable=SC1090
+  source "$TOKEN_ENV_FILE"
+  set +a
+fi
 
 # Set the agent command based on RALPH_AGENT
 case "$RALPH_AGENT" in
@@ -26,7 +35,7 @@ case "$RALPH_AGENT" in
     AGENT_CMD="claude --dangerously-skip-permissions"
     ;;
   codex)
-    AGENT_CMD="codex --yolo"
+    AGENT_CMD="codex exec --dangerously-bypass-approvals-and-sandbox"
     ;;
   opencode)
     AGENT_CMD="opencode"

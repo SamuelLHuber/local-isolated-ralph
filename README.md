@@ -35,7 +35,8 @@ Agents handle:
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │  Host Machine                                                    │
-│  ├── Telemetry (Grafana/Loki) ◄── all agents report here        │
+│  ├── LAOS (Grafana/Loki/Tempo/Prometheus/Sentry/PostHog) ◄──     │
+│  │   all agents report here                                     │
 │  ├── Message queue (filesystem) ◄── agents coordinate           │
 │  │                                                               │
 │  ├── ralph-1 (VM) ──── branch: feat/auth                        │
@@ -53,8 +54,23 @@ Each VM has the repo cloned and works on its own branch. For advanced parallel w
 ### 1. Setup infrastructure
 
 ```bash
-# Start telemetry
-cd telemetry && docker compose up -d
+# Start LAOS (shared host observability stack)
+# Source of truth: https://github.com/dtechvision/laos
+mkdir -p ~/git
+if [[ -d ~/git/laos/.git ]]; then
+  (cd ~/git/laos && git pull)
+else
+  git clone https://github.com/dtechvision/laos.git ~/git/laos
+fi
+cd ~/git/laos
+docker compose up -d
+
+# Optional: create a shared env file so LAOS endpoints get copied into VMs
+cd /path/to/local-isolated-ralph
+./scripts/create-ralph-env.sh
+# Edit ~/.config/ralph/ralph.env and set:
+# macOS (Lima):  LAOS_HOST=host.lima.internal
+# Linux (libvirt): LAOS_HOST=192.168.122.1
 
 # Create VMs (4 implementers + 1 reviewer)
 for i in 1 2 3 4; do ./scripts/create-ralph.sh ralph-$i 2 4 20; done
@@ -109,7 +125,7 @@ tmux attach -t ralph-fleet
 
 ```bash
 # Grafana for logs/traces
-open http://localhost:3000
+open http://localhost:3010
 
 # Or attach to specific Ralph
 tmux attach -t ralph-fleet:ralph-1
@@ -139,7 +155,7 @@ See **[WORKFLOW.md](./WORKFLOW.md)** for detailed patterns.
 | [WORKFLOW.md](./WORKFLOW.md) | Workflow patterns, multi-agent coordination |
 | [SETUP-MACOS.md](./SETUP-MACOS.md) | macOS setup with Colima |
 | [SETUP-LINUX.md](./SETUP-LINUX.md) | Linux setup with libvirt/QEMU |
-| [telemetry/README.md](./telemetry/README.md) | Observability stack |
+| [dtechvision/laos](https://github.com/dtechvision/laos) | Shared observability stack |
 | [prompts/](./prompts/) | Prompt templates (implementer, reviewer) |
 
 ## Scripts
@@ -169,7 +185,7 @@ See **[WORKFLOW.md](./WORKFLOW.md)** for detailed patterns.
 ## Prerequisites
 
 ```bash
-# Docker (for telemetry)
+# Docker (for LAOS)
 docker --version
 
 # SSH key (for VM access)
