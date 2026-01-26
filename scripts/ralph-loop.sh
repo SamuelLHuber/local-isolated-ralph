@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Ralph Loop - runs Claude in a continuous loop until DONE or BLOCKED
+# Ralph Loop - runs an agent in a continuous loop until DONE or BLOCKED
 # Usage: ./ralph-loop.sh [prompt-file] [state-dir]
 #
 # Examples:
@@ -11,12 +11,31 @@
 # Environment variables:
 #   MAX_ITERATIONS  - Max loops before stopping (default: 100)
 #   RALPH_STATE_DIR - Default state directory (default: ./state)
+#   RALPH_AGENT     - Which agent to use: claude, codex, opencode (default: claude)
 #
 set -euo pipefail
 
 PROMPT_FILE="${1:-./PROMPT.md}"
 STATE_DIR="${2:-${RALPH_STATE_DIR:-./state}}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-100}"
+RALPH_AGENT="${RALPH_AGENT:-claude}"
+
+# Set the agent command based on RALPH_AGENT
+case "$RALPH_AGENT" in
+  claude)
+    AGENT_CMD="claude --dangerously-skip-permissions"
+    ;;
+  codex)
+    AGENT_CMD="codex --yolo"
+    ;;
+  opencode)
+    AGENT_CMD="opencode"
+    ;;
+  *)
+    echo "Error: Unknown agent '$RALPH_AGENT'. Use: claude, codex, or opencode"
+    exit 1
+    ;;
+esac
 
 mkdir -p "$STATE_DIR"
 
@@ -36,6 +55,7 @@ else
 fi
 
 log "=== Ralph Loop Starting ==="
+log "Agent:  $RALPH_AGENT ($AGENT_CMD)"
 log "Prompt: $PROMPT_FILE"
 log "State:  $STATE_DIR"
 log "Starting at iteration: $ITERATION"
@@ -56,14 +76,14 @@ while [[ $ITERATION -lt $MAX_ITERATIONS ]]; do
   log "Iteration $ITERATION / $MAX_ITERATIONS"
   log "=========================================="
 
-  # Run Claude with the prompt
+  # Run agent with the prompt
   set +e
-  cat "$PROMPT_FILE" | claude --dangerously-skip-permissions 2>&1 | tee "$OUTPUT_FILE"
+  cat "$PROMPT_FILE" | $AGENT_CMD 2>&1 | tee "$OUTPUT_FILE"
   EXIT_CODE=${PIPESTATUS[1]}
   set -e
 
   if [[ $EXIT_CODE -ne 0 ]]; then
-    log "Claude exited with code $EXIT_CODE"
+    log "Agent exited with code $EXIT_CODE"
     echo "ERROR" > "$STATUS_FILE"
     sleep 5
     continue

@@ -12,10 +12,31 @@
 #       PROMPT.md
 #     ...
 #
+# Environment variables:
+#   RALPH_AGENT - Which agent to use: claude, codex, opencode (default: claude)
+#
 set -euo pipefail
 
 TASKS_DIR="${1:?Usage: $0 <tasks-dir>}"
 TASKS_DIR=$(realpath "$TASKS_DIR")
+RALPH_AGENT="${RALPH_AGENT:-claude}"
+
+# Set the agent command based on RALPH_AGENT
+case "$RALPH_AGENT" in
+  claude)
+    AGENT_CMD="claude --dangerously-skip-permissions"
+    ;;
+  codex)
+    AGENT_CMD="codex --yolo"
+    ;;
+  opencode)
+    AGENT_CMD="opencode"
+    ;;
+  *)
+    echo "Error: Unknown agent '$RALPH_AGENT'. Use: claude, codex, or opencode"
+    exit 1
+    ;;
+esac
 
 TASKS=()
 for dir in "$TASKS_DIR"/*/; do
@@ -91,12 +112,12 @@ for i in "${!TASKS[@]}"; do
   fi
 
   tmux send-keys -t "$FLEET_SESSION:$VM" "
-echo '=== $VM: $TASK_NAME ==='
+echo '=== $VM: $TASK_NAME (agent: $RALPH_AGENT) ==='
 $SSH_CMD bash -c '
   cd \"$TASK_DIR\"
   export PATH=\"\$HOME/.bun/bin:\$PATH\"
   while true; do
-    cat PROMPT.md | claude --dangerously-skip-permissions
+    cat PROMPT.md | $AGENT_CMD
     echo \"\"
     echo \"--- Iteration complete ---\"
     sleep 2

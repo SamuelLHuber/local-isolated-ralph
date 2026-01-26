@@ -172,7 +172,17 @@ ralph PROMPT.md
 **Option B: Use the dispatch script (runs from host)**
 
 ```bash
+# Basic usage (100 max iterations by default)
 ./scripts/dispatch.sh ralph-1 ~/tasks/my-first-task/PROMPT.md
+
+# Sync a local project directory to the VM
+./scripts/dispatch.sh ralph-1 ~/tasks/my-first-task/PROMPT.md ~/projects/my-app
+
+# Limit iterations (stops after 20 loops or DONE/BLOCKED)
+./scripts/dispatch.sh ralph-1 ~/tasks/my-first-task/PROMPT.md ~/projects/my-app 20
+
+# Or use environment variable
+MAX_ITERATIONS=10 ./scripts/dispatch.sh ralph-1 ~/tasks/my-first-task/PROMPT.md
 ```
 
 ---

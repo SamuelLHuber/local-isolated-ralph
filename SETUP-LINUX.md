@@ -232,9 +232,13 @@ done
 ### Dispatch tasks to the fleet
 
 ```bash
+# Basic dispatch (100 max iterations by default)
 ./scripts/dispatch.sh ralph-1 ~/tasks/feature-a/PROMPT.md &
 ./scripts/dispatch.sh ralph-2 ~/tasks/feature-b/PROMPT.md &
 wait
+
+# With local project and iteration limit
+./scripts/dispatch.sh ralph-1 ~/tasks/feature-a/PROMPT.md ~/projects/my-app 20
 ```
 
 ## 8. Create a Template VM (Fast Cloning)

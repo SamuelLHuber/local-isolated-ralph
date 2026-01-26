@@ -5,11 +5,32 @@
 #
 # Each task-dir should contain a PROMPT.md and be completely independent
 #
+# Environment variables:
+#   RALPH_AGENT - Which agent to use: claude, codex, opencode (default: claude)
+#
 set -euo pipefail
 
 VM_NAME="${1:?Usage: $0 <vm-name> <task-dir-1> <task-dir-2> ...}"
 shift
 TASK_DIRS=("$@")
+RALPH_AGENT="${RALPH_AGENT:-claude}"
+
+# Set the agent command based on RALPH_AGENT
+case "$RALPH_AGENT" in
+  claude)
+    AGENT_CMD="claude --dangerously-skip-permissions"
+    ;;
+  codex)
+    AGENT_CMD="codex --yolo"
+    ;;
+  opencode)
+    AGENT_CMD="opencode"
+    ;;
+  *)
+    echo "Error: Unknown agent '$RALPH_AGENT'. Use: claude, codex, or opencode"
+    exit 1
+    ;;
+esac
 
 if [[ ${#TASK_DIRS[@]} -lt 1 ]]; then
   echo "Need at least one task directory"
@@ -30,7 +51,7 @@ case "$(uname -s)" in
     ;;
 esac
 
-echo "Starting ${#TASK_DIRS[@]} Ralphs in VM: $VM_NAME"
+echo "Starting ${#TASK_DIRS[@]} Ralphs in VM: $VM_NAME (agent: $RALPH_AGENT)"
 
 TMUX_SETUP="tmux new-session -d -s ralphs"
 
@@ -39,9 +60,9 @@ for i in "${!TASK_DIRS[@]}"; do
   TASK_NAME=$(basename "$TASK_DIR")
 
   if [[ $i -eq 0 ]]; then
-    TMUX_SETUP="$TMUX_SETUP -n '$TASK_NAME' 'export PATH=\"\$HOME/.bun/bin:\$PATH\" && cd $TASK_DIR && while true; do cat PROMPT.md | claude --dangerously-skip-permissions; sleep 2; done'"
+    TMUX_SETUP="$TMUX_SETUP -n '$TASK_NAME' 'export PATH=\"\$HOME/.bun/bin:\$PATH\" && cd $TASK_DIR && while true; do cat PROMPT.md | $AGENT_CMD; sleep 2; done'"
   else
-    TMUX_SETUP="$TMUX_SETUP \\; split-window 'export PATH=\"\$HOME/.bun/bin:\$PATH\" && cd $TASK_DIR && while true; do cat PROMPT.md | claude --dangerously-skip-permissions; sleep 2; done'"
+    TMUX_SETUP="$TMUX_SETUP \\; split-window 'export PATH=\"\$HOME/.bun/bin:\$PATH\" && cd $TASK_DIR && while true; do cat PROMPT.md | $AGENT_CMD; sleep 2; done'"
   fi
 done
 

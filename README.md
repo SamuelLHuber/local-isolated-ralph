@@ -88,8 +88,14 @@ EOF
 ### 3. Launch Ralph
 
 ```bash
-# Start a single Ralph
+# Start a single Ralph (defaults to 100 max iterations)
 ./scripts/dispatch.sh ralph-1 ~/tasks/my-feature/PROMPT.md
+
+# With local project directory synced to VM
+./scripts/dispatch.sh ralph-1 ~/tasks/my-feature/PROMPT.md ~/projects/my-app
+
+# With iteration limit (stops after 20 loops or DONE/BLOCKED)
+./scripts/dispatch.sh ralph-1 ~/tasks/my-feature/PROMPT.md ~/projects/my-app 20
 
 # Or start multiple Ralphs on different tasks
 ./scripts/ralph-fleet.sh ~/tasks/
@@ -140,8 +146,10 @@ See **[WORKFLOW.md](./WORKFLOW.md)** for detailed patterns.
 
 | Script | Purpose |
 |--------|---------|
+| `dispatch.sh` | Send task to VM and run loop (supports max iterations) |
 | `create-ralph.sh` | Create a new Ralph VM |
 | `setup-base-vm.sh` | Install tools inside VM (run once, snapshot) |
+| `ralph-loop.sh` | Core loop script with state tracking (runs inside VM) |
 | `ralph-start.sh` | Start single Ralph in tmux |
 | `ralph-fleet.sh` | Start fleet from tasks directory |
 | `ralph-multi.sh` | Run multiple Ralphs in one VM |

@@ -1,17 +1,41 @@
 #!/usr/bin/env bash
 #
 # Dispatch a task to a Ralph VM and run the loop
-# Usage: ./dispatch.sh <vm-name> <prompt-file> [project-dir]
+# Usage: ./dispatch.sh <vm-name> <prompt-file> [project-dir] [max-iterations]
 #
 # Examples:
 #   ./dispatch.sh ralph-1 ~/tasks/feature-a/PROMPT.md
 #   ./dispatch.sh ralph-2 ~/tasks/feature-b/PROMPT.md ~/projects/my-app
+#   ./dispatch.sh ralph-3 ~/tasks/feature-c/PROMPT.md ~/projects/app 20
+#
+# Environment variables:
+#   MAX_ITERATIONS - Max loops before stopping (default: 100, 0 = unlimited)
+#   RALPH_AGENT    - Which agent to use: claude, codex, opencode (default: claude)
 
 set -euo pipefail
 
-VM_NAME="${1:?Usage: $0 <vm-name> <prompt-file> [project-dir]}"
-PROMPT_FILE="${2:?Usage: $0 <vm-name> <prompt-file> [project-dir]}"
+VM_NAME="${1:?Usage: $0 <vm-name> <prompt-file> [project-dir] [max-iterations]}"
+PROMPT_FILE="${2:?Usage: $0 <vm-name> <prompt-file> [project-dir] [max-iterations]}"
 PROJECT_DIR="${3:-}"
+MAX_ITERATIONS="${4:-${MAX_ITERATIONS:-100}}"
+RALPH_AGENT="${RALPH_AGENT:-claude}"
+
+# Set the agent command based on RALPH_AGENT
+case "$RALPH_AGENT" in
+  claude)
+    AGENT_CMD="claude --dangerously-skip-permissions"
+    ;;
+  codex)
+    AGENT_CMD="codex --yolo"
+    ;;
+  opencode)
+    AGENT_CMD="opencode"
+    ;;
+  *)
+    echo "Error: Unknown agent '$RALPH_AGENT'. Use: claude, codex, or opencode"
+    exit 1
+    ;;
+esac
 
 PROMPT_FILE=$(realpath "$PROMPT_FILE")
 
@@ -30,6 +54,7 @@ case "$(uname -s)" in
 esac
 
 echo "[$VM_NAME] Dispatching task from: $PROMPT_FILE"
+echo "[$VM_NAME] Agent: $RALPH_AGENT ($AGENT_CMD)"
 
 if [[ "$OS" == "macos" ]]; then
   if ! limactl list --format '{{.Name}} {{.Status}}' 2>/dev/null | grep -q "^$VM_NAME Running"; then
@@ -38,32 +63,54 @@ if [[ "$OS" == "macos" ]]; then
   fi
 
   VM_WORK_DIR="/home/ralph/work/${VM_NAME}"
-  limactl shell "$VM_NAME" sudo -u ralph mkdir -p "$VM_WORK_DIR"
+  limactl shell "$VM_NAME" sudo -u ralph mkdir -p "$VM_WORK_DIR" "$VM_WORK_DIR/project"
 
   cat "$PROMPT_FILE" | limactl shell "$VM_NAME" sudo -u ralph tee "${VM_WORK_DIR}/PROMPT.md" > /dev/null
 
   if [[ -n "$PROJECT_DIR" ]]; then
     echo "[$VM_NAME] Syncing project directory..."
-    tar -C "$PROJECT_DIR" -cf - . | limactl shell "$VM_NAME" sudo -u ralph tar -C "${VM_WORK_DIR}/project" -xf -
+    tar -C "$PROJECT_DIR" --no-xattrs --exclude='node_modules' --exclude='.git' -cf - . | limactl shell "$VM_NAME" sudo -u ralph tar -C "${VM_WORK_DIR}/project" -xf -
     VM_PROJECT_DIR="${VM_WORK_DIR}/project"
   else
     VM_PROJECT_DIR="$VM_WORK_DIR"
   fi
 
-  echo "[$VM_NAME] Starting Ralph loop..."
+  echo "[$VM_NAME] Starting Ralph loop (max iterations: $MAX_ITERATIONS)..."
   limactl shell "$VM_NAME" sudo -u ralph -i bash -c "
     cd '$VM_PROJECT_DIR'
     echo '[$VM_NAME] Working in: \$(pwd)'
     echo '[$VM_NAME] Starting loop...'
     export PATH=\"\$HOME/.bun/bin:\$PATH\"
-    while :; do
-      cat '${VM_WORK_DIR}/PROMPT.md' | claude --dangerously-skip-permissions 2>&1
-      EXIT_CODE=\$?
-      if [[ \$EXIT_CODE -ne 0 ]]; then
-        echo '[$VM_NAME] Claude exited with code \$EXIT_CODE'
-      fi
-      sleep 1
-    done
+    export MAX_ITERATIONS=$MAX_ITERATIONS
+
+    # Use ralph-loop.sh if available, otherwise inline loop
+    if [[ -x ~/ralph/loop.sh ]]; then
+      ~/ralph/loop.sh '${VM_WORK_DIR}/PROMPT.md'
+    else
+      ITERATION=0
+      while [[ $MAX_ITERATIONS -eq 0 ]] || [[ \$ITERATION -lt $MAX_ITERATIONS ]]; do
+        ITERATION=\$((ITERATION + 1))
+        echo ''
+        echo '=== Iteration \$ITERATION / $MAX_ITERATIONS ==='
+        cat '${VM_WORK_DIR}/PROMPT.md' | $AGENT_CMD 2>&1 | tee /tmp/ralph-output.txt
+        EXIT_CODE=\${PIPESTATUS[1]}
+        if [[ \$EXIT_CODE -ne 0 ]]; then
+          echo '[$VM_NAME] Agent exited with code \$EXIT_CODE'
+        fi
+        # Check for DONE status
+        if grep -q '\"status\":[[:space:]]*\"DONE\"' /tmp/ralph-output.txt 2>/dev/null; then
+          echo '[$VM_NAME] Status: DONE - task complete!'
+          exit 0
+        fi
+        # Check for BLOCKED status
+        if grep -q '\"status\":[[:space:]]*\"BLOCKED\"' /tmp/ralph-output.txt 2>/dev/null; then
+          echo '[$VM_NAME] Status: BLOCKED - needs human input'
+          exit 0
+        fi
+        sleep 1
+      done
+      echo '[$VM_NAME] Max iterations ($MAX_ITERATIONS) reached'
+    fi
   "
 
 else
@@ -95,19 +142,41 @@ else
     VM_PROJECT_DIR="$VM_WORK_DIR"
   fi
 
-  echo "[$VM_NAME] Starting Ralph loop..."
+  echo "[$VM_NAME] Starting Ralph loop (max iterations: $MAX_ITERATIONS)..."
   ssh "ralph@${VM_IP}" bash -c "'
     cd \"$VM_PROJECT_DIR\"
     echo \"[$VM_NAME] Working in: \$(pwd)\"
     echo \"[$VM_NAME] Starting loop...\"
     export PATH=\"\$HOME/.bun/bin:\$PATH\"
-    while :; do
-      cat \"${VM_WORK_DIR}/PROMPT.md\" | claude --dangerously-skip-permissions 2>&1
-      EXIT_CODE=\$?
-      if [[ \$EXIT_CODE -ne 0 ]]; then
-        echo \"[$VM_NAME] Claude exited with code \$EXIT_CODE\"
-      fi
-      sleep 1
-    done
+    export MAX_ITERATIONS=$MAX_ITERATIONS
+
+    # Use ralph-loop.sh if available, otherwise inline loop
+    if [[ -x ~/ralph/loop.sh ]]; then
+      ~/ralph/loop.sh \"${VM_WORK_DIR}/PROMPT.md\"
+    else
+      ITERATION=0
+      while [[ $MAX_ITERATIONS -eq 0 ]] || [[ \$ITERATION -lt $MAX_ITERATIONS ]]; do
+        ITERATION=\$((ITERATION + 1))
+        echo \"\"
+        echo \"=== Iteration \$ITERATION / $MAX_ITERATIONS ===\"
+        cat \"${VM_WORK_DIR}/PROMPT.md\" | $AGENT_CMD 2>&1 | tee /tmp/ralph-output.txt
+        EXIT_CODE=\${PIPESTATUS[1]}
+        if [[ \$EXIT_CODE -ne 0 ]]; then
+          echo \"[$VM_NAME] Agent exited with code \$EXIT_CODE\"
+        fi
+        # Check for DONE status
+        if grep -q \"\\\"status\\\":[[:space:]]*\\\"DONE\\\"\" /tmp/ralph-output.txt 2>/dev/null; then
+          echo \"[$VM_NAME] Status: DONE - task complete!\"
+          exit 0
+        fi
+        # Check for BLOCKED status
+        if grep -q \"\\\"status\\\":[[:space:]]*\\\"BLOCKED\\\"\" /tmp/ralph-output.txt 2>/dev/null; then
+          echo \"[$VM_NAME] Status: BLOCKED - needs human input\"
+          exit 0
+        fi
+        sleep 1
+      done
+      echo \"[$VM_NAME] Max iterations ($MAX_ITERATIONS) reached\"
+    fi
   '"
 fi
