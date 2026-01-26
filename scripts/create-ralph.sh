@@ -263,6 +263,15 @@ copy_credentials() {
     ssh $ssh_opts "$user@$host" "chmod 600 ~/.codex/auth.json" 2>/dev/null || true
   fi
 
+  if [[ -f ~/.config/ralph/ralph.env ]]; then
+    echo "    Copying ~/.config/ralph/ralph.env..."
+    ssh $ssh_opts "$user@$host" "mkdir -p ~/.config/ralph && chmod 700 ~/.config/ralph" 2>/dev/null || true
+    scp $ssh_opts ~/.config/ralph/ralph.env "$user@$host:~/.config/ralph/" 2>/dev/null || echo "    Warning: Failed to copy ralph.env"
+    ssh $ssh_opts "$user@$host" "chmod 600 ~/.config/ralph/ralph.env" 2>/dev/null || true
+  else
+    echo "    Note: ~/.config/ralph/ralph.env not found (Claude Code may require manual auth)"
+  fi
+
   echo "    Copying ralph scripts..."
   ssh $ssh_opts "$user@$host" "mkdir -p ~/ralph" 2>/dev/null || true
   if [[ -f "$SCRIPT_DIR/ralph-loop.sh" ]]; then
@@ -327,6 +336,16 @@ copy_credentials_lima() {
     limactl shell "$vm_name" sudo -u "$user" chmod 700 "/home/$user/.codex" 2>/dev/null || true
     cat ~/.codex/auth.json | limactl shell "$vm_name" sudo -u "$user" tee "/home/$user/.codex/auth.json" > /dev/null 2>&1 || echo "    Warning: Failed to copy ~/.codex/auth.json"
     limactl shell "$vm_name" sudo -u "$user" chmod 600 "/home/$user/.codex/auth.json" 2>/dev/null || true
+  fi
+
+  if [[ -f ~/.config/ralph/ralph.env ]]; then
+    echo "    Copying ~/.config/ralph/ralph.env..."
+    limactl shell "$vm_name" sudo -u "$user" mkdir -p "/home/$user/.config/ralph" 2>/dev/null || true
+    limactl shell "$vm_name" sudo -u "$user" chmod 700 "/home/$user/.config/ralph" 2>/dev/null || true
+    cat ~/.config/ralph/ralph.env | limactl shell "$vm_name" sudo -u "$user" tee "/home/$user/.config/ralph/ralph.env" > /dev/null 2>&1 || echo "    Warning: Failed to copy ralph.env"
+    limactl shell "$vm_name" sudo -u "$user" chmod 600 "/home/$user/.config/ralph/ralph.env" 2>/dev/null || true
+  else
+    echo "    Note: ~/.config/ralph/ralph.env not found (Claude Code may require manual auth)"
   fi
 
   echo "    Copying ralph scripts..."

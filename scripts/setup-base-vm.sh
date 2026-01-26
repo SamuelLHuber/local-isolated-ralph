@@ -95,8 +95,19 @@ echo ""
 echo ">>> Credentials"
 
 check_claude_auth() {
+  local token_env_file="$HOME/.config/ralph/ralph.env"
+  if [[ -f "$token_env_file" ]]; then
+    # shellcheck disable=SC1090
+    source "$token_env_file"
+  fi
+
   if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
     echo "[OK] Claude auth: ANTHROPIC_API_KEY set"
+    return 0
+  fi
+
+  if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+    echo "[OK] Claude auth: CLAUDE_CODE_OAUTH_TOKEN set"
     return 0
   fi
 
@@ -115,7 +126,8 @@ check_claude_auth() {
 
   echo "[MISSING] Claude auth: not configured"
   echo "         Option 1: Set ANTHROPIC_API_KEY environment variable"
-  echo "         Option 2: Run 'claude setup-token' for long-lived token"
+  echo "         Option 2: Set CLAUDE_CODE_OAUTH_TOKEN in ~/.config/ralph/ralph.env"
+  echo "         Option 3: Run 'claude setup-token' for long-lived token"
   return 1
 }
 
