@@ -140,7 +140,44 @@ in {
       installAgentCLIs
     ]
     ++ (optional cfg.browser.enable pkgs.chromium)
-    ++ (optional (cfg.browser.enable && pkgs.stdenv.hostPlatform.isx86_64) pkgs.playwright-driver.browsers);
+    ++ (optional (cfg.browser.enable && pkgs.stdenv.hostPlatform.isx86_64) pkgs.playwright-driver.browsers)
+    # Playwright system dependencies for ARM64 (and as fallback for x86_64)
+    # These are the shared libraries that Playwright's Chromium needs
+    ++ (optionals cfg.browser.enable (with pkgs; [
+      # Core libs
+      glib
+      nss
+      nspr
+      cups
+      expat
+      dbus
+
+      # X11 and graphics
+      xorg.libX11
+      xorg.libXcomposite
+      xorg.libXdamage
+      xorg.libXext
+      xorg.libXfixes
+      xorg.libXrandr
+      xorg.libxcb
+      xorg.libxshmfence
+      libxkbcommon
+      mesa
+
+      # Accessibility
+      at-spi2-atk
+      atk
+
+      # Graphics/fonts
+      cairo
+      pango
+
+      # Audio
+      alsa-lib
+
+      # System
+      systemd  # for libudev
+    ]));
 
     # Ralph user account
     users.users.${cfg.user} = {
@@ -255,9 +292,18 @@ in {
       LOKI_URL = "http://${cfg.telemetry.hostAddr}:3100";
     });
 
-    # Add bun global bin to PATH
+    # Add bun global bin to PATH and Playwright library dependencies
     environment.shellInit = ''
       export PATH="$HOME/.bun/bin:$PATH"
+    '' + optionalString cfg.browser.enable ''
+      # Playwright browser dependencies (for npm-installed browsers)
+      export LD_LIBRARY_PATH="${lib.makeLibraryPath (with pkgs; [
+        glib nss nspr cups expat dbus
+        xorg.libX11 xorg.libXcomposite xorg.libXdamage xorg.libXext
+        xorg.libXfixes xorg.libXrandr xorg.libxcb xorg.libxshmfence
+        libxkbcommon mesa at-spi2-atk atk cairo pango alsa-lib
+        systemd libdrm libglvnd
+      ])}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     '';
 
     # Chrome with remote debugging (for MCP)
@@ -314,6 +360,9 @@ in {
 
     # Auto-login for unattended operation (VMs only, not containers)
     services.getty.autologinUser = mkDefault cfg.user;
+
+    # Support for dynamically linked binaries (npm packages, etc.)
+    programs.nix-ld.enable = true;
 
     # Nix settings
     nix = {
