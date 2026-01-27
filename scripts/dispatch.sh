@@ -114,6 +114,18 @@ if [[ "$OS" == "macos" ]]; then
       limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph bash -c "
         cd '${VM_PROJECT_DIR}'
 
+        # Source ralph.env for GITHUB_TOKEN
+        if [[ -f ~/.config/ralph/ralph.env ]]; then
+          set -a
+          source ~/.config/ralph/ralph.env
+          set +a
+        fi
+
+        # Configure git to use GITHUB_TOKEN for GitHub HTTPS URLs
+        if [[ -n \"\${GITHUB_TOKEN:-}\" ]]; then
+          git config --global url.\"https://oauth:\${GITHUB_TOKEN}@github.com/\".insteadOf \"https://github.com/\"
+        fi
+
         # Show current remote (redact tokens)
         REMOTE_URL=\$(git remote get-url origin 2>/dev/null || echo 'none')
         REMOTE_URL_SAFE=\$(echo \"\$REMOTE_URL\" | sed -E 's|://[^:]+:[^@]+@|://***@|')
@@ -128,7 +140,7 @@ if [[ "$OS" == "macos" ]]; then
           echo '[$VM_NAME] Git remote access: OK'
         else
           echo '[$VM_NAME] WARNING: Cannot access git remote. Push may fail.'
-          echo '[$VM_NAME] Ensure SSH keys or tokens are configured in the VM.'
+          echo '[$VM_NAME] Ensure GITHUB_TOKEN is set in ~/.config/ralph/ralph.env'
         fi
 
         # Show current branch and status
@@ -224,6 +236,18 @@ else
       ssh "ralph@${VM_IP}" bash -c "'
         cd \"$VM_PROJECT_DIR\"
 
+        # Source ralph.env for GITHUB_TOKEN
+        if [[ -f ~/.config/ralph/ralph.env ]]; then
+          set -a
+          source ~/.config/ralph/ralph.env
+          set +a
+        fi
+
+        # Configure git to use GITHUB_TOKEN for GitHub HTTPS URLs
+        if [[ -n \"\${GITHUB_TOKEN:-}\" ]]; then
+          git config --global url.\"https://oauth:\${GITHUB_TOKEN}@github.com/\".insteadOf \"https://github.com/\"
+        fi
+
         # Show current remote (redact tokens)
         REMOTE_URL=\$(git remote get-url origin 2>/dev/null || echo \"none\")
         REMOTE_URL_SAFE=\$(echo \"\$REMOTE_URL\" | sed -E 's|://[^:]+:[^@]+@|://***@|')
@@ -238,7 +262,7 @@ else
           echo \"[$VM_NAME] Git remote access: OK\"
         else
           echo \"[$VM_NAME] WARNING: Cannot access git remote. Push may fail.\"
-          echo \"[$VM_NAME] Ensure SSH keys or tokens are configured in the VM.\"
+          echo \"[$VM_NAME] Ensure GITHUB_TOKEN is set in ~/.config/ralph/ralph.env\"
         fi
 
         # Show current branch and status
