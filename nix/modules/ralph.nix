@@ -135,9 +135,10 @@ in {
       # Node.js (still useful for compatibility)
       nodejs_20
 
-      # Build tools (for native modules)
+      # Build tools (for native modules / node-gyp)
       gcc
       gnumake
+      python3
 
       # Agent CLI installer script
       installAgentCLIs
