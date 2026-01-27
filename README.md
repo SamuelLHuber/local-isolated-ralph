@@ -185,6 +185,8 @@ RALPH_AGENT=codex ./scripts/dispatch.sh --include-git ralph-1 ~/tasks/PROMPT.md 
 - `RALPH_AGENT` - Agent to use: `claude` (default), `codex`, `opencode`
 - `MAX_ITERATIONS` - Max loops (default: 100, 0 = unlimited)
 
+Each dispatch creates a timestamped work directory (`/home/ralph/work/<vm>/<project>-<timestamp>/`), enabling parallel dispatches to the same VM.
+
 ## Resource Planning
 
 | Host RAM | Recommended Setup |
