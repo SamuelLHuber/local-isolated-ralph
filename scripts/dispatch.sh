@@ -114,9 +114,10 @@ if [[ "$OS" == "macos" ]]; then
       limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph bash -c "
         cd '${VM_PROJECT_DIR}'
 
-        # Show current remote
+        # Show current remote (redact tokens)
         REMOTE_URL=\$(git remote get-url origin 2>/dev/null || echo 'none')
-        echo '[$VM_NAME] Git remote: '\$REMOTE_URL
+        REMOTE_URL_SAFE=\$(echo \"\$REMOTE_URL\" | sed -E 's|://[^:]+:[^@]+@|://***@|')
+        echo '[$VM_NAME] Git remote: '\$REMOTE_URL_SAFE
 
         # Configure git user if not set
         git config user.email >/dev/null 2>&1 || git config user.email 'ralph@local'
@@ -223,9 +224,10 @@ else
       ssh "ralph@${VM_IP}" bash -c "'
         cd \"$VM_PROJECT_DIR\"
 
-        # Show current remote
+        # Show current remote (redact tokens)
         REMOTE_URL=\$(git remote get-url origin 2>/dev/null || echo \"none\")
-        echo \"[$VM_NAME] Git remote: \$REMOTE_URL\"
+        REMOTE_URL_SAFE=\$(echo \"\$REMOTE_URL\" | sed -E 's|://[^:]+:[^@]+@|://***@|')
+        echo \"[$VM_NAME] Git remote: \$REMOTE_URL_SAFE\"
 
         # Configure git user if not set
         git config user.email >/dev/null 2>&1 || git config user.email \"ralph@local\"
