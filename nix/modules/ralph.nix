@@ -123,6 +123,9 @@ in {
       fd
       unzip
 
+      # GitHub CLI - for auth and PR operations
+      gh
+
       # Jujutsu - VCS for parallel agent work
       jujutsu
 
@@ -325,6 +328,17 @@ in {
       settings = {
         PasswordAuthentication = false;
         PermitRootLogin = "no";
+      };
+    };
+
+    # Git configuration - use GITHUB_TOKEN env var for HTTPS auth
+    # Token is loaded from ~/.config/ralph/ralph.env
+    programs.git = {
+      enable = true;
+      config = {
+        # Use a credential helper that reads GITHUB_TOKEN from environment
+        credential."https://github.com".helper = "!f() { echo username=oauth; echo password=$GITHUB_TOKEN; }; f";
+        credential."https://gist.github.com".helper = "!f() { echo username=oauth; echo password=$GITHUB_TOKEN; }; f";
       };
     };
 

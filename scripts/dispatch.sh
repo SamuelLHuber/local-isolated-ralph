@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 #
 # Dispatch a task to a Ralph VM and run the loop
-# Usage: ./dispatch.sh <vm-name> <prompt-file> [project-dir] [max-iterations]
+# Usage: ./dispatch.sh [options] <vm-name> <prompt-file> [project-dir] [max-iterations]
+#
+# Options:
+#   --include-git    Include .git directory in sync (enables commit/push from VM)
 #
 # Examples:
 #   ./dispatch.sh ralph-1 ~/tasks/feature-a/PROMPT.md
 #   ./dispatch.sh ralph-2 ~/tasks/feature-b/PROMPT.md ~/projects/my-app
-#   ./dispatch.sh ralph-3 ~/tasks/feature-c/PROMPT.md ~/projects/app 20
+#   ./dispatch.sh --include-git ralph-3 ~/tasks/feature-c/PROMPT.md ~/projects/app 20
 #
 # Environment variables:
 #   MAX_ITERATIONS - Max loops before stopping (default: 100, 0 = unlimited)
@@ -14,8 +17,23 @@
 
 set -euo pipefail
 
-VM_NAME="${1:?Usage: $0 <vm-name> <prompt-file> [project-dir] [max-iterations]}"
-PROMPT_FILE="${2:?Usage: $0 <vm-name> <prompt-file> [project-dir] [max-iterations]}"
+# Parse options
+INCLUDE_GIT=false
+while [[ $# -gt 0 && "$1" == --* ]]; do
+  case "$1" in
+    --include-git)
+      INCLUDE_GIT=true
+      shift
+      ;;
+    *)
+      echo "Unknown option: $1"
+      exit 1
+      ;;
+  esac
+done
+
+VM_NAME="${1:?Usage: $0 [--include-git] <vm-name> <prompt-file> [project-dir] [max-iterations]}"
+PROMPT_FILE="${2:?Usage: $0 [--include-git] <vm-name> <prompt-file> [project-dir] [max-iterations]}"
 PROJECT_DIR="${3:-}"
 MAX_ITERATIONS="${4:-${MAX_ITERATIONS:-100}}"
 RALPH_AGENT="${RALPH_AGENT:-claude}"
@@ -55,6 +73,7 @@ esac
 
 echo "[$VM_NAME] Dispatching task from: $PROMPT_FILE"
 echo "[$VM_NAME] Agent: $RALPH_AGENT ($AGENT_CMD)"
+echo "[$VM_NAME] Include .git: $INCLUDE_GIT"
 
 if [[ "$OS" == "macos" ]]; then
   if ! limactl list --format '{{.Name}} {{.Status}}' 2>/dev/null | grep -q "^$VM_NAME Running"; then
@@ -69,8 +88,43 @@ if [[ "$OS" == "macos" ]]; then
 
   if [[ -n "$PROJECT_DIR" ]]; then
     echo "[$VM_NAME] Syncing project directory..."
-    tar -C "$PROJECT_DIR" --no-xattrs --exclude='node_modules' --exclude='.git' -cf - . | limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph tar -C "${VM_WORK_DIR}/project" -xf -
+
+    # Build tar exclude options
+    TAR_EXCLUDES="--exclude='node_modules'"
+    if [[ "$INCLUDE_GIT" == "false" ]]; then
+      TAR_EXCLUDES="$TAR_EXCLUDES --exclude='.git'"
+    fi
+
+    eval "tar -C '$PROJECT_DIR' --no-xattrs $TAR_EXCLUDES -cf - ." | limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph tar -C "${VM_WORK_DIR}/project" -xf -
     VM_PROJECT_DIR="${VM_WORK_DIR}/project"
+
+    # If .git was included, verify git remote works
+    if [[ "$INCLUDE_GIT" == "true" && -d "$PROJECT_DIR/.git" ]]; then
+      echo "[$VM_NAME] Verifying git remote access..."
+      limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph bash -c "
+        cd '${VM_PROJECT_DIR}'
+
+        # Show current remote
+        REMOTE_URL=\$(git remote get-url origin 2>/dev/null || echo 'none')
+        echo '[$VM_NAME] Git remote: '\$REMOTE_URL
+
+        # Configure git user if not set
+        git config user.email >/dev/null 2>&1 || git config user.email 'ralph@local'
+        git config user.name >/dev/null 2>&1 || git config user.name 'Ralph Agent'
+
+        # Test that we can fetch (verifies credentials work)
+        if git ls-remote --exit-code origin HEAD >/dev/null 2>&1; then
+          echo '[$VM_NAME] Git remote access: OK'
+        else
+          echo '[$VM_NAME] WARNING: Cannot access git remote. Push may fail.'
+          echo '[$VM_NAME] Ensure SSH keys or tokens are configured in the VM.'
+        fi
+
+        # Show current branch and status
+        echo '[$VM_NAME] Branch: '\$(git branch --show-current)
+        echo '[$VM_NAME] Status: '\$(git status --porcelain | wc -l | tr -d ' ')' modified files'
+      "
+    fi
 
     # Install dependencies if package.json exists
     if [[ -f "$PROJECT_DIR/package.json" ]]; then
@@ -143,8 +197,43 @@ else
 
   if [[ -n "$PROJECT_DIR" ]]; then
     echo "[$VM_NAME] Syncing project directory..."
-    rsync -az --delete --exclude='node_modules' --exclude='.git' "$PROJECT_DIR/" "ralph@${VM_IP}:${VM_WORK_DIR}/project/"
+
+    # Build rsync exclude options
+    RSYNC_EXCLUDES="--exclude='node_modules'"
+    if [[ "$INCLUDE_GIT" == "false" ]]; then
+      RSYNC_EXCLUDES="$RSYNC_EXCLUDES --exclude='.git'"
+    fi
+
+    eval "rsync -az --delete $RSYNC_EXCLUDES '$PROJECT_DIR/' 'ralph@${VM_IP}:${VM_WORK_DIR}/project/'"
     VM_PROJECT_DIR="${VM_WORK_DIR}/project"
+
+    # If .git was included, verify git remote works
+    if [[ "$INCLUDE_GIT" == "true" && -d "$PROJECT_DIR/.git" ]]; then
+      echo "[$VM_NAME] Verifying git remote access..."
+      ssh "ralph@${VM_IP}" bash -c "'
+        cd \"$VM_PROJECT_DIR\"
+
+        # Show current remote
+        REMOTE_URL=\$(git remote get-url origin 2>/dev/null || echo \"none\")
+        echo \"[$VM_NAME] Git remote: \$REMOTE_URL\"
+
+        # Configure git user if not set
+        git config user.email >/dev/null 2>&1 || git config user.email \"ralph@local\"
+        git config user.name >/dev/null 2>&1 || git config user.name \"Ralph Agent\"
+
+        # Test that we can fetch (verifies credentials work)
+        if git ls-remote --exit-code origin HEAD >/dev/null 2>&1; then
+          echo \"[$VM_NAME] Git remote access: OK\"
+        else
+          echo \"[$VM_NAME] WARNING: Cannot access git remote. Push may fail.\"
+          echo \"[$VM_NAME] Ensure SSH keys or tokens are configured in the VM.\"
+        fi
+
+        # Show current branch and status
+        echo \"[$VM_NAME] Branch: \$(git branch --show-current)\"
+        echo \"[$VM_NAME] Status: \$(git status --porcelain | wc -l | tr -d \" \")\" modified files\"
+      '"
+    fi
 
     # Install dependencies if package.json exists
     if [[ -f "$PROJECT_DIR/package.json" ]]; then

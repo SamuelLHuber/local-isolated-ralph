@@ -162,7 +162,7 @@ See **[WORKFLOW.md](./WORKFLOW.md)** for detailed patterns.
 
 | Script | Purpose |
 |--------|---------|
-| `dispatch.sh` | Send task to VM and run loop (supports max iterations) |
+| `dispatch.sh` | Send task to VM and run loop (see options below) |
 | `create-ralph.sh` | Create a new Ralph VM |
 | `setup-base-vm.sh` | Install tools inside VM (run once, snapshot) |
 | `ralph-loop.sh` | Core loop script with state tracking (runs inside VM) |
@@ -171,6 +171,19 @@ See **[WORKFLOW.md](./WORKFLOW.md)** for detailed patterns.
 | `ralph-multi.sh` | Run multiple Ralphs in one VM |
 | `list-ralphs.sh` | Show all VMs and status |
 | `cleanup-ralphs.sh` | Delete VMs |
+
+### dispatch.sh Options
+
+```bash
+./scripts/dispatch.sh [--include-git] <vm-name> <prompt-file> [project-dir] [max-iterations]
+
+# Example with .git included (enables push from synced project)
+RALPH_AGENT=codex ./scripts/dispatch.sh --include-git ralph-1 ~/tasks/PROMPT.md ~/projects/app 20
+```
+
+- `--include-git` - Include `.git` in sync (otherwise agent must clone from repo URL)
+- `RALPH_AGENT` - Agent to use: `claude` (default), `codex`, `opencode`
+- `MAX_ITERATIONS` - Max loops (default: 100, 0 = unlimited)
 
 ## Resource Planning
 
@@ -181,6 +194,19 @@ See **[WORKFLOW.md](./WORKFLOW.md)** for detailed patterns.
 | 64GB+ | 8+ medium VMs, or density mode |
 
 **Density mode:** Run 2-4 Ralphs per VM when working on separate directories.
+
+## Credentials Setup
+
+Agents need `GITHUB_TOKEN` to push code and create PRs.
+
+1. Create token: https://github.com/settings/tokens/new (scopes: `repo`, `workflow`)
+2. Add to `~/.config/ralph/ralph.env`:
+   ```bash
+   export GITHUB_TOKEN="ghp_your_token_here"
+   ```
+3. Run `./scripts/create-ralph-env.sh` to create the env file, or `./scripts/sync-credentials.sh <vm>` to update existing VMs
+
+The token is used by both `git push/pull` (credential helper) and `gh` CLI (auto-detects env var).
 
 ## Prerequisites
 

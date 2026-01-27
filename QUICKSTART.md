@@ -70,7 +70,18 @@ This creates `~/.claude` which will be copied to your VMs.
 
 ---
 
-## Step 3: Create Your First Ralph VM
+## Step 3: Set Up GitHub Token
+
+Create a token at https://github.com/settings/tokens/new (scopes: `repo`, `workflow`) and add to `~/.config/ralph/ralph.env`:
+
+```bash
+./scripts/create-ralph-env.sh
+# Edit the file and add: export GITHUB_TOKEN="ghp_your_token"
+```
+
+---
+
+## Step 4: Create Your First Ralph VM
 
 ```bash
 cd /path/to/local-isolated-ralph
@@ -82,11 +93,12 @@ cd /path/to/local-isolated-ralph
 # - Create a VM with 4 CPU, 6GB RAM, 30GB disk
 # - Copy your ~/.claude auth folder to the VM
 # - Copy ralph-loop.sh to the VM
+# - Copy ~/.config/ralph/ralph.env (with GITHUB_TOKEN)
 ```
 
 ---
 
-## Step 4: Set Up the VM
+## Step 5: Set Up the VM
 
 SSH into the VM and run the setup script:
 
@@ -142,7 +154,7 @@ To store a Claude Code token for syncing:
 
 ---
 
-## Step 5: Write Your First Spec
+## Step 6: Write Your First Spec
 
 Create a task directory with a prompt file:
 
@@ -184,7 +196,7 @@ EOF
 
 ---
 
-## Step 6: Run Ralph!
+## Step 7: Run Ralph!
 
 **Option A: Run directly in VM**
 
@@ -218,7 +230,7 @@ MAX_ITERATIONS=10 ./scripts/dispatch.sh ralph-1 ~/tasks/my-first-task/PROMPT.md
 
 ---
 
-## Step 7: Watch and Wait
+## Step 8: Watch and Wait
 
 The agent will:
 1. Read the prompt
@@ -240,7 +252,7 @@ It will output `{"status": "BLOCKED", "question": "..."}`. Update the PROMPT.md 
 
 ---
 
-## Step 8: Cleanup
+## Step 9: Cleanup
 
 When done, you can stop or delete the VM:
 
