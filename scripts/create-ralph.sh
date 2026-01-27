@@ -391,7 +391,7 @@ if [[ "$OS" == "macos" ]]; then
     exit 1
   fi
 
-  LIMA_CONFIG=$(mktemp)
+  LIMA_CONFIG="$CACHE_DIR/lima-${NAME}.yaml"
   cat > "$LIMA_CONFIG" << EOF
 images:
   - location: "$QCOW_IMAGE"
@@ -440,7 +440,6 @@ EOF
   # Start VM in background, don't block forever on SSH
   limactl start "$LIMA_CONFIG" --name "$NAME" --tty=false &
   LIMA_PID=$!
-  rm -f "$LIMA_CONFIG"
 
   # Wait up to 120s for VM to be running
   for i in {1..60}; do
@@ -451,8 +450,12 @@ EOF
     sleep 2
   done
 
+  # Clean up config file after VM starts
+  rm -f "$LIMA_CONFIG"
+
   # Kill the start process if still waiting on SSH
   kill $LIMA_PID 2>/dev/null || true
+  wait $LIMA_PID 2>/dev/null || true
 
   # Verify VM is running
   if ! limactl list --format '{{.Name}} {{.Status}}' 2>/dev/null | grep -q "^$NAME Running"; then
