@@ -100,12 +100,12 @@ if [[ "$OS" == "macos" ]]; then
     echo "[$VM_NAME] Syncing project directory..."
 
     # Build tar exclude options (exclude node_modules and macOS extended attribute files)
-    TAR_EXCLUDES="--exclude='node_modules' --exclude='._*'"
+    TAR_EXCLUDES="--exclude='node_modules' --exclude='._*' --exclude='.DS_Store'"
     if [[ "$INCLUDE_GIT" == "false" ]]; then
       TAR_EXCLUDES="$TAR_EXCLUDES --exclude='.git'"
     fi
 
-    eval "tar -C '$PROJECT_DIR' --no-xattrs $TAR_EXCLUDES -cf - ." | limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph tar -C "${VM_WORK_DIR}" -xf -
+    COPYFILE_DISABLE=1 eval "tar -C '$PROJECT_DIR' --no-xattrs $TAR_EXCLUDES -cf - ." | limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph tar -C "${VM_WORK_DIR}" -xf -
     VM_PROJECT_DIR="${VM_WORK_DIR}"
 
     # If .git was included, verify git remote works
