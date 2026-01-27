@@ -480,17 +480,12 @@ EOF
 
   echo ""
   echo "Next steps:"
-  echo "  1. Shell into VM:   limactl shell $NAME"
-  echo "  2. Run as ralph:    limactl shell $NAME sudo -u ralph -i"
-  echo "  3. Stop VM:         limactl stop $NAME"
-  echo "  4. Start VM:        limactl start $NAME"
-  echo "  5. Delete VM:       limactl delete $NAME"
+  echo "  Dispatch a task:    ./scripts/dispatch.sh $NAME /path/to/PROMPT.md 20"
+  echo "  With git sync:      ./scripts/dispatch.sh --include-git $NAME /path/to/PROMPT.md /path/to/project 20"
   echo ""
-  echo "Cleanup commands:"
-  echo "  List all VMs:       limactl list"
-  echo "  Delete this VM:     limactl delete $NAME"
-  echo "  Delete all VMs:     limactl delete --all"
-  echo "  Clear image cache:  rm -rf ~/.cache/ralph/"
+  echo "  Shell into VM:      limactl shell $NAME"
+  echo "  Stop VM:            limactl stop $NAME"
+  echo "  Delete VM:          limactl delete $NAME"
 
 else
   if ! command -v virsh &>/dev/null; then
