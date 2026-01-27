@@ -436,14 +436,32 @@ EOF
 
   echo ">>> Starting Lima VM..."
   mkdir -p ~/tasks ~/ralph-workspaces
-  limactl start "$LIMA_CONFIG" --name "$NAME" --tty=false
-  rm "$LIMA_CONFIG"
+
+  # Start with timeout - don't block forever on SSH
+  timeout 120 limactl start "$LIMA_CONFIG" --name "$NAME" --tty=false || {
+    # Check if VM is actually running despite timeout
+    if limactl list --format '{{.Name}} {{.Status}}' 2>/dev/null | grep -q "^$NAME Running"; then
+      echo "VM started but SSH wait timed out (this is OK)"
+    else
+      echo "Error: Failed to start VM"
+      rm -f "$LIMA_CONFIG"
+      exit 1
+    fi
+  }
+  rm -f "$LIMA_CONFIG"
 
   echo ""
-  echo "VM '$NAME' created successfully!"
+  echo "VM '$NAME' created!"
 
+  # Wait for shell access (more reliable than SSH)
   echo "Waiting for VM to be ready..."
-  sleep 10
+  for i in {1..30}; do
+    if limactl shell "$NAME" -- true 2>/dev/null; then
+      echo "VM ready!"
+      break
+    fi
+    sleep 2
+  done
 
   copy_credentials_lima "$NAME"
 
