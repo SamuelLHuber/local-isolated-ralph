@@ -71,9 +71,19 @@ case "$(uname -s)" in
     ;;
 esac
 
+# Generate unique work directory with timestamp
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+if [[ -n "$PROJECT_DIR" ]]; then
+  PROJECT_BASENAME=$(basename "$PROJECT_DIR")
+else
+  PROJECT_BASENAME="task"
+fi
+WORK_SUBDIR="${PROJECT_BASENAME}-${TIMESTAMP}"
+
 echo "[$VM_NAME] Dispatching task from: $PROMPT_FILE"
 echo "[$VM_NAME] Agent: $RALPH_AGENT ($AGENT_CMD)"
 echo "[$VM_NAME] Include .git: $INCLUDE_GIT"
+echo "[$VM_NAME] Work dir: /home/ralph/work/${VM_NAME}/${WORK_SUBDIR}"
 
 if [[ "$OS" == "macos" ]]; then
   if ! limactl list --format '{{.Name}} {{.Status}}' 2>/dev/null | grep -q "^$VM_NAME Running"; then
@@ -81,8 +91,8 @@ if [[ "$OS" == "macos" ]]; then
     limactl start "$VM_NAME"
   fi
 
-  VM_WORK_DIR="/home/ralph/work/${VM_NAME}"
-  limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph mkdir -p "$VM_WORK_DIR" "$VM_WORK_DIR/project"
+  VM_WORK_DIR="/home/ralph/work/${VM_NAME}/${WORK_SUBDIR}"
+  limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph mkdir -p "$VM_WORK_DIR"
 
   cat "$PROMPT_FILE" | limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph tee "${VM_WORK_DIR}/PROMPT.md" > /dev/null
 
@@ -95,8 +105,8 @@ if [[ "$OS" == "macos" ]]; then
       TAR_EXCLUDES="$TAR_EXCLUDES --exclude='.git'"
     fi
 
-    eval "tar -C '$PROJECT_DIR' --no-xattrs $TAR_EXCLUDES -cf - ." | limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph tar -C "${VM_WORK_DIR}/project" -xf -
-    VM_PROJECT_DIR="${VM_WORK_DIR}/project"
+    eval "tar -C '$PROJECT_DIR' --no-xattrs $TAR_EXCLUDES -cf - ." | limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph tar -C "${VM_WORK_DIR}" -xf -
+    VM_PROJECT_DIR="${VM_WORK_DIR}"
 
     # If .git was included, verify git remote works
     if [[ "$INCLUDE_GIT" == "true" && -d "$PROJECT_DIR/.git" ]]; then
@@ -191,7 +201,7 @@ else
 
   echo "[$VM_NAME] VM IP: $VM_IP"
 
-  VM_WORK_DIR="/home/ralph/work/${VM_NAME}"
+  VM_WORK_DIR="/home/ralph/work/${VM_NAME}/${WORK_SUBDIR}"
   ssh "ralph@${VM_IP}" "mkdir -p '$VM_WORK_DIR'"
   scp "$PROMPT_FILE" "ralph@${VM_IP}:${VM_WORK_DIR}/PROMPT.md"
 
@@ -204,8 +214,8 @@ else
       RSYNC_EXCLUDES="$RSYNC_EXCLUDES --exclude='.git'"
     fi
 
-    eval "rsync -az --delete $RSYNC_EXCLUDES '$PROJECT_DIR/' 'ralph@${VM_IP}:${VM_WORK_DIR}/project/'"
-    VM_PROJECT_DIR="${VM_WORK_DIR}/project"
+    eval "rsync -az --delete $RSYNC_EXCLUDES '$PROJECT_DIR/' 'ralph@${VM_IP}:${VM_WORK_DIR}/'"
+    VM_PROJECT_DIR="${VM_WORK_DIR}"
 
     # If .git was included, verify git remote works
     if [[ "$INCLUDE_GIT" == "true" && -d "$PROJECT_DIR/.git" ]]; then
