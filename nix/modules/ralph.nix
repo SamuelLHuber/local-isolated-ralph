@@ -331,16 +331,10 @@ in {
       };
     };
 
-    # Git configuration - use GITHUB_TOKEN env var for HTTPS auth
-    # Token is loaded from ~/.config/ralph/ralph.env
-    programs.git = {
-      enable = true;
-      config = {
-        # Use a credential helper that reads GITHUB_TOKEN from environment
-        credential."https://github.com".helper = "!f() { echo username=oauth; echo password=$GITHUB_TOKEN; }; f";
-        credential."https://gist.github.com".helper = "!f() { echo username=oauth; echo password=$GITHUB_TOKEN; }; f";
-      };
-    };
+    # Git configuration
+    # Note: GITHUB_TOKEN auth is configured at runtime via ralph-loop.sh
+    # which sources ~/.config/ralph/ralph.env and sets up URL rewriting
+    programs.git.enable = true;
 
     # SSH client config for GitHub
     programs.ssh = {

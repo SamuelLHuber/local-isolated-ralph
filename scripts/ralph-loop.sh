@@ -29,6 +29,11 @@ if [[ -f "$TOKEN_ENV_FILE" ]]; then
   set +a
 fi
 
+# Configure git to use GITHUB_TOKEN for GitHub HTTPS URLs
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  git config --global url."https://oauth:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+fi
+
 # Set the agent command based on RALPH_AGENT
 case "$RALPH_AGENT" in
   claude)

@@ -89,8 +89,8 @@ if [[ "$OS" == "macos" ]]; then
   if [[ -n "$PROJECT_DIR" ]]; then
     echo "[$VM_NAME] Syncing project directory..."
 
-    # Build tar exclude options
-    TAR_EXCLUDES="--exclude='node_modules'"
+    # Build tar exclude options (exclude node_modules and macOS extended attribute files)
+    TAR_EXCLUDES="--exclude='node_modules' --exclude='._*'"
     if [[ "$INCLUDE_GIT" == "false" ]]; then
       TAR_EXCLUDES="$TAR_EXCLUDES --exclude='.git'"
     fi
