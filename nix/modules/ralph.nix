@@ -244,6 +244,36 @@ in {
       mode = "0644";
     };
 
+    # OpenCode config with autonomous permissions and MCP servers
+    # Note: Like Codex, OpenCode config is predefined (not copied from host).
+    # Uses ~/.config/opencode/opencode.json format.
+    environment.etc."ralph/opencode-config.json" = mkIf (cfg.autonomousMode || cfg.browser.mcp) {
+      text = builtins.toJSON ({
+        "$schema" = "https://opencode.ai/config.json";
+      } // optionalAttrs cfg.autonomousMode {
+        # Allow all tools without prompts for autonomous mode
+        permission = {
+          bash = "allow";
+          edit = "allow";
+          write = "allow";
+          read = "allow";
+          grep = "allow";
+          glob = "allow";
+          list = "allow";
+          webfetch = "allow";
+        };
+      } // optionalAttrs cfg.browser.mcp {
+        mcp = {
+          playwright = {
+            type = "local";
+            command = [ "npx" "-y" "@playwright/mcp@latest" ];
+            enabled = true;
+          };
+        };
+      });
+      mode = "0644";
+    };
+
     # Symlink agent configs to user home
     system.activationScripts.ralphConfig = ''
       # Claude Code config directory
@@ -269,6 +299,17 @@ in {
         chmod 644 /home/${cfg.user}/.codex/config.toml
       fi
       chown -R ${cfg.user}:users /home/${cfg.user}/.codex
+      ''}
+
+      ${optionalString (cfg.autonomousMode || cfg.browser.mcp) ''
+      # OpenCode config - copy instead of symlink so opencode can modify it
+      mkdir -p /home/${cfg.user}/.config/opencode
+      if [ ! -f /home/${cfg.user}/.config/opencode/opencode.json ]; then
+        cp /etc/ralph/opencode-config.json /home/${cfg.user}/.config/opencode/opencode.json
+        chown ${cfg.user}:users /home/${cfg.user}/.config/opencode/opencode.json
+        chmod 644 /home/${cfg.user}/.config/opencode/opencode.json
+      fi
+      chown -R ${cfg.user}:users /home/${cfg.user}/.config/opencode
       ''}
     '';
 
