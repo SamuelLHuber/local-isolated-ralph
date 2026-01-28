@@ -34,6 +34,9 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
   git config --global url."https://oauth:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
 fi
 
+# Increase Node.js heap size for large builds (default is ~2GB)
+export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=8192}"
+
 # Set the agent command based on RALPH_AGENT
 case "$RALPH_AGENT" in
   claude)
