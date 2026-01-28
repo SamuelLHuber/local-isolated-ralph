@@ -202,6 +202,8 @@ in {
     ];
 
     # Claude Code autonomous mode config
+    # Note: Claude config (~/.claude/) is copied from host by create-ralph.sh,
+    # including mcp.json. This settings.json is symlinked and provides autonomous mode.
     environment.etc."ralph/claude-settings.json" = mkIf cfg.autonomousMode {
       text = builtins.toJSON {
         permissions = {
@@ -211,22 +213,31 @@ in {
       mode = "0644";
     };
 
-    # Codex CLI autonomous mode config
+    # Codex CLI config with autonomous mode and MCP servers
+    # Note: Unlike Claude, Codex config is NOT copied from host - we use this predefined
+    # config. It's copied (not symlinked) to ~/.codex/config.toml so codex can modify it.
     environment.etc."ralph/codex-config.toml" = mkIf cfg.autonomousMode {
       text = ''
         approval_policy = "never"
         sandbox_mode = "danger-full-access"
+      '' + optionalString cfg.browser.mcp ''
+
+        [mcp_servers.playwright]
+        command = "npx"
+        args = ["@playwright/mcp@latest"]
       '';
       mode = "0644";
     };
 
-    # MCP configuration for browser automation (connects to local headless Chrome)
+    # MCP configuration for Claude (fallback only)
+    # Note: create-ralph.sh copies ~/.claude/ from host, which overwrites this.
+    # This config is only used if the host has no ~/.claude/mcp.json.
     environment.etc."ralph/claude-mcp.json" = mkIf cfg.browser.mcp {
       text = builtins.toJSON {
         mcpServers = {
-          browser = {
-            command = "/home/${cfg.user}/.bun/bin/mcp";
-            args = [ "--cdp-endpoint" "http://localhost:9222" ];
+          playwright = {
+            command = "npx";
+            args = [ "@playwright/mcp@latest" ];
           };
         };
       };
@@ -250,9 +261,13 @@ in {
       ''}
 
       ${optionalString cfg.autonomousMode ''
-      # Codex config
+      # Codex config - copy instead of symlink so codex can modify it (e.g., mcp add)
       mkdir -p /home/${cfg.user}/.codex
-      ln -sf /etc/ralph/codex-config.toml /home/${cfg.user}/.codex/config.toml
+      if [ ! -f /home/${cfg.user}/.codex/config.toml ]; then
+        cp /etc/ralph/codex-config.toml /home/${cfg.user}/.codex/config.toml
+        chown ${cfg.user}:users /home/${cfg.user}/.codex/config.toml
+        chmod 644 /home/${cfg.user}/.codex/config.toml
+      fi
       chown -R ${cfg.user}:users /home/${cfg.user}/.codex
       ''}
     '';

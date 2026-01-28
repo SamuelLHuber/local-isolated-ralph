@@ -19,10 +19,15 @@ set -euo pipefail
 
 # Parse options
 INCLUDE_GIT=false
+RESUME=false
 while [[ $# -gt 0 && "$1" == --* ]]; do
   case "$1" in
     --include-git)
       INCLUDE_GIT=true
+      shift
+      ;;
+    --resume)
+      RESUME=true
       shift
       ;;
     *)
@@ -80,10 +85,16 @@ else
 fi
 WORK_SUBDIR="${PROJECT_BASENAME}-${TIMESTAMP}"
 
+WORK_DIR_FILE="$HOME/.cache/ralph/${VM_NAME}-workdir.txt"
+mkdir -p "$HOME/.cache/ralph"
+
 echo "[$VM_NAME] Dispatching task from: $PROMPT_FILE"
 echo "[$VM_NAME] Agent: $RALPH_AGENT ($AGENT_CMD)"
 echo "[$VM_NAME] Include .git: $INCLUDE_GIT"
 echo "[$VM_NAME] Work dir: /home/ralph/work/${VM_NAME}/${WORK_SUBDIR}"
+
+# Save work dir for easy resumption
+echo "/home/ralph/work/${VM_NAME}/${WORK_SUBDIR}" > "$WORK_DIR_FILE"
 
 if [[ "$OS" == "macos" ]]; then
   if ! limactl list --format '{{.Name}} {{.Status}}' 2>/dev/null | grep -q "^$VM_NAME Running"; then
