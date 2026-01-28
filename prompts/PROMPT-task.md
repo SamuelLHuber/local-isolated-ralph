@@ -19,7 +19,7 @@ Other agents are working on related tasks in parallel:
 - Stay focused on YOUR task only
 - Don't modify files outside your task scope unless necessary
 - If you need changes from another task, note it in your output
-- Commit frequently to your jj change
+- Commit and push frequently to preserve your work
 
 ## Working Context
 

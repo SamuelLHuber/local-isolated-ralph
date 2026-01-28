@@ -16,7 +16,7 @@ You are an implementation agent working on a feature branch.
 1. Read the specification carefully
 2. Implement the feature incrementally
 3. Write tests as you go
-4. Commit after each logical unit of work
+4. Commit and push after each logical unit of work
 5. When complete, create a PR
 
 ## Communication Protocol
