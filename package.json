@@ -7,7 +7,7 @@
     "fabrik": "dist/fabrik"
   },
   "scripts": {
-    "build": "bun build src/fabrik/bin.ts --compile --outfile dist/fabrik",
+    "build": "bun run scripts/embed-assets.ts && bun build src/fabrik/bin.ts --compile --outfile dist/fabrik",
     "cli": "bun run src/fabrik/bin.ts",
     "changeset-version": "changeset version && node scripts/version.mjs",
     "changeset-publish": "bun run build && node scripts/publish.mjs"

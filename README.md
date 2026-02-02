@@ -163,6 +163,17 @@ bun run build
 ./dist/fabrik flow
 ```
 
+### Standalone binary (embedded assets)
+
+The `fabrik` binary embeds:
+- default prompts + reviewer prompts
+- default Smithers workflows
+- helper scripts (dispatch/cleanup/fleet)
+- docs (README/WORKFLOW/QUICKSTART/specs README)
+
+If `LOCAL_RALPH_HOME` (or `~/git/local-isolated-ralph`) is missing, `fabrik` writes embedded assets
+to `~/.cache/fabrik/embedded/<hash>/` and runs from there.
+
 Common commands:
 
 ```bash

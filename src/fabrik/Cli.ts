@@ -8,6 +8,7 @@ import { existsSync, readFileSync } from "node:fs"
 import { resolve, join } from "node:path"
 import { homedir } from "node:os"
 import { listSpecs } from "./specs.js"
+import { resolveRalphHome } from "./embedded.js"
 
 const defaultRalphHome = process.env.LOCAL_RALPH_HOME ?? join(homedir(), "git", "local-isolated-ralph")
 
@@ -101,7 +102,8 @@ const runCommand = Command.make(
     reviewMax,
     reviewModels
   }) => {
-    const script = resolve(ralphHome, "scripts", "dispatch.sh")
+    const home = resolveRalphHome(ralphHome)
+    const script = resolve(home, "scripts", "dispatch.sh")
     const args: string[] = []
     const todoValue = unwrapOptional(todo)
     const projectValue = unwrapOptional(project)
@@ -137,13 +139,19 @@ const runCommand = Command.make(
 const validateCommand = Command.make(
   "validate",
   { dir: Options.text("dir").pipe(Options.withDescription("Specs directory"), Options.withDefault("specs")) },
-  ({ dir }) => runScript("bun", ["run", "scripts/validate-specs.ts", dir])
+  ({ dir }) => {
+    const home = resolveRalphHome(defaultRalphHome)
+    return runScript("bun", ["run", resolve(home, "scripts", "validate-specs.ts"), dir])
+  }
 ).pipe(Command.withDescription("Validate spec/todo JSON"))
 
 const minifyCommand = Command.make(
   "minify",
   { dir: Options.text("dir").pipe(Options.withDescription("Specs directory"), Options.withDefault("specs")) },
-  ({ dir }) => runScript("bun", ["run", "scripts/minify-specs.ts", dir])
+  ({ dir }) => {
+    const home = resolveRalphHome(defaultRalphHome)
+    return runScript("bun", ["run", resolve(home, "scripts", "minify-specs.ts"), dir])
+  }
 ).pipe(Command.withDescription("Minify spec/todo JSON"))
 
 const specCommand = Command.make("spec").pipe(Command.withSubcommands([validateCommand, minifyCommand]))
@@ -158,7 +166,8 @@ const feedbackCommand = Command.make(
     notes: notesOption
   },
   ({ ralphHome, vm, spec, decision, notes }) => {
-    const script = resolve(ralphHome, "scripts", "record-human-feedback.sh")
+    const home = resolveRalphHome(ralphHome)
+    const script = resolve(home, "scripts", "record-human-feedback.sh")
     const args = ["--vm", vm, "--spec", spec, "--decision", decision, "--notes", notes]
     return runScript(script, args)
   }
@@ -173,7 +182,8 @@ const cleanupCommand = Command.make(
     dryRun: dryRunOption
   },
   ({ ralphHome, vm, keep, dryRun }) => {
-    const script = resolve(ralphHome, "scripts", "cleanup-workdirs.sh")
+    const home = resolveRalphHome(ralphHome)
+    const script = resolve(home, "scripts", "cleanup-workdirs.sh")
     const args = [vm]
     if (typeof keep === "number" && Number.isFinite(keep)) {
       args.push("--keep", String(keep))
@@ -191,7 +201,8 @@ const fleetCommand = Command.make(
     vmPrefix: vmPrefixOption.pipe(Options.withDefault("ralph"))
   },
   ({ ralphHome, specsDir, vmPrefix }) => {
-    const script = resolve(ralphHome, "scripts", "smithers-fleet.sh")
+    const home = resolveRalphHome(ralphHome)
+    const script = resolve(home, "scripts", "smithers-fleet.sh")
     const args = [specsDir, vmPrefix]
     return runScript(script, args)
   }
@@ -201,7 +212,7 @@ const docsCommand = Command.make(
   "docs",
   { topic: topicOption },
   ({ topic }) => {
-    const base = resolve(defaultRalphHome)
+    const base = resolveRalphHome(defaultRalphHome)
     const topicMap: Record<string, string> = {
       readme: "README.md",
       workflow: "WORKFLOW.md",
