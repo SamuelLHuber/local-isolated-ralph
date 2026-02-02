@@ -1,18 +1,7 @@
 #!/usr/bin/env smithers
 import { readFileSync, mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs"
 import { join, resolve, basename } from "node:path"
-import {
-  createSmithersRoot,
-  createSmithersDB,
-  SmithersProvider,
-  Ralph,
-  Claude,
-  Codex,
-  OpenCode,
-  If,
-  useSmithers,
-  useQueryValue
-} from "smithers-orchestrator"
+import * as Orchestrator from "smithers-orchestrator"
 
 type Spec = {
   id: string
@@ -31,6 +20,20 @@ type Review = {
   next: string[]
 }
 
+const {
+  createSmithersRoot,
+  createSmithersDB,
+  SmithersProvider,
+  Ralph,
+  Claude,
+  Codex,
+  If,
+  useSmithers,
+  useQueryValue
+} = Orchestrator
+
+const OpenCodeComponent = Orchestrator.OpenCode ?? Codex
+
 const env = process.env
 const specPath = resolve(env.SMITHERS_SPEC_PATH ?? env.SPEC_PATH ?? "specs/000-base.min.json")
 const todoPath = resolve(env.SMITHERS_TODO_PATH ?? env.TODO_PATH ?? "specs/000-base.todo.min.json")
@@ -42,6 +45,10 @@ const model =
   env.MODEL ??
   (agentKind === "codex" ? "codex-5.2" : "opus")
 const maxIterations = Number(env.SMITHERS_MAX_ITERATIONS ?? env.MAX_ITERATIONS ?? 3)
+
+if (!Orchestrator.OpenCode && agentKind === "opencode") {
+  console.log("[WARN] OpenCode export missing; falling back to Codex for opencode.")
+}
 
 const spec = JSON.parse(readFileSync(specPath, "utf8")) as Spec
 
@@ -196,9 +203,9 @@ function ReviewRunner() {
       <If condition={agentKind === "codex"}>
         <Codex {...codexProps}>{prompt}</Codex>
       </If>
-      <If condition={agentKind === "opencode"}>
-        <OpenCode {...openCodeProps}>{prompt}</OpenCode>
-      </If>
+        <If condition={agentKind === "opencode"}>
+          <OpenCodeComponent {...openCodeProps}>{prompt}</OpenCodeComponent>
+        </If>
     </review>
   )
 }
