@@ -18,6 +18,7 @@ let
     (optional cfg.agents.claude "@anthropic-ai/claude-code") ++
     (optional cfg.agents.codex "@openai/codex") ++
     (optional cfg.agents.opencode "opencode-ai@latest") ++
+    (optional cfg.agents.smithers "smithers-orchestrator@latest") ++
     (optional cfg.browser.mcp "@playwright/mcp@latest");
 
   # Script to install agent CLIs via bun
@@ -37,6 +38,7 @@ let
     ${optionalString cfg.agents.claude ''echo "  - claude (Claude Code)"''}
     ${optionalString cfg.agents.codex ''echo "  - codex (OpenAI Codex)"''}
     ${optionalString cfg.agents.opencode ''echo "  - opencode (OpenCode AI)"''}
+    ${optionalString cfg.agents.smithers ''echo "  - smithers (Smithers orchestrator)"''}
     ${optionalString cfg.browser.mcp ''echo "  - mcp (Playwright MCP for browser automation)"''}
   '';
 
@@ -79,6 +81,12 @@ in {
         type = types.bool;
         default = true;
         description = "Install OpenCode AI (opencode-ai)";
+      };
+
+      smithers = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Install Smithers orchestrator (smithers-orchestrator)";
       };
     };
 

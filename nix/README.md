@@ -194,6 +194,7 @@ The Ralph module (`modules/ralph.nix`) exposes these options:
 | `services.ralph.agents.claude` | `true` | Install Claude Code |
 | `services.ralph.agents.codex` | `true` | Install OpenAI Codex |
 | `services.ralph.agents.opencode` | `true` | Install OpenCode AI |
+| `services.ralph.agents.smithers` | `true` | Install Smithers orchestrator |
 
 ### Browser Support
 
