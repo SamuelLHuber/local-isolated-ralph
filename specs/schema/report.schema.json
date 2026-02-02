@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["v", "taskId", "status", "work", "files", "tests", "issues", "next"],
+  "additionalProperties": false,
+  "properties": {
+    "v": { "type": "integer", "const": 1 },
+    "taskId": { "type": "string" },
+    "status": { "type": "string", "enum": ["done", "blocked", "failed"] },
+    "work": { "type": "array", "items": { "type": "string" } },
+    "files": { "type": "array", "items": { "type": "string" } },
+    "tests": { "type": "array", "items": { "type": "string" } },
+    "issues": { "type": "array", "items": { "type": "string" } },
+    "next": { "type": "array", "items": { "type": "string" } }
+  }
+}

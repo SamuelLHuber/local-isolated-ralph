@@ -1,0 +1,22 @@
+{
+  "v": 1,
+  "id": "000-base",
+  "title": "Base Cron + Webhook Execution Service",
+  "status": "Implemented",
+  "version": "1.0",
+  "lastUpdated": "2026-01-01",
+  "supersedes": [],
+  "dependsOn": [],
+  "goals": ["..."],
+  "nonGoals": ["..."],
+  "req": {
+    "api": ["GET /_health", "POST /webhook"],
+    "behavior": ["async 202", "idempotent 48h"],
+    "obs": ["otel", "loki", "sentry"]
+  },
+  "cfg": {
+    "env": ["PORT", "LOG_LEVEL", "WEBHOOK_SECRET", "OTLP_ENDPOINT", "SENTRY_DSN"]
+  },
+  "accept": ["..."],
+  "assume": ["..."]
+}

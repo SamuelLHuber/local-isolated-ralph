@@ -92,7 +92,7 @@ cd /path/to/local-isolated-ralph
 # The script will:
 # - Create a VM with 4 CPU, 6GB RAM, 30GB disk
 # - Copy your ~/.claude auth folder to the VM
-# - Copy ralph-loop.sh to the VM
+# - Install Smithers (required)
 # - Copy ~/.config/ralph/ralph.env (with GITHUB_TOKEN)
 ```
 
@@ -136,6 +136,16 @@ claude --version
 # Should show version without auth errors
 ```
 
+**Install Smithers (required):**
+```bash
+bun add -g smithers-orchestrator
+```
+
+**Verify JJ is available (required):**
+```bash
+jj --version
+```
+
 Exit the VM when done: `exit`
 
 If you need to re-sync credentials later:
@@ -156,89 +166,54 @@ To store a Claude Code token for syncing:
 
 ## Step 6: Write Your First Spec
 
-Create a task directory with a prompt file:
+Create a JSON spec and TODO, then minify:
 
 ```bash
-mkdir -p ~/tasks/my-first-task
+# Use templates as a starting point
+cp specs/templates/spec.json specs/001-hello-world.json
+cp specs/templates/todo.json specs/001-hello-world.todo.json
 
-cat > ~/tasks/my-first-task/PROMPT.md << 'EOF'
-# Task: Create a Hello World CLI
-
-## Specification
-
-Create a simple Node.js CLI tool that:
-1. Accepts a `--name` argument
-2. Prints "Hello, <name>!" to stdout
-3. Defaults to "Hello, World!" if no name provided
-
-## Repository
-
-Clone: https://github.com/YOUR-USERNAME/hello-cli.git
-Branch: feat/hello-world
-
-## Instructions
-
-1. Clone the repository
-2. Create the feature branch
-3. Implement the CLI tool in `src/index.js`
-4. Add a `package.json` with a `bin` entry
-5. Test it works: `node src/index.js --name Ralph`
-6. Commit your changes
-7. Push and create a PR
-
-## On completion, output:
-
-```json
-{"status": "DONE", "summary": "Created hello CLI with --name flag", "pr": "feat/hello-world"}
-```
-EOF
+# Edit both files, then validate + minify
+bun run scripts/validate-specs.ts
+bun run scripts/minify-specs.ts
 ```
 
 ---
 
-## Step 7: Run Ralph!
+## Step 7: Run Smithers
 
-**Option A: Run directly in VM**
-
-SSH into the VM and run:
+**Use the dispatch script (runs from host)**
 
 ```bash
-# macOS
-colima ssh -p ralph-1
-
-# Inside VM:
-cd ~/work
-cp /path/to/tasks/my-first-task/PROMPT.md .
-ralph PROMPT.md
-```
-
-**Option B: Use the dispatch script (runs from host)**
-
-```bash
-# Basic usage (100 max iterations by default)
-./scripts/dispatch.sh ralph-1 ~/tasks/my-first-task/PROMPT.md
+# Smithers mode (spec/todo minified JSON)
+./scripts/dispatch.sh --spec specs/001-hello-world.min.json ralph-1 specs/001-hello-world.min.json
 
 # Sync a local project directory to the VM
-./scripts/dispatch.sh ralph-1 ~/tasks/my-first-task/PROMPT.md ~/projects/my-app
+./scripts/dispatch.sh --spec specs/001-hello-world.min.json ralph-1 specs/001-hello-world.min.json ~/projects/my-app
 
-# Limit iterations (stops after 20 loops or DONE/BLOCKED)
-./scripts/dispatch.sh ralph-1 ~/tasks/my-first-task/PROMPT.md ~/projects/my-app 20
+# Limit iterations (stops after 20 Smithers iterations)
+./scripts/dispatch.sh --spec specs/001-hello-world.min.json ralph-1 specs/001-hello-world.min.json ~/projects/my-app 20
 
 # Or use environment variable
-MAX_ITERATIONS=10 ./scripts/dispatch.sh ralph-1 ~/tasks/my-first-task/PROMPT.md
+MAX_ITERATIONS=10 ./scripts/dispatch.sh --spec specs/001-hello-world.min.json ralph-1 specs/001-hello-world.min.json
+```
+
+**Smithers loop at a glance:**
+```
+spec.min.json + todo.min.json → smithers workflow → report.json (per task)
 ```
 
 ---
 
 ## Step 8: Watch and Wait
 
-The agent will:
-1. Read the prompt
-2. Clone the repo
-3. Implement the feature
-4. Create commits
-5. Push and create a PR
-6. Output `{"status": "DONE", ...}` when finished
+The workflow will:
+1. Read `spec.min.json` + `todo.min.json`
+2. Implement tasks in order
+3. Write `reports/<task>.report.json` per task
+4. Run an agent reviewer
+5. Write `reports/review.json` and `reports/human-gate.json`
+6. Stop for human review
 
 **Monitor progress:**
 
@@ -246,9 +221,29 @@ The agent will:
 - Or check Grafana at http://localhost:3010 for logs
 - Check iteration status: `cat ~/work/state/status`
 
-**If the agent gets blocked:**
+**Human review gate:**
 
-It will output `{"status": "BLOCKED", "question": "..."}`. Update the PROMPT.md with clarification and the loop will continue.
+After the reviewer runs, `reports/human-gate.json` is written with `status: "blocked"`.
+Human approves, then starts the next spec run.
+
+**Custom prompts:**
+
+```bash
+./scripts/dispatch.sh --spec specs/001-hello-world.min.json ralph-1 specs/001-hello-world.min.json \
+  --prompt ./prompts/PROMPT-implementer.md \
+  --review-prompt ./prompts/PROMPT-reviewer.md
+```
+
+Record feedback:
+
+```bash
+./scripts/record-human-feedback.sh --vm ralph-1 --spec specs/001-hello-world.min.json \
+  --decision approve --notes "Matches spec."
+```
+
+**Immutable runs:**
+
+Each run gets a new workdir and is tracked in `~/.cache/ralph/ralph.db`.
 
 ---
 
@@ -260,6 +255,12 @@ When done, you can stop or delete the VM:
 ```bash
 colima stop -p ralph-1     # Stop (preserves state)
 colima delete -p ralph-1   # Delete completely
+```
+
+Cleanup old workdirs:
+
+```bash
+./scripts/cleanup-workdirs.sh ralph-1 --keep 5
 ```
 
 **Linux:**
@@ -320,7 +321,7 @@ scp -r ~/.claude dev@<VM_IP>:~/
 ### Agent loops forever
 
 - Check `~/work/state/status` for current state
-- The agent stops on DONE, BLOCKED, or NEEDS_INPUT
+- The workflow stops when all tasks are done or when a task is blocked/failed
 - Set `MAX_ITERATIONS=10` to limit loops during testing
 
 ### Can't reach LAOS from VM

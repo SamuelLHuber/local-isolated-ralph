@@ -2,7 +2,7 @@
 
 **Humans write specs. Agents ship features.**
 
-Run a workforce of isolated coding agents locally. Write a specification, dispatch it to your Ralph fleet, get notified when it ships.
+Run a workforce of isolated coding agents locally. Write a specification, dispatch it to your Ralph fleet, get notified when it ships. Smithers is required.
 
 ## The Vision
 
@@ -39,11 +39,11 @@ Agents handle:
 │  │   all agents report here                                     │
 │  ├── Message queue (filesystem) ◄── agents coordinate           │
 │  │                                                               │
-│  ├── ralph-1 (VM) ──── branch: feat/auth                        │
-│  ├── ralph-2 (VM) ──── branch: feat/dashboard                   │
-│  ├── ralph-3 (VM) ──── branch: fix/api-error                    │
+│  ├── ralph-1 (VM) ──── Smithers workflow ── feat/auth           │
+│  ├── ralph-2 (VM) ──── Smithers workflow ── feat/dashboard      │
+│  ├── ralph-3 (VM) ──── Smithers workflow ── fix/api-error       │
 │  │                                                               │
-│  └── ralph-review (VM) ── reviews PRs, sends feedback           │
+│  └── ralph-review (VM) ── reviews reports, sends feedback       │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -80,45 +80,28 @@ for i in 1 2 3 4; do ./scripts/create-ralph.sh ralph-$i 2 4 20; done
 ./scripts/setup-base-vm.sh  # Run inside VM
 ```
 
-### 2. Prepare a task
+### 2. Prepare a task (Spec + TODO)
 
 ```bash
-# Create a task directory with your spec
-mkdir -p ~/tasks/my-feature
-cat > ~/tasks/my-feature/PROMPT.md << 'EOF'
-# Task: Add user authentication
-
-## Specification
-- Add login/logout endpoints
-- Use JWT tokens
-- Store users in PostgreSQL
-
-## Instructions
-1. Clone the repo and create a feature branch
-2. Implement the feature
-3. Write tests
-4. Create a PR when done
-EOF
+# Use the JSON spec/todo workflow (minified inputs for Smithers)
+bun run scripts/validate-specs.ts
+bun run scripts/minify-specs.ts
 ```
 
-### 3. Launch Ralph
+### 3. Launch Smithers
 
 ```bash
-# Start a single Ralph (defaults to 100 max iterations)
-./scripts/dispatch.sh ralph-1 ~/tasks/my-feature/PROMPT.md
+# Run a Smithers workflow (spec/todo minified JSON)
+./scripts/dispatch.sh --spec specs/010-weekly-summary.min.json ralph-1 specs/010-weekly-summary.min.json
 
 # With local project directory synced to VM
-./scripts/dispatch.sh ralph-1 ~/tasks/my-feature/PROMPT.md ~/projects/my-app
+./scripts/dispatch.sh --spec specs/010-weekly-summary.min.json ralph-1 specs/010-weekly-summary.min.json ~/projects/my-app
 
-# With iteration limit (stops after 20 loops or DONE/BLOCKED)
-./scripts/dispatch.sh ralph-1 ~/tasks/my-feature/PROMPT.md ~/projects/my-app 20
+# With iteration limit (stops after 20 Smithers iterations)
+./scripts/dispatch.sh --spec specs/010-weekly-summary.min.json ralph-1 specs/010-weekly-summary.min.json ~/projects/my-app 20
 
-# Or start multiple Ralphs on different tasks
-./scripts/ralph-fleet.sh ~/tasks/
-
-# View agents in tmux
-tmux attach -t ralph-fleet
-# Ctrl+B, N/P to switch between agents
+# Or start multiple Ralphs on different specs (fleet)
+./scripts/smithers-fleet.sh specs ralph
 ```
 
 ### 4. Watch and wait
@@ -127,14 +110,11 @@ tmux attach -t ralph-fleet
 # Grafana for logs/traces
 open http://localhost:3010
 
-# Or attach to specific Ralph
-tmux attach -t ralph-fleet:ralph-1
+# Or attach to a VM session directly
+# limactl shell <vm> or ssh ralph@<ip>
 ```
 
-When done, agents output:
-```json
-{"status": "DONE", "summary": "Implemented auth with JWT", "pr": "feat/auth"}
-```
+When done, Smithers writes `reports/<task>.report.json` per task and exits when all tasks are done.
 
 ## Workflows
 
@@ -156,32 +136,217 @@ See **[WORKFLOW.md](./WORKFLOW.md)** for detailed patterns.
 | [SETUP-MACOS.md](./SETUP-MACOS.md) | macOS setup with Colima |
 | [SETUP-LINUX.md](./SETUP-LINUX.md) | Linux setup with libvirt/QEMU |
 | [dtechvision/laos](https://github.com/dtechvision/laos) | Shared observability stack |
-| [prompts/](./prompts/) | Prompt templates (implementer, reviewer) |
+| [specs/templates/](./specs/templates/) | Spec/TODO JSON templates |
 
 ## Scripts
 
 | Script | Purpose |
 |--------|---------|
-| `dispatch.sh` | Send task to VM and run loop (see options below) |
+| `dispatch.sh` | Send spec/todo to VM and run Smithers workflow (see options below) |
 | `create-ralph.sh` | Create a new Ralph VM |
 | `setup-base-vm.sh` | Install tools inside VM (run once, snapshot) |
-| `ralph-loop.sh` | Core loop script with state tracking (runs inside VM) |
-| `ralph-start.sh` | Start single Ralph in tmux |
-| `ralph-fleet.sh` | Start fleet from tasks directory |
-| `ralph-multi.sh` | Run multiple Ralphs in one VM |
+| `smithers-fleet.sh` | Dispatch multiple Smithers workflows |
+| `smithers-spec-runner.tsx` | Default Smithers workflow for spec/todo |
+| `smithers-reviewer.tsx` | Smithers reviewer workflow template |
+| `cleanup-workdirs.sh` | Cleanup old immutable workdirs |
+| `record-human-feedback.sh` | Record human review decision/notes |
 | `list-ralphs.sh` | Show all VMs and status |
 | `cleanup-ralphs.sh` | Delete VMs |
+
+## CLI (Fabrik)
+
+Build and run the single binary CLI:
+
+```bash
+bun install
+bun run build
+./dist/fabrik flow
+```
+
+Common commands:
+
+```bash
+# Validate + minify specs in current repo
+fabrik spec validate
+fabrik spec minify
+
+# Dispatch a run (from another repo)
+fabrik run --spec specs/feature.min.json --vm ralph-1
+
+# Run with custom prompts
+fabrik run --spec specs/feature.min.json --vm ralph-1 \
+  --prompt ./prompts/PROMPT-implementer.md \
+  --review-prompt ./prompts/PROMPT-reviewer.md
+
+# Run with custom reviewer models + retry cap
+fabrik run --spec specs/feature.min.json --vm ralph-1 \
+  --review-max 3 \
+  --review-models ./prompts/reviewer-models.json
+
+# Record human feedback
+fabrik feedback --vm ralph-1 --spec specs/feature.min.json --decision approve --notes "OK"
+
+# Fleet
+fabrik fleet --specs-dir specs --vm-prefix ralph
+
+# Docs
+fabrik docs --topic workflow
+
+# Runs
+fabrik runs list --limit 10
+fabrik runs show --id 42
+fabrik runs feedback --id 42 --decision approve --notes "OK"
+```
+
+### Use the CLI from another repo
+
+From any repo (e.g. `~/git/<your-repo>`):
+
+```bash
+# Build once (in local-ralph)
+cd /Users/samuel/git/local-isolated-ralph
+bun install
+bun build src/fabrik/bin.ts --compile --outfile dist/fabrik
+
+# Use from another repo
+cd ~/git/<your-repo>
+/Users/samuel/git/local-isolated-ralph/dist/fabrik spec validate
+/Users/samuel/git/local-isolated-ralph/dist/fabrik spec minify
+/Users/samuel/git/local-isolated-ralph/dist/fabrik run --spec specs/001-foo.min.json --vm ralph-1
+```
+
+If your local-ralph repo lives elsewhere, set:
+
+```bash
+export LOCAL_RALPH_HOME=/path/to/local-isolated-ralph
+```
+
+### Smithers (Required Orchestration + JJ)
+
+Smithers is required. It consumes minified spec/todo JSON and executes tasks with durable state. It always runs an agent reviewer and writes `reports/review.json`, then writes `reports/human-gate.json` to block for human approval. Version control is JJ (colocated Git backend).
+
+Default models:
+- Claude: `opus`
+- Codex: `codex-5.2` (reasoning `medium`, sandbox `danger-full-access`, approval policy `never`)
+
+PROMPT control:
+- Pass `--prompt` to prepend a per-run `PROMPT.md` (implementation instructions).
+- Pass `--review-prompt` to prepend reviewer instructions.
+These files are prepended before the spec/todo content in Smithers.
+Defaults live in `prompts/DEFAULT-IMPLEMENTER.md` and `prompts/DEFAULT-REVIEWER.md`.
+Review pipeline (default):
+- Security
+- Code Quality
+- Minimal Simplicity
+- Test Coverage
+- Maintainability
+
+Reviewer prompts live in `prompts/reviewers/*.md` and are copied into each run.
+
+Reviewer model config (optional):
+Create `reviewer-models.json` to map reviewers to models:
+
+```json
+{
+  "_default": "sonnet",
+  "security": "sonnet",
+  "code-quality": "sonnet",
+  "simplicity": "sonnet",
+  "test-coverage": "sonnet",
+  "maintainability": "sonnet"
+}
+```
+
+Backpressure:
+- If any reviewer requests changes, Smithers generates `reports/review-todo.json`
+  and runs those review tasks only.
+- The review pipeline reruns after review tasks.
+- Only when all reviewers approve does the human gate appear.
+
+Run context audit:
+- Each run writes `reports/run-context.json` with prompt contents + hashes.
+
+```bash
+# Install in VM if missing
+# bun add -g smithers-orchestrator
+
+# Local workflow (uses scripts/smithers-spec-runner.tsx by default)
+./scripts/dispatch.sh --spec specs/000-base.min.json ralph-1 specs/000-base.min.json
+
+# With custom prompts
+./scripts/dispatch.sh --spec specs/000-base.min.json ralph-1 specs/000-base.min.json \
+  --prompt ./prompts/PROMPT-implementer.md \
+  --review-prompt ./prompts/PROMPT-reviewer.md
+
+# Custom TODO and workflow
+./scripts/dispatch.sh --spec specs/010-weekly-summary.min.json --todo specs/010-weekly-summary.todo.min.json \
+  --workflow scripts/smithers-spec-runner.tsx --model sonnet ralph-1 specs/010-weekly-summary.min.json
+
+# Review runs automatically after tasks; Smithers writes reports/review.json and reports/human-gate.json.
+```
+
+### Smithers Workflow Diagram
+
+```
+spec.min.json + todo.min.json
+          │
+          ▼
+  Smithers workflow
+  (Ralph loop in React)
+          │
+          ├─ task 1 → report.json
+          ├─ task 2 → report.json
+          └─ task N → report.json
+          │
+          ▼
+     DONE / BLOCKED / FAILED
+```
+
+### Reviewer Template (Standalone)
+
+Use the built-in Smithers reviewer workflow:
+
+```bash
+./scripts/dispatch.sh --spec specs/feature.min.json --workflow scripts/smithers-reviewer.tsx \
+  ralph-review specs/feature.min.json
+```
+
+### JJ Primer (Required VCS)
+
+JJ uses a colocated Git backend. The repo still has `.git`, but you use `jj` commands.
+
+```
+Clone:              jj git clone <url> <dir>
+Init in repo:       jj git init
+Start change:       jj new main
+Status:             jj status
+Diff:               jj diff
+Describe change:    jj describe
+Push change:        jj git push --change @
+```
 
 ### dispatch.sh Options
 
 ```bash
-./scripts/dispatch.sh [--include-git] <vm-name> <prompt-file> [project-dir] [max-iterations]
+./scripts/dispatch.sh [--include-git] [--spec <path>] [--todo <path>] \
+  [--workflow <path>] [--report-dir <path>] [--model <name>] \
+  [--prompt <path>] [--review-prompt <path>] \
+  <vm-name> <spec-file> [project-dir] [max-iterations]
 
 # Example with .git included (enables push from synced project)
-RALPH_AGENT=codex ./scripts/dispatch.sh --include-git ralph-1 ~/tasks/PROMPT.md ~/projects/app 20
+RALPH_AGENT=codex ./scripts/dispatch.sh --include-git --spec specs/000-base.min.json ralph-1 specs/000-base.min.json ~/projects/app 20
 ```
 
 - `--include-git` - Include `.git` in sync (otherwise agent must clone from repo URL)
+- `--spec` - Spec JSON (minified recommended) for Smithers mode
+- `--todo` - TODO JSON (minified recommended) for Smithers mode
+- `--workflow` - Smithers workflow script (default: `scripts/smithers-spec-runner.tsx`)
+- `--report-dir` - Report output directory inside VM (default: workdir/reports)
+- `--model` - Model name for Smithers agent
+- `--prompt` - PROMPT.md prepended to every task prompt
+- `--review-prompt` - Reviewer PROMPT.md prepended to review prompt
+- `--review-max` - Max review reruns before human gate (default: 2)
+- `--review-models` - JSON map of reviewer_id -> model
 - `RALPH_AGENT` - Agent to use: `claude` (default), `codex`, `opencode`
 - `MAX_ITERATIONS` - Max loops (default: 100, 0 = unlimited)
 
@@ -243,3 +408,49 @@ Disk usage to watch:
   - ~/vms/ralph/ - libvirt VM disks on Linux
 
 For the cloud-hosted version of this, see [Sprites](https://sprites.dev) + [Wisp](https://github.com/thruflo/wisp).
+### Immutable Runs + Local DB
+
+Each Smithers run gets a new workdir. Runs are tracked in a local SQLite DB:
+
+```
+~/.cache/ralph/ralph.db
+```
+
+Cleanup old runs:
+
+```bash
+./scripts/cleanup-workdirs.sh ralph-1 --keep 5
+```
+
+Record human feedback:
+
+```bash
+./scripts/record-human-feedback.sh --vm ralph-1 --spec specs/010-weekly-summary.min.json \
+  --decision approve --notes "Looks good."
+```
+Spec is explicit:
+- You choose the spec with `--spec`, not inside the prompt.
+
+Context stack now:
+
+```
+[
+  PROMPT.md (global instructions, if provided),
+  spec.json-derived system prompt,
+  task.do / task.verify,
+  JJ instructions,
+  report schema
+]
+```
+
+Reviewer stack:
+
+```
+[
+  REVIEW_PROMPT.md (if provided),
+  reviewer-specific prompt (from prompts/reviewers/*.md),
+  spec.json-derived system prompt,
+  reports/*.report.json,
+  review schema
+]
+```

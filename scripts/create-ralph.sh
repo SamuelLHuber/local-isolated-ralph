@@ -274,10 +274,6 @@ copy_credentials() {
 
   echo "    Copying ralph scripts..."
   ssh $ssh_opts "$user@$host" "mkdir -p ~/ralph" 2>/dev/null || true
-  if [[ -f "$SCRIPT_DIR/ralph-loop.sh" ]]; then
-    scp $ssh_opts "$SCRIPT_DIR/ralph-loop.sh" "$user@$host:~/ralph/loop.sh" 2>/dev/null || echo "    Warning: Failed to copy ralph-loop.sh"
-    ssh $ssh_opts "$user@$host" "chmod +x ~/ralph/loop.sh" 2>/dev/null || true
-  fi
   if [[ -f "$SCRIPT_DIR/setup-base-vm.sh" ]]; then
     scp $ssh_opts "$SCRIPT_DIR/setup-base-vm.sh" "$user@$host:~/ralph/verify.sh" 2>/dev/null || echo "    Warning: Failed to copy setup-base-vm.sh"
     ssh $ssh_opts "$user@$host" "chmod +x ~/ralph/verify.sh" 2>/dev/null || true
@@ -350,10 +346,6 @@ copy_credentials_lima() {
 
   echo "    Copying ralph scripts..."
   limactl shell "$vm_name" sudo -u "$user" mkdir -p "/home/$user/ralph" 2>/dev/null || true
-  if [[ -f "$SCRIPT_DIR/ralph-loop.sh" ]]; then
-    cat "$SCRIPT_DIR/ralph-loop.sh" | limactl shell "$vm_name" sudo -u "$user" tee "/home/$user/ralph/loop.sh" > /dev/null 2>&1 || true
-    limactl shell "$vm_name" sudo -u "$user" chmod +x "/home/$user/ralph/loop.sh" 2>/dev/null || true
-  fi
   if [[ -f "$SCRIPT_DIR/setup-base-vm.sh" ]]; then
     cat "$SCRIPT_DIR/setup-base-vm.sh" | limactl shell "$vm_name" sudo -u "$user" tee "/home/$user/ralph/verify.sh" > /dev/null 2>&1 || true
     limactl shell "$vm_name" sudo -u "$user" chmod +x "/home/$user/ralph/verify.sh" 2>/dev/null || true
@@ -480,8 +472,8 @@ EOF
 
   echo ""
   echo "Next steps:"
-  echo "  Dispatch a task:    ./scripts/dispatch.sh $NAME /path/to/PROMPT.md 20"
-  echo "  With git sync:      ./scripts/dispatch.sh --include-git $NAME /path/to/PROMPT.md /path/to/project 20"
+  echo "  Dispatch a spec:    ./scripts/dispatch.sh --spec /path/to/spec.min.json $NAME /path/to/spec.min.json 20"
+  echo "  With repo sync:     ./scripts/dispatch.sh --include-git --spec /path/to/spec.min.json $NAME /path/to/spec.min.json /path/to/project 20"
   echo ""
   echo "  Shell into VM:      limactl shell $NAME"
   echo "  Stop VM:            limactl stop $NAME"
@@ -547,9 +539,10 @@ else
     echo ""
     echo "Next steps:"
     echo "  1. SSH into VM:     ssh ralph@$VM_IP"
-    echo "  2. Stop VM:         virsh shutdown $NAME"
-    echo "  3. Start VM:        virsh start $NAME"
-    echo "  4. Delete VM:       virsh destroy $NAME; virsh undefine $NAME --remove-all-storage"
+    echo "  2. Dispatch spec:   ./scripts/dispatch.sh --spec /path/to/spec.min.json $NAME /path/to/spec.min.json 20"
+    echo "  3. Stop VM:         virsh shutdown $NAME"
+    echo "  4. Start VM:        virsh start $NAME"
+    echo "  5. Delete VM:       virsh destroy $NAME; virsh undefine $NAME --remove-all-storage"
     echo ""
     echo "Cleanup commands:"
     echo "  List all VMs:       virsh list --all"

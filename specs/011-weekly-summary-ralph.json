@@ -1,0 +1,64 @@
+{
+  "v": 1,
+  "id": "011-weekly-summary-ralph",
+  "title": "Weekly Summary - Ralph/CLI Orchestration Extension",
+  "status": "Proposed",
+  "version": "1.0",
+  "lastUpdated": "2026-02-02",
+  "supersedes": [
+    "010-weekly-summary"
+  ],
+  "dependsOn": [
+    "010-weekly-summary",
+    "020-release-verification"
+  ],
+  "goals": [
+    "Improve summary quality by allowing deeper, tool-assisted analysis.",
+    "Keep orchestration stateless while supporting rich context via local clones.",
+    "Make Ralph usage configurable per task (always/on_gap/never)."
+  ],
+  "nonGoals": [],
+  "req": {
+    "api": [
+      "Configuration supports Ralph policy, runner, and iteration settings."
+    ],
+    "behavior": [
+      "Ralph loops run on a single machine or container by default; Kubernetes Jobs optional.",
+      "Each run is isolated in its own working directory.",
+      "Ralph policy supports use_ralph: always | on_gap | never with default on_gap.",
+      "Max iterations are configurable and default to 10.",
+      "Parallelization is allowed per section; restart on failure up to 3 times.",
+      "Runtime thresholds alert at 24h/32h/40h and cancel at 48h.",
+      "Inputs include GitHub API payloads and optional full clone context for targeted paths.",
+      "Per-run PROMPT.md and TODO.md are generated for Ralph context.",
+      "Each Ralph loop outputs a section-level JSON artifact and artifacts are merged deterministically.",
+      "Workflow: base summary -> reviewer loop -> Ralph loop for gaps -> merge -> reviewer loop."
+    ],
+    "obs": [
+      "Observability follows base logging/tracing for Ralph runs and aggregation steps."
+    ]
+  },
+  "cfg": {
+    "env": [
+      "USE_RALPH: always | on_gap | never",
+      "RALPH_MAX_ITERATIONS (default: 10)",
+      "RALPH_AGENT: claude | codex | opencode (default: claude)",
+      "RALPH_REPO_URL (provided per task/run)",
+      "RALPH_INCLUDE_GIT (default: false)",
+      "RALPH_RUNNER: local | k8s (default: local)",
+      "RALPH_K8S_NAMESPACE (for k8s runner)"
+    ]
+  },
+  "accept": [
+    "Ralph loop can be triggered per task based on policy.",
+    "Artifacts are merged into final summary JSON.",
+    "Reviewer loop approves or stops after max iterations."
+  ],
+  "assume": [
+    "Ralph runs only when configured (default on_gap).",
+    "Full clone is allowed only for Ralph runs.",
+    "Each Ralph run is time-boxed and capped at 10 iterations by default.",
+    "No shared clone cache in v1; each run is isolated.",
+    "Section artifacts are merged deterministically into final output."
+  ]
+}

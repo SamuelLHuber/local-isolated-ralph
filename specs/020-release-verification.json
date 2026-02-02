@@ -1,0 +1,71 @@
+{
+  "v": 1,
+  "id": "020-release-verification",
+  "title": "Release Verification Pipeline",
+  "status": "Proposed",
+  "version": "1.0",
+  "lastUpdated": "2026-02-02",
+  "supersedes": [],
+  "dependsOn": [
+    "010-weekly-summary"
+  ],
+  "goals": [
+    "Trigger verification on GitHub release webhook events.",
+    "Produce a complete, mandatory verification report for each release.",
+    "Run Trail of Bits Skills security analysis and attach PDF output.",
+    "Provide a clear Freigabe decision (Ja/Nein/Manuelle Pr\u00fcfung) validated by AI reviewers.",
+    "Emit structured output that can be sent via email and later to other channels."
+  ],
+  "nonGoals": [
+    "No UI for configuration or results (handled in later PRD).",
+    "No additional persistence beyond the run store and PDF storage."
+  ],
+  "req": {
+    "api": [
+      "GitHub Release webhook triggers a jobId: release-verification task and responds 202.",
+      "Webhook payload includes repository and release metadata fields."
+    ],
+    "behavior": [
+      "Perform mandatory security analysis via Trail of Bits Skills prompts and generate an A4 PDF report.",
+      "Include security score (0-100) and list all high and medium findings.",
+      "Compute backwards compatibility score (0-100) with blockers and high-risk changes.",
+      "Verify reproducible build via Ralph/CLI when needed and record hashes.",
+      "If reproducible build verification fails, set Freigabe to Manuelle Pr\u00fcfung.",
+      "Generate end-user and maintainer summaries in the JSON report.",
+      "Reviewer loop: 5 reviewers, 4 approvals, max 3 iterations.",
+      "Store PDF in S3-compatible storage and include URL and SHA-256 checksum."
+    ],
+    "obs": [
+      "Observability inherits base logging/tracing expectations for webhook handling and pipeline steps."
+    ]
+  },
+  "cfg": {
+    "env": [
+      "RELEASE_WEBHOOK_SECRET (webhook auth)",
+      "REVIEWERS",
+      "REVIEW_APPROVALS_REQUIRED",
+      "REVIEW_MAX_ITERATIONS",
+      "S3-compatible object storage credentials",
+      "GITHUB_TOKEN",
+      "SMTP_HOST",
+      "SMTP_PORT",
+      "SMTP_USER",
+      "SMTP_PASS",
+      "SMTP_FROM"
+    ]
+  },
+  "accept": [
+    "A GitHub release webhook triggers the pipeline end-to-end.",
+    "JSON report includes all mandatory fields.",
+    "PDF stored and linked with checksum.",
+    "Email sent with attached PDF and formatted summary.",
+    "Reviewer loop completes or hits max iterations with clear outcome."
+  ],
+  "assume": [
+    "Release verification is triggered only by GitHub release webhook (no polling).",
+    "Trail of Bits Skills plugins listed are mandatory.",
+    "Backwards compatibility score is AI-based in v1.",
+    "Reproducible build is attempted via Ralph; failures result in Manuelle Pr\u00fcfung.",
+    "S3 provider is AWS-compatible (exact vendor TBD)."
+  ]
+}

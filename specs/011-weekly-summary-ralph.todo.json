@@ -1,0 +1,51 @@
+{
+  "v": 1,
+  "id": "011-weekly-summary-ralph",
+  "tdd": true,
+  "dod": [
+    "bun test",
+    "bun run typecheck"
+  ],
+  "tasks": [
+    {
+      "id": "011-weekly-summary-ralph-1",
+      "do": "Add tests for Ralph policy handling (always/on_gap/never) and default on_gap behavior.",
+      "verify": "bun test -- policy tests fail before implementation."
+    },
+    {
+      "id": "011-weekly-summary-ralph-2",
+      "do": "Implement Ralph policy evaluation and gap-trigger logic from reviewer loop results.",
+      "verify": "bun test -- policy tests pass."
+    },
+    {
+      "id": "011-weekly-summary-ralph-3",
+      "do": "Add tests for Ralph runner selection (local vs k8s) and max iteration cap.",
+      "verify": "bun test -- runner tests fail before implementation."
+    },
+    {
+      "id": "011-weekly-summary-ralph-4",
+      "do": "Implement Ralph run orchestration with isolation, retry limit, and iteration cap.",
+      "verify": "bun test -- runner tests pass."
+    },
+    {
+      "id": "011-weekly-summary-ralph-5",
+      "do": "Add tests for generating PROMPT.md and TODO.md per Ralph run.",
+      "verify": "bun test -- prompt/todo generation tests fail before implementation."
+    },
+    {
+      "id": "011-weekly-summary-ralph-6",
+      "do": "Implement per-run PROMPT.md and TODO.md generation based on missing sections.",
+      "verify": "bun test -- prompt/todo generation tests pass."
+    },
+    {
+      "id": "011-weekly-summary-ralph-7",
+      "do": "Add tests for section-level artifact merge into final summary JSON.",
+      "verify": "bun test -- artifact merge tests fail before implementation."
+    },
+    {
+      "id": "011-weekly-summary-ralph-8",
+      "do": "Implement deterministic artifact merge and re-run reviewer loop.",
+      "verify": "bun test -- artifact merge tests pass."
+    }
+  ]
+}

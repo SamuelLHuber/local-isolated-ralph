@@ -1,6 +1,49 @@
 # Ralph Workflow Guide
 
+Smithers is required; the legacy bash loop is not used.
+
 How to run single and multi-Ralph setups efficiently.
+
+## Smithers Full-Orchestration Mode (Required)
+
+Smithers replaces the bash loop inside each VM. The host still handles VM lifecycle and sync, but Smithers runs the plan. The legacy bash loop is no longer used. JJ is the required VCS (colocated Git backend).
+
+## Prompt Control
+
+Provide per-run instructions with `PROMPT.md` and reviewer instructions with `REVIEW_PROMPT.md`:
+
+```bash
+./scripts/dispatch.sh --spec specs/feature.min.json ralph-1 specs/feature.min.json \
+  --prompt ./prompts/PROMPT-implementer.md \
+  --review-prompt ./prompts/PROMPT-reviewer.md
+```
+
+## JJ Primer (Required)
+
+```
+Clone:              jj git clone <url> <dir>
+Init in repo:       jj git init
+Start change:       jj new main
+Status:             jj status
+Diff:               jj diff
+Describe change:    jj describe
+Push change:        jj git push --change @
+```
+
+```
+Host dispatch.sh
+     │
+     ▼
+VM workdir (spec.min.json + todo.min.json + workflow.tsx)
+     │
+     ▼
+smithers workflow.tsx
+  ├─ runs tasks sequentially or in parallel
+  ├─ writes reports/<task>.report.json
+  └─ persists state in .smithers/*.db
+```
+
+Recommended when you want durable, inspectable multi-step plans with deterministic replay.
 
 ## Git Strategies for Parallel Work
 
@@ -184,15 +227,13 @@ jj new main -m "task-2: auth endpoints"
 jj new main -m "task-3: tests"
 jj new main -m "task-4: documentation"
 
-# 3. Assign prompts to each Ralph
-for i in 1 2 3 4; do
-  mkdir -p ~/tasks/task-$i
-  cp prompts/PROMPT-task.md ~/tasks/task-$i/PROMPT.md
-  # Edit each PROMPT.md with specific task details
-done
+# 3. Prepare spec/todo JSON for each task
+#    (store in specs/, then validate + minify)
+bun run scripts/validate-specs.ts
+bun run scripts/minify-specs.ts
 
-# 4. Launch swarm
-./scripts/ralph-fleet.sh ~/tasks/
+# 4. Launch swarm (fleet)
+./scripts/smithers-fleet.sh specs ralph
 ```
 
 ### Dependency Handling
@@ -228,12 +269,12 @@ gh pr create --title "Big Feature" --body "Implements auth system"
 
 ---
 
-## Single Ralph Workflow
+## Single Ralph Workflow (Smithers Required)
 
 ```
 ┌──────────────────────────────────────┐
-│  Human writes spec                   │
-│  └── specs/feature-x.md              │
+│  Human writes spec + todo            │
+│  └── specs/feature-x.json/.todo.json │
 └──────────────────┬───────────────────┘
                    ▼
 ┌──────────────────────────────────────┐
@@ -243,7 +284,7 @@ gh pr create --title "Big Feature" --body "Implements auth system"
 └──────────────────┬───────────────────┘
                    ▼
 ┌──────────────────────────────────────┐
-│  Human reviews PR                    │
+│  Human reviews reports               │
 │  └── Approves or requests changes    │
 └──────────────────┬───────────────────┘
                    ▼
@@ -259,13 +300,15 @@ gh pr create --title "Big Feature" --body "Implements auth system"
 # Create VM
 ./scripts/create-ralph.sh ralph-1
 
-# Prepare task
-mkdir -p ~/tasks/feature-x
-cp prompts/PROMPT-implementer.md ~/tasks/feature-x/PROMPT.md
-# Edit PROMPT.md with your spec
+# Prepare spec + todo
+cp specs/templates/spec.json specs/feature-x.json
+cp specs/templates/todo.json specs/feature-x.todo.json
+# Edit both files, then validate + minify
+bun run scripts/validate-specs.ts
+bun run scripts/minify-specs.ts
 
-# Start Ralph
-./scripts/ralph-start.sh ralph-1 ~/tasks/feature-x/PROMPT.md
+# Start Smithers workflow
+./scripts/dispatch.sh --spec specs/feature-x.min.json ralph-1 specs/feature-x.min.json
 
 # Watch
 tmux attach -t ralph-1
@@ -273,12 +316,12 @@ tmux attach -t ralph-1
 
 ---
 
-## Multi-Ralph Parallel Workflow
+## Multi-Ralph Parallel Workflow (Smithers Required)
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│  Human writes specs                                        │
-│  └── specs/auth.md, specs/dashboard.md, specs/api-fix.md   │
+│  Human writes specs + todos                                │
+│  └── specs/auth.json, specs/dashboard.json, specs/api.json │
 └────────────────────────────┬───────────────────────────────┘
                              ▼
 ┌─────────────┬─────────────┬─────────────┬─────────────────┐
@@ -296,30 +339,36 @@ tmux attach -t ralph-1
 ### Setup
 
 ```bash
-# Create tasks with prompts
-mkdir -p ~/tasks/{auth,dashboard,api-fix}
-for task in auth dashboard api-fix; do
-  cp prompts/PROMPT-implementer.md ~/tasks/$task/PROMPT.md
-  # Edit each PROMPT.md with specific spec and branch name
-done
+# Prepare specs + todos
+cp specs/templates/spec.json specs/auth.json
+cp specs/templates/todo.json specs/auth.todo.json
+cp specs/templates/spec.json specs/dashboard.json
+cp specs/templates/todo.json specs/dashboard.todo.json
+cp specs/templates/spec.json specs/api-fix.json
+cp specs/templates/todo.json specs/api-fix.todo.json
+
+# Edit files, then validate + minify
+bun run scripts/validate-specs.ts
+bun run scripts/minify-specs.ts
 
 # Create VMs
 for i in 1 2 3; do
   ./scripts/create-ralph.sh ralph-$i 2 4 20
 done
 
-# Start fleet
-./scripts/ralph-fleet.sh ~/tasks/
+# Start fleet (fleet)
+./scripts/smithers-fleet.sh specs ralph
 
-# View all in tmux
-tmux attach -t ralph-fleet
+# Monitor via logs/LAOS or VM tmux if you start a local session
 ```
 
 ---
 
 ## Multi-Agent Coordination (Implementer + Reviewer)
 
-Reduce human review by having reviewer agents provide feedback:
+Reviewer agents provide code quality, security, and spec-compliance feedback. After review, a human approves before the next spec run.
+
+Runs are immutable: every dispatch creates a new workdir. Track runs in `~/.cache/ralph/ralph.db` and clean old workdirs when needed.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -327,26 +376,20 @@ Reduce human review by having reviewer agents provide feedback:
 └───────────────────────────────┬─────────────────────────────────┘
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  Implementer Ralph                                              │
+│  Implementer Smithers                                           │
 │  └── Implements feature                                         │
-│  └── Creates PR                                                 │
-│  └── Writes to outbox/: "PR ready for review"                   │
+│  └── Writes reports/<task>.report.json                          │
 └───────────────────────────────┬─────────────────────────────────┘
                                 ▼
                     ┌───────────────────────┐
-                    │  Message Queue        │
-                    │  (shared filesystem)  │
-                    │                       │
-                    │  inbox/  ◄─────────┐  │
-                    │  outbox/ ──────────┼──│
-                    └───────────┬────────┘  │
-                                ▼           │
+                    │  Reports Directory    │
+                    │  reports/*.json       │
+                    └───────────┬───────────┘
+                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  Reviewer Ralph                                                 │
-│  └── Watches inbox/ for new PRs                                 │
-│  └── Reviews code against spec                                  │
-│  └── Writes feedback to outbox/                                 │
-│  └── Or approves if good                                        │
+│  Reviewer Smithers                                              │
+│  └── Reviews code vs spec + reports                             │
+│  └── Writes reports/review.json                                 │
 └───────────────────────────────┬─────────────────────────────────┘
                                 ▼
                     ┌───────────────────────┐
@@ -355,11 +398,10 @@ Reduce human review by having reviewer agents provide feedback:
                     └───────────────────────┘
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  Implementer Ralph                                              │
-│  └── Reads review feedback from inbox/                          │
-│  └── Addresses issues                                           │
-│  └── Updates PR                                                 │
-│  └── Cycle continues until approved                             │
+│  Human                                                         │
+│  └── Reviews reports/review.json                                │
+│  └── Approves or updates spec/todo                              │
+│  └── Starts next spec run                                       │
 └───────────────────────────────┬─────────────────────────────────┘
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
@@ -371,57 +413,45 @@ Reduce human review by having reviewer agents provide feedback:
 ### Setup
 
 ```bash
-# Shared message directory (on host, mounted to both VMs)
-mkdir -p ~/ralph-messages/{inbox,outbox,specs}
-
 # Create implementer VM
 ./scripts/create-ralph.sh ralph-impl 4 6 30
 
 # Create reviewer VM
 ./scripts/create-ralph.sh ralph-review 2 4 20
 
-# Start implementer with shared messages mounted
-# (In VM, ~/messages points to host's ~/ralph-messages)
+# Start reviewer workflow (Smithers)
+./scripts/dispatch.sh --spec specs/reviewer.min.json --workflow scripts/smithers-reviewer.tsx ralph-review specs/reviewer.min.json
 
-# Start reviewer watching for PRs
-./scripts/ralph-start.sh ralph-review ~/tasks/reviewer/PROMPT.md
+# Review runs automatically after tasks in scripts/smithers-spec-runner.tsx.
 ```
 
-### Message Format
+### Review Output
 
-**PR Ready (implementer → reviewer):**
+**Reviewer Output:**
 ```json
-// outbox/pr-001.json
+// reports/review.json
 {
-  "type": "pr-ready",
-  "id": "001",
-  "branch": "feat/auth",
-  "spec": "specs/auth.md",
-  "summary": "Implemented JWT auth with refresh tokens"
+  "v": 1,
+  "status": "approved",
+  "issues": [],
+  "next": []
 }
 ```
 
-**Review Feedback (reviewer → implementer):**
-```markdown
-// inbox/review-001.md
-## Review for PR #001
-
-### Issues
-- [ ] Missing rate limiting on /auth/token endpoint
-- [ ] Tests don't cover token expiration
-
-### Verdict: CHANGES_REQUESTED
+**Human Gate:**
+```json
+// reports/human-gate.json
+{
+  "v": 1,
+  "status": "blocked",
+  "reason": "Human review required before next spec run."
+}
 ```
 
-**Approval (reviewer → orchestrator):**
-```json
-// outbox/approved-001.json
-{
-  "type": "approved",
-  "id": "001",
-  "branch": "feat/auth",
-  "ready_to_merge": true
-}
+**Record Human Feedback (host):**
+```bash
+./scripts/record-human-feedback.sh --vm ralph-1 --spec specs/feature-x.min.json \
+  --decision approve --notes "Spec satisfied."
 ```
 
 ---
@@ -433,8 +463,8 @@ With this setup, humans only need to:
 | Action | When |
 |--------|------|
 | **Write specs** | Start of feature |
-| **Answer questions** | When Ralph outputs `NEEDS_INPUT` |
-| **Final merge approval** | Optional, can auto-merge if reviewer approved |
+| **Answer questions** | When a task report or human gate is `blocked` |
+| **Final merge approval** | After review.json and human approval |
 | **Receive shipped notification** | Feature complete |
 
 The goal: **Humans write specs, agents ship features.**
@@ -445,18 +475,12 @@ The goal: **Humans write specs, agents ship features.**
 
 ```
 ~/
-├── tasks/                        # Task definitions (on host)
-│   ├── auth/
-│   │   └── PROMPT.md             # Spec for auth feature
-│   ├── dashboard/
-│   │   └── PROMPT.md
-│   └── api-fix/
-│       └── PROMPT.md
-│
-├── ralph-messages/               # Shared message queue
-│   ├── inbox/                    # Messages TO agents
-│   ├── outbox/                   # Messages FROM agents
-│   └── specs/                    # Feature specifications
+├── specs/                        # Spec + TODO JSON (on host)
+│   ├── auth.json
+│   ├── auth.todo.json
+│   ├── auth.min.json
+│   ├── auth.todo.min.json
+│   └── ...
 │
 └── vms/                          # VM storage (Linux only)
     └── wisp/
@@ -467,9 +491,9 @@ Inside each VM:
 ~/
 ├── repo/                         # Cloned repository
 │   └── (working on feature branch)
-├── PROMPT.md                     # Copied from host
-└── ralph/
-    └── state/                    # Loop state tracking
+├── specs/                        # Copied from host
+├── reports/                      # task reports
+└── .smithers/                    # SQLite state
 ```
 
 ---
@@ -478,15 +502,14 @@ Inside each VM:
 
 ```bash
 # Single Ralph
-./scripts/ralph-start.sh ralph-1 ~/tasks/feature/PROMPT.md
-tmux attach -t ralph-1
+./scripts/dispatch.sh --spec specs/feature.min.json ralph-1 specs/feature.min.json
 
-# Multi-Ralph fleet
-./scripts/ralph-fleet.sh ~/tasks/
-tmux attach -t ralph-fleet
+# Multi-Ralph (fleet)
+./scripts/smithers-fleet.sh specs ralph
 
 # Multi-Ralph in single VM (density mode)
-./scripts/ralph-multi.sh ralph-1 ~/tasks/auth ~/tasks/dashboard
+./scripts/dispatch.sh --spec specs/auth.min.json ralph-1 specs/auth.min.json
+./scripts/dispatch.sh --spec specs/dashboard.min.json ralph-1 specs/dashboard.min.json
 
 # List all Ralphs
 ./scripts/list-ralphs.sh

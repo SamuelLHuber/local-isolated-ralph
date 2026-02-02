@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "id": "000-base",
+  "tdd": true,
+  "dod": ["bun test", "bun run typecheck"],
+  "tasks": [
+    {
+      "id": "runstore-schema",
+      "do": "Write tests for SQLite schema; then implement.",
+      "verify": "Tests pass"
+    }
+  ]
+}

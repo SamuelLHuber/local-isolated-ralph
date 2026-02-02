@@ -1,0 +1,51 @@
+{
+  "v": 1,
+  "id": "030-ui-dashboard",
+  "tdd": true,
+  "dod": [
+    "bun test",
+    "bun run typecheck"
+  ],
+  "tasks": [
+    {
+      "id": "030-ui-dashboard-1",
+      "do": "Add tests for runs API endpoints used by the UI (list, detail, pagination).",
+      "verify": "bun test -- runs API tests fail before implementation."
+    },
+    {
+      "id": "030-ui-dashboard-2",
+      "do": "Implement runs API endpoints with cursor pagination.",
+      "verify": "bun test -- runs API tests pass."
+    },
+    {
+      "id": "030-ui-dashboard-3",
+      "do": "Add tests for repos API endpoints (list, add, delete, update schedule, update recipients).",
+      "verify": "bun test -- repos API tests fail before implementation."
+    },
+    {
+      "id": "030-ui-dashboard-4",
+      "do": "Implement repos API endpoints with validation and storage wiring.",
+      "verify": "bun test -- repos API tests pass."
+    },
+    {
+      "id": "030-ui-dashboard-5",
+      "do": "Add tests for UI pages: dashboard, runs list, run detail, repositories, schedules.",
+      "verify": "bun test -- UI tests fail before implementation."
+    },
+    {
+      "id": "030-ui-dashboard-6",
+      "do": "Implement UI pages with data fetching, filters, tabs, and observability links.",
+      "verify": "bun test -- UI tests pass."
+    },
+    {
+      "id": "030-ui-dashboard-7",
+      "do": "Add tests for polling behavior and empty/error states.",
+      "verify": "bun test -- polling/error tests fail before implementation."
+    },
+    {
+      "id": "030-ui-dashboard-8",
+      "do": "Implement polling (default 30s) and empty/error state handling.",
+      "verify": "bun test -- polling/error tests pass."
+    }
+  ]
+}

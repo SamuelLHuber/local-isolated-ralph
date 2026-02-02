@@ -1,0 +1,74 @@
+{
+  "v": 1,
+  "id": "000-base",
+  "title": "Base Cron + Webhook Execution Service",
+  "status": "Proposed",
+  "version": "1.0",
+  "lastUpdated": "2026-02-02",
+  "supersedes": [],
+  "dependsOn": [],
+  "goals": [
+    "Run scheduled tasks via cron with retries and clear logging.",
+    "Trigger tasks via webhook with optional auth.",
+    "Return JSON responses for task execution that can later be formatted into notifications and persisted.",
+    "Provide full observability using Effect primitives like the built-in OTEL integration, Sentry integration, and Effect logging."
+  ],
+  "nonGoals": [
+    "No external notifications (email, Slack, etc.) yet.",
+    "No task-specific business logic (weekly summaries, release verification).",
+    "No durable multi-tenant data layer beyond the run store (SQLite)."
+  ],
+  "req": {
+    "api": [
+      "GET /_health returns { \"status\": \"ok\" }.",
+      "POST /webhook accepts { jobId: string, payload: any } and returns 202 with { status: \"accepted\", jobId }.",
+      "POST /webhook validates JSON and returns 400 for invalid/missing JSON.",
+      "POST /webhook returns 401 for invalid Authorization Bearer token when WEBHOOK_SECRET is configured.",
+      "POST /webhook returns 404 for unknown routes and 405 for unsupported methods."
+    ],
+    "behavior": [
+      "Tasks are identified by jobId and executed via a centralized Task Runner.",
+      "Task Runner returns { status: ok|error, message?, data } for each task.",
+      "Unknown jobId yields a task runner error and webhook returns 500.",
+      "Webhook processing is async; the HTTP response is immediate and does not block on task completion.",
+      "Task results persist in a run store (SQLite by default) with 180-day retention.",
+      "Webhook events are idempotent using GitHub delivery id header when present (48h dedupe window).",
+      "Cron jobs are configured in code using Effect Cron and map to jobId with optional payload.",
+      "Retry policy is exponential backoff with max 3 retries for cron jobs."
+    ],
+    "obs": [
+      "Structured JSON logs with timestamp, level, message, and job metadata (Loki).",
+      "OpenTelemetry tracing for HTTP requests and task execution.",
+      "Export traces to Grafana Tempo via OTLP (HTTP preferred).",
+      "Sentry integration for unhandled errors and task failures via DSN env var."
+    ]
+  },
+  "cfg": {
+    "env": [
+      "PORT (default: 3000)",
+      "LOG_LEVEL (default: info)",
+      "WEBHOOK_SECRET (default: empty)",
+      "CRON_TIMEZONE (default: UTC)",
+      "OTLP_ENDPOINT (default: http://localhost:4318/v1/traces for LAOS)",
+      "SENTRY_DSN (required for Sentry integration)",
+      "RUN_STORE: memory | sqlite (default: sqlite)",
+      "RUN_STORE_SQLITE_PATH (used when RUN_STORE=sqlite)",
+      "RUN_RETENTION_DAYS (default: 180)"
+    ]
+  },
+  "accept": [
+    "Server starts and serves /webhook and /_health.",
+    "Cron jobs execute and log results on schedule.",
+    "Webhook triggers tasks asynchronously and returns JSON response immediately.",
+    "Structured logs emitted for every task execution.",
+    "OTEL traces exported to Tempo.",
+    "Errors captured in Sentry."
+  ],
+  "assume": [
+    "Webhook tasks are processed asynchronously; failures are reported via logs/traces and Sentry.",
+    "Task output persistence uses SQLite by default.",
+    "Reasonable timeouts are enforced per task and sub-step (exact values TBD).",
+    "GitHub/API rate limits are handled with retries/backoff.",
+    "Idempotency/deduping uses GitHub's delivery id header when present (dedupe window 48 hours)."
+  ]
+}

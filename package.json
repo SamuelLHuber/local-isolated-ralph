@@ -1,0 +1,18 @@
+{
+  "name": "local-ralph",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "fabrik": "dist/fabrik"
+  },
+  "scripts": {
+    "build": "bun build src/fabrik/bin.ts --compile --outfile dist/fabrik",
+    "cli": "bun run src/fabrik/bin.ts"
+  },
+  "dependencies": {
+    "@effect/cli": "latest",
+    "@effect/platform-node": "latest",
+    "effect": "latest"
+  }
+}

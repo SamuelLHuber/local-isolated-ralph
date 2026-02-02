@@ -54,12 +54,14 @@ echo ""
 echo ">>> Runtimes"
 check_command node "Node.js"
 check_command bun
+check_command jj "jujutsu"
 
 echo ""
 echo ">>> Agent CLIs"
 check_path_command "$HOME/.bun/bin/claude" "claude"
 check_path_command "$HOME/.bun/bin/codex" "codex"
 check_path_command "$HOME/.bun/bin/opencode" "opencode"
+check_path_command "$HOME/.bun/bin/smithers" "smithers"
 
 if [[ ! -x "$HOME/.bun/bin/claude" ]]; then
   echo ""
@@ -155,12 +157,7 @@ fi
 
 echo ""
 echo ">>> Ralph Loop"
-if [[ -x ~/ralph/loop.sh ]]; then
-  echo "[OK] ralph-loop.sh: ~/ralph/loop.sh"
-else
-  echo "[MISSING] ralph-loop.sh: ~/ralph/loop.sh not found (copy from host)"
-  ERRORS=$((ERRORS + 1))
-fi
+echo "[OK] ralph-loop.sh: removed (Smithers required)"
 
 echo ""
 echo ">>> Environment"
@@ -174,8 +171,7 @@ if [[ $ERRORS -eq 0 ]]; then
   echo "All checks passed. VM is ready for use."
   echo ""
   echo "Quick start:"
-  echo "  cd /workspace"
-  echo "  ~/ralph/loop.sh ./PROMPT.md"
+  echo "  smithers <workflow.tsx>"
 else
   echo "$ERRORS critical issues found. Check the output above."
   exit 1
