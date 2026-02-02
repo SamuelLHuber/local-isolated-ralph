@@ -215,6 +215,22 @@ cd ~/git/<your-repo>
 /Users/samuel/git/local-isolated-ralph/dist/fabrik run --spec specs/001-foo.min.json --vm ralph-1
 ```
 
+### Binary Releases (GitHub)
+
+The repo ships prebuilt `fabrik` binaries for:
+- macOS ARM64 (`darwin-arm64`)
+- Linux x64 (`linux-x64`)
+- Linux ARM64 (`linux-arm64`)
+
+Release process:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Or trigger the workflow manually with a tag (GitHub Actions UI).
+
 If your local-ralph repo lives elsewhere, set:
 
 ```bash

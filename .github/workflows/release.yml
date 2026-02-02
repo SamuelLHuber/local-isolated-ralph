@@ -1,0 +1,73 @@
+name: Release fabrik
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: bun-linux-x64
+            suffix: linux-x64
+          - os: ubuntu-latest
+            target: bun-linux-arm64
+            suffix: linux-arm64
+          - os: macos-latest
+            target: bun-darwin-arm64
+            suffix: darwin-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: "latest"
+
+      - name: Install deps
+        run: bun install
+
+      - name: Build binary
+        run: |
+          mkdir -p dist
+          bun build src/fabrik/bin.ts --compile --target ${{ matrix.target }} --outfile dist/fabrik-${{ matrix.suffix }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fabrik-${{ matrix.suffix }}
+          path: dist/fabrik-${{ matrix.suffix }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Prepare files
+        run: |
+          find dist -type f -maxdepth 2 -name "fabrik-*" -print
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            dist/**/fabrik-*
