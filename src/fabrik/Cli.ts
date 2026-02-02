@@ -9,6 +9,7 @@ import { resolve, join } from "node:path"
 import { homedir } from "node:os"
 import { listSpecs } from "./specs.js"
 import { resolveRalphHome } from "./embedded.js"
+import { laosDown, laosLogs, laosStatus, laosUp } from "./laos.js"
 
 const defaultRalphHome = process.env.LOCAL_RALPH_HOME ?? join(homedir(), "git", "local-isolated-ralph")
 
@@ -47,6 +48,23 @@ const vmPrefixOption = Options.text("vm-prefix").pipe(Options.withDescription("V
 const topicOption = Options.text("topic").pipe(
   Options.withDescription("Topic: readme | workflow | quickstart | specs"),
   Options.withDefault("readme")
+)
+
+const laosRepoOption = Options.text("repo").pipe(
+  Options.optional,
+  Options.withDescription("LAOS git repo URL (default: https://github.com/dtechvision/laos)")
+)
+const laosBranchOption = Options.text("branch").pipe(
+  Options.optional,
+  Options.withDescription("LAOS branch (default: main)")
+)
+const laosDirOption = Options.text("dir").pipe(
+  Options.optional,
+  Options.withDescription("LAOS working directory (default: ~/.cache/fabrik/laos)")
+)
+const laosFollowOption = Options.boolean("follow").pipe(
+  Options.withDefault(false),
+  Options.withDescription("Follow logs")
 )
 
 const runScript = (scriptPath: string, args: string[]) =>
@@ -238,6 +256,29 @@ const flowCommand = Command.make("flow", {}, () =>
   ].join("\n"))
 ).pipe(Command.withDescription("Print the short workflow"))
 
+const laosBase = {
+  repo: laosRepoOption,
+  branch: laosBranchOption,
+  dir: laosDirOption
+}
+
+const laosCommand = Command.make("laos").pipe(
+  Command.withSubcommands([
+    Command.make("up", laosBase, ({ repo, branch, dir }) =>
+      Effect.sync(() => laosUp({ repoUrl: repo, branch, dir }))
+    ).pipe(Command.withDescription("Clone/update LAOS and start docker compose")),
+    Command.make("down", laosBase, ({ repo, branch, dir }) =>
+      Effect.sync(() => laosDown({ repoUrl: repo, branch, dir }))
+    ).pipe(Command.withDescription("Stop LAOS docker compose stack")),
+    Command.make("status", laosBase, ({ repo, branch, dir }) =>
+      Effect.sync(() => laosStatus({ repoUrl: repo, branch, dir }))
+    ).pipe(Command.withDescription("Show LAOS docker compose status")),
+    Command.make("logs", { ...laosBase, follow: laosFollowOption }, ({ repo, branch, dir, follow }) =>
+      Effect.sync(() => laosLogs({ repoUrl: repo, branch, dir }, follow))
+    ).pipe(Command.withDescription("Show LAOS docker compose logs"))
+  ])
+)
+
 const runsCommand = Command.make("runs").pipe(
   Command.withSubcommands([
     Command.make(
@@ -411,7 +452,17 @@ const specsCommand = Command.make("spec").pipe(
 )
 
 const cli = Command.make("fabrik").pipe(
-  Command.withSubcommands([runCommand, specsCommand, feedbackCommand, cleanupCommand, fleetCommand, docsCommand, flowCommand, runsCommand])
+  Command.withSubcommands([
+    runCommand,
+    specsCommand,
+    feedbackCommand,
+    cleanupCommand,
+    fleetCommand,
+    docsCommand,
+    flowCommand,
+    runsCommand,
+    laosCommand
+  ])
 )
 
 export const run = Command.run(cli, {

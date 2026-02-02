@@ -207,7 +207,16 @@ fabrik docs --topic workflow
 fabrik runs list --limit 10
 fabrik runs show --id 42
 fabrik runs feedback --id 42 --decision approve --notes "OK"
+
+# Observability stack (LAOS)
+fabrik laos up
+fabrik laos status
+fabrik laos logs --follow
+fabrik laos down
 ```
+
+`fabrik laos` clones/pulls `https://github.com/dtechvision/laos` with **jj** into
+`~/.cache/fabrik/laos` and runs `docker compose`.
 
 ### Use the CLI from another repo
 
