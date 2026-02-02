@@ -42,6 +42,12 @@ fi
 
 SPEC_PATH=$(realpath "$SPEC_PATH")
 DB_PATH="${RALPH_DB_PATH:-$HOME/.cache/ralph/ralph.db}"
+DB_DIR="$(dirname "$DB_PATH")"
+mkdir -p "$DB_DIR"
+chmod 700 "$DB_DIR" 2>/dev/null || true
+if [[ -e "$DB_PATH" ]]; then
+  chmod 600 "$DB_PATH" 2>/dev/null || true
+fi
 
 RUN_INFO=$(
   python3 - "$DB_PATH" "$VM_NAME" "$SPEC_PATH" <<'PY'

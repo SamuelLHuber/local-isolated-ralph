@@ -28,6 +28,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 DB_PATH="${RALPH_DB_PATH:-$HOME/.cache/ralph/ralph.db}"
+DB_DIR="$(dirname "$DB_PATH")"
+mkdir -p "$DB_DIR"
+chmod 700 "$DB_DIR" 2>/dev/null || true
+if [[ -e "$DB_PATH" ]]; then
+  chmod 600 "$DB_PATH" 2>/dev/null || true
+fi
 if [[ ! -f "$DB_PATH" ]]; then
   echo "No DB found at $DB_PATH"
   exit 0

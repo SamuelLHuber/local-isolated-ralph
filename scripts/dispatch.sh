@@ -144,9 +144,21 @@ if [[ ! -f "$SMITHERS_TODO_PATH" ]]; then
 fi
 
 if [[ -z "$SMITHERS_WORKFLOW" ]]; then
-  SMITHERS_WORKFLOW="scripts/smithers-spec-runner.tsx"
+  SMITHERS_WORKFLOW="$SCRIPT_DIR/smithers-spec-runner.tsx"
 fi
-SMITHERS_WORKFLOW=$(realpath "$SMITHERS_WORKFLOW")
+if [[ "$SMITHERS_WORKFLOW" != /* && "$SMITHERS_WORKFLOW" != ~* ]]; then
+  if [[ -f "$SMITHERS_WORKFLOW" ]]; then
+    SMITHERS_WORKFLOW=$(realpath "$SMITHERS_WORKFLOW")
+  elif [[ -f "$SCRIPT_DIR/$SMITHERS_WORKFLOW" ]]; then
+    SMITHERS_WORKFLOW=$(realpath "$SCRIPT_DIR/$SMITHERS_WORKFLOW")
+  elif [[ -f "$SCRIPT_DIR/../$SMITHERS_WORKFLOW" ]]; then
+    SMITHERS_WORKFLOW=$(realpath "$SCRIPT_DIR/../$SMITHERS_WORKFLOW")
+  else
+    SMITHERS_WORKFLOW=$(realpath "$SMITHERS_WORKFLOW")
+  fi
+else
+  SMITHERS_WORKFLOW=$(realpath "$SMITHERS_WORKFLOW")
+fi
 if [[ ! -f "$SMITHERS_WORKFLOW" ]]; then
   echo "Error: Smithers workflow not found: $SMITHERS_WORKFLOW"
   exit 1
@@ -207,6 +219,22 @@ WORK_SUBDIR="${PROJECT_BASENAME}-${TIMESTAMP}"
 DB_DIR="$HOME/.cache/ralph"
 DB_PATH="${RALPH_DB_PATH:-$DB_DIR/ralph.db}"
 mkdir -p "$DB_DIR"
+chmod 700 "$DB_DIR" 2>/dev/null || true
+if [[ -e "$DB_PATH" ]]; then
+  chmod 600 "$DB_PATH" 2>/dev/null || true
+fi
+if [[ -e "$DB_PATH" && ! -w "$DB_PATH" ]]; then
+  echo "[WARN] DB not writable: $DB_PATH"
+  DB_PATH=""
+fi
+if [[ -z "$DB_PATH" && ! -w "$DB_DIR" ]]; then
+  TMP_DB_DIR="${TMPDIR:-/tmp}/ralph"
+  mkdir -p "$TMP_DB_DIR"
+  DB_PATH="$TMP_DB_DIR/ralph.db"
+  echo "[WARN] Falling back to writable DB path: $DB_PATH"
+elif [[ -z "$DB_PATH" ]]; then
+  DB_PATH="$DB_DIR/ralph.db"
+fi
 
 echo "[$VM_NAME] Dispatching spec: $SMITHERS_SPEC_PATH"
 echo "[$VM_NAME] Agent: $RALPH_AGENT ($AGENT_CMD)"
@@ -398,7 +426,18 @@ PY
     # Install dependencies if package.json exists
     if [[ -f "$PROJECT_DIR/package.json" ]]; then
       echo "[$VM_NAME] Installing dependencies (bun install)..."
-      limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph bash -c "cd '${VM_PROJECT_DIR}' && export PATH=\"\$HOME/.bun/bin:\$PATH\" && bun install" 2>&1 | tail -5
+      limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph bash -c "cd '${VM_PROJECT_DIR}' \
+        && export PATH=\"\$HOME/.bun/bin:\$PATH\" \
+        && export BUN_INSTALL_IGNORE_SCRIPTS=0 \
+        && export npm_config_ignore_scripts=false \
+        && BUN_CHECK_OUTPUT=\$(bun --version 2>&1 || true) \
+        && if echo \"\$BUN_CHECK_OUTPUT\" | grep -q 'postinstall script was not run'; then \
+             echo '[$VM_NAME] Fixing bun postinstall...'; \
+             if command -v node >/dev/null 2>&1 && [[ -f \"\$HOME/.bun/install/global/node_modules/bun/install.js\" ]]; then \
+               node \"\$HOME/.bun/install/global/node_modules/bun/install.js\"; \
+             fi; \
+           fi \
+        && bun install" 2>&1 | tail -5
     fi
   else
     VM_PROJECT_DIR="$VM_WORK_DIR"
@@ -610,7 +649,18 @@ PY
     # Install dependencies if package.json exists
     if [[ -f "$PROJECT_DIR/package.json" ]]; then
       echo "[$VM_NAME] Installing dependencies (bun install)..."
-      ssh "ralph@${VM_IP}" "cd '${VM_PROJECT_DIR}' && export PATH=\"\$HOME/.bun/bin:\$PATH\" && bun install" 2>&1 | tail -5
+      ssh "ralph@${VM_IP}" "cd '${VM_PROJECT_DIR}' \
+        && export PATH=\"\$HOME/.bun/bin:\$PATH\" \
+        && export BUN_INSTALL_IGNORE_SCRIPTS=0 \
+        && export npm_config_ignore_scripts=false \
+        && BUN_CHECK_OUTPUT=\$(bun --version 2>&1 || true) \
+        && if echo \"\$BUN_CHECK_OUTPUT\" | grep -q 'postinstall script was not run'; then \
+             echo '[$VM_NAME] Fixing bun postinstall...'; \
+             if command -v node >/dev/null 2>&1 && [[ -f \"\$HOME/.bun/install/global/node_modules/bun/install.js\" ]]; then \
+               node \"\$HOME/.bun/install/global/node_modules/bun/install.js\"; \
+             fi; \
+           fi \
+        && bun install" 2>&1 | tail -5
     fi
   else
     VM_PROJECT_DIR="$VM_WORK_DIR"

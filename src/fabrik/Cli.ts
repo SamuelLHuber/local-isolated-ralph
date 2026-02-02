@@ -2,6 +2,7 @@ import * as Command from "@effect/cli/Command"
 import * as Options from "@effect/cli/Options"
 import * as Effect from "effect/Effect"
 import * as Console from "effect/Console"
+import * as Option from "effect/Option"
 import { execFileSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { resolve, join } from "node:path"
@@ -55,6 +56,8 @@ const runScript = (scriptPath: string, args: string[]) =>
     execFileSync(scriptPath, args, { stdio: "inherit" })
   })
 
+const unwrapOptional = <A>(value: Option.Option<A>) => Option.getOrUndefined(value)
+
 const promptOption = Options.text("prompt").pipe(
   Options.optional,
   Options.withDescription("Path to PROMPT.md (prepended to system prompt)")
@@ -100,21 +103,33 @@ const runCommand = Command.make(
   }) => {
     const script = resolve(ralphHome, "scripts", "dispatch.sh")
     const args: string[] = []
+    const todoValue = unwrapOptional(todo)
+    const projectValue = unwrapOptional(project)
+    const workflowValue = unwrapOptional(workflow)
+    const reportDirValue = unwrapOptional(reportDir)
+    const modelValue = unwrapOptional(model)
+    const iterationsValue = unwrapOptional(iterations)
+    const promptValue = unwrapOptional(prompt)
+    const reviewPromptValue = unwrapOptional(reviewPrompt)
+    const reviewMaxValue = unwrapOptional(reviewMax)
+    const reviewModelsValue = unwrapOptional(reviewModels)
     if (includeGit) args.push("--include-git")
     args.push("--spec", spec)
-    if (todo) args.push("--todo", todo)
-    if (workflow) args.push("--workflow", workflow)
-    if (reportDir) args.push("--report-dir", reportDir)
-    if (model) args.push("--model", model)
-    if (prompt) args.push("--prompt", prompt)
-    if (reviewPrompt) args.push("--review-prompt", reviewPrompt)
-    if (typeof reviewMax === "number" && Number.isFinite(reviewMax)) {
-      args.push("--review-max", String(reviewMax))
+    if (todoValue) args.push("--todo", todoValue)
+    if (workflowValue) args.push("--workflow", workflowValue)
+    if (reportDirValue) args.push("--report-dir", reportDirValue)
+    if (modelValue) args.push("--model", modelValue)
+    if (promptValue) args.push("--prompt", promptValue)
+    if (reviewPromptValue) args.push("--review-prompt", reviewPromptValue)
+    if (typeof reviewMaxValue === "number" && Number.isFinite(reviewMaxValue)) {
+      args.push("--review-max", String(reviewMaxValue))
     }
-    if (reviewModels) args.push("--review-models", reviewModels)
+    if (reviewModelsValue) args.push("--review-models", reviewModelsValue)
     args.push(vm, spec)
-    if (project) args.push(project)
-    if (typeof iterations === "number" && Number.isFinite(iterations)) args.push(String(iterations))
+    if (projectValue) args.push(projectValue)
+    if (typeof iterationsValue === "number" && Number.isFinite(iterationsValue)) {
+      args.push(String(iterationsValue))
+    }
     return runScript(script, args)
   }
 ).pipe(Command.withDescription("Dispatch a Smithers run (immutable workdir)"))
@@ -225,7 +240,9 @@ const runsCommand = Command.make("runs").pipe(
       },
       ({ limit, db }) =>
         Effect.sync(() => {
-          const dbPath = db ?? resolve(homedir(), ".cache", "ralph", "ralph.db")
+          const limitValue = unwrapOptional(limit)
+          const dbValue = unwrapOptional(db)
+          const dbPath = dbValue ?? resolve(homedir(), ".cache", "ralph", "ralph.db")
           if (!existsSync(dbPath)) {
             console.log(`No DB found at ${dbPath}`)
             return
@@ -250,7 +267,9 @@ else:
     rid, vm, spec, started, status, code = row
     print(f"{rid} | {vm} | {status} | {code} | {started} | {spec}")
 `
-          const rows = execFileSync("python3", ["-", dbPath, String(limit ?? 10)], { input: script }).toString()
+          const rows = execFileSync("python3", ["-", dbPath, String(limitValue ?? 10)], {
+            input: script
+          }).toString()
           console.log(rows.trim())
         }).pipe(Effect.withSpan("runs.list"))
     ).pipe(Command.withDescription("List recent runs")),
@@ -265,7 +284,8 @@ else:
       },
       ({ id, db }) =>
         Effect.sync(() => {
-          const dbPath = db ?? resolve(homedir(), ".cache", "ralph", "ralph.db")
+          const dbValue = unwrapOptional(db)
+          const dbPath = dbValue ?? resolve(homedir(), ".cache", "ralph", "ralph.db")
           if (!existsSync(dbPath)) {
             console.log(`No DB found at ${dbPath}`)
             return
@@ -314,7 +334,8 @@ else:
       },
       ({ id, decision, notes, ralphHome, db }) =>
         Effect.sync(() => {
-          const dbPath = db ?? resolve(homedir(), ".cache", "ralph", "ralph.db")
+          const dbValue = unwrapOptional(db)
+          const dbPath = dbValue ?? resolve(homedir(), ".cache", "ralph", "ralph.db")
           if (!existsSync(dbPath)) {
             console.log(`No DB found at ${dbPath}`)
             return
