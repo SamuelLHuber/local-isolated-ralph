@@ -23,19 +23,52 @@ const run = (cmd: string, args: string[], cwd?: string) => {
   execFileSync(cmd, args, { stdio: "inherit", cwd })
 }
 
-const assertCommand = (cmd: string) => {
+const assertCommand = (cmd: string): boolean => {
   try {
     execFileSync("which", [cmd], { stdio: "ignore" })
+    return true
   } catch {
-    throw new Error(`Required command not found in PATH: ${cmd}`)
+    return false
   }
 }
 
+const pickVcs = () => {
+  const hasJj = assertCommand("jj")
+  const hasGit = assertCommand("git")
+  if (!hasJj && !hasGit) {
+    throw new Error("Required command not found in PATH: jj or git")
+  }
+  return { hasJj, hasGit }
+}
+
+const ensureRepoWithGit = (repoUrl: string, branch: string, dir: string) => {
+  if (!existsSync(dir)) {
+    mkdirSync(dirname(dir), { recursive: true })
+    run("git", ["clone", "--depth", "1", "--branch", branch, repoUrl, dir])
+    return dir
+  }
+
+  const gitDir = join(dir, ".git")
+  if (!existsSync(gitDir)) {
+    run("git", ["clone", "--depth", "1", "--branch", branch, repoUrl, dir + ".fresh"])
+    return dir + ".fresh"
+  }
+
+  run("git", ["fetch", "origin"], dir)
+  run("git", ["checkout", branch], dir)
+  run("git", ["pull", "--ff-only"], dir)
+  return dir
+}
+
 const ensureRepo = (config: LaosConfig) => {
-  assertCommand("jj")
   const repoUrl = asString(config.repoUrl) ?? defaultRepo
   const branch = asString(config.branch) ?? defaultBranch
   const dir = resolveDir(asString(config.dir))
+
+  const { hasJj } = pickVcs()
+  if (!hasJj) {
+    return ensureRepoWithGit(repoUrl, branch, dir)
+  }
 
   if (!existsSync(dir)) {
     mkdirSync(dirname(dir), { recursive: true })
@@ -81,26 +114,34 @@ const ensureEnv = (dir: string) => {
 }
 
 export const laosUp = (config: LaosConfig) => {
-  assertCommand("docker")
+  if (!assertCommand("docker")) {
+    throw new Error("Required command not found in PATH: docker")
+  }
   const dir = ensureRepo(config)
   ensureEnv(dir)
   run("docker", ["compose", "up", "-d"], dir)
 }
 
 export const laosDown = (config: LaosConfig) => {
-  assertCommand("docker")
+  if (!assertCommand("docker")) {
+    throw new Error("Required command not found in PATH: docker")
+  }
   const dir = ensureRepo(config)
   run("docker", ["compose", "down"], dir)
 }
 
 export const laosStatus = (config: LaosConfig) => {
-  assertCommand("docker")
+  if (!assertCommand("docker")) {
+    throw new Error("Required command not found in PATH: docker")
+  }
   const dir = ensureRepo(config)
   run("docker", ["compose", "ps"], dir)
 }
 
 export const laosLogs = (config: LaosConfig, follow: boolean) => {
-  assertCommand("docker")
+  if (!assertCommand("docker")) {
+    throw new Error("Required command not found in PATH: docker")
+  }
   const dir = ensureRepo(config)
   const args = ["compose", "logs"]
   if (follow) args.push("-f")

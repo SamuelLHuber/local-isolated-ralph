@@ -10,6 +10,7 @@ import { homedir } from "node:os"
 import { listSpecs } from "./specs.js"
 import { resolveRalphHome } from "./embedded.js"
 import { laosDown, laosLogs, laosStatus, laosUp } from "./laos.js"
+import { syncCredentials } from "./credentials.js"
 
 const defaultRalphHome = process.env.LOCAL_RALPH_HOME ?? join(homedir(), "git", "local-isolated-ralph")
 
@@ -451,6 +452,16 @@ const specsCommand = Command.make("spec").pipe(
   Command.withSubcommands([validateCommand, minifyCommand, specsStatusCommand])
 )
 
+const credentialsCommand = Command.make("credentials").pipe(
+  Command.withSubcommands([
+    Command.make(
+      "sync",
+      { vm: vmOption },
+      ({ vm }) => Effect.sync(() => syncCredentials({ vm }))
+    ).pipe(Command.withDescription("Sync host credentials into a VM"))
+  ])
+)
+
 const cli = Command.make("fabrik").pipe(
   Command.withSubcommands([
     runCommand,
@@ -461,7 +472,8 @@ const cli = Command.make("fabrik").pipe(
     docsCommand,
     flowCommand,
     runsCommand,
-    laosCommand
+    laosCommand,
+    credentialsCommand
   ])
 )
 

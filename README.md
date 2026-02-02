@@ -213,10 +213,13 @@ fabrik laos up
 fabrik laos status
 fabrik laos logs --follow
 fabrik laos down
+
+# Credentials sync
+fabrik credentials sync --vm ralph-1
 ```
 
-`fabrik laos` clones/pulls `https://github.com/dtechvision/laos` with **jj** into
-`~/.cache/fabrik/laos` and runs `docker compose`.
+`fabrik laos` clones/pulls `https://github.com/dtechvision/laos` with **jj** (or `git` if jj is missing)
+into `~/.cache/fabrik/laos` and runs `docker compose`.
 
 ### Use the CLI from another repo
 
