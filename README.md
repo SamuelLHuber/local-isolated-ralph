@@ -341,6 +341,26 @@ Describe change:    jj describe
 Push change:        jj git push --change @
 ```
 
+### Changesets + JJ
+
+Changesets stays the same; JJ only replaces Git commands locally:
+
+```bash
+# Create a changeset for your PR
+bunx changeset
+
+# Work in a new JJ change
+jj new main
+
+# Review + commit
+jj status
+jj diff
+jj describe
+
+# Push the change
+jj git push --change @
+```
+
 ### dispatch.sh Options
 
 ```bash

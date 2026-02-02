@@ -8,11 +8,17 @@
   },
   "scripts": {
     "build": "bun build src/fabrik/bin.ts --compile --outfile dist/fabrik",
-    "cli": "bun run src/fabrik/bin.ts"
+    "cli": "bun run src/fabrik/bin.ts",
+    "changeset-version": "changeset version && node scripts/version.mjs",
+    "changeset-publish": "bun run build && node scripts/publish.mjs"
   },
   "dependencies": {
     "@effect/cli": "latest",
     "@effect/platform-node": "latest",
     "effect": "latest"
+  },
+  "devDependencies": {
+    "@changesets/changelog-github": "latest",
+    "@changesets/cli": "latest"
   }
 }
