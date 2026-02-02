@@ -46,7 +46,7 @@ copy_credentials_ssh() {
 
   if [[ -d ~/.config/gh ]]; then
     echo "    Copying ~/.config/gh..."
-    ssh $ssh_opts "$user@$host" "mkdir -p ~/.config" 2>/dev/null || true
+    ssh $ssh_opts "$user@$host" "mkdir -p ~/.config && chmod 700 ~/.config" 2>/dev/null || true
     scp $ssh_opts -r ~/.config/gh "$user@$host:~/.config/" 2>/dev/null || echo "    Warning: Failed to copy ~/.config/gh"
   fi
 
@@ -59,7 +59,7 @@ copy_credentials_ssh() {
 
   if [[ -f ~/.config/ralph/ralph.env ]]; then
     echo "    Copying ~/.config/ralph/ralph.env..."
-    ssh $ssh_opts "$user@$host" "mkdir -p ~/.config/ralph && chmod 700 ~/.config/ralph" 2>/dev/null || true
+    ssh $ssh_opts "$user@$host" "mkdir -p ~/.config/ralph && chmod 700 ~/.config && chmod 700 ~/.config/ralph" 2>/dev/null || true
     scp $ssh_opts ~/.config/ralph/ralph.env "$user@$host:~/.config/ralph/" 2>/dev/null || echo "    Warning: Failed to copy ralph.env"
     ssh $ssh_opts "$user@$host" "chmod 600 ~/.config/ralph/ralph.env" 2>/dev/null || true
   else
@@ -88,6 +88,10 @@ copy_credentials_lima() {
     echo "    Copying ~/.gitconfig..."
     cat ~/.gitconfig | limactl shell "$vm_name" sudo -u "$user" tee "/home/$user/.gitconfig" > /dev/null 2>&1 || echo "    Warning: Failed to copy ~/.gitconfig"
   fi
+
+  limactl shell "$vm_name" sudo mkdir -p "/home/$user/.config" 2>/dev/null || true
+  limactl shell "$vm_name" sudo chown -R "$user:users" "/home/$user/.config" 2>/dev/null || true
+  limactl shell "$vm_name" sudo -u "$user" chmod 700 "/home/$user/.config" 2>/dev/null || true
 
   local has_keys=false
   for keyfile in ~/.ssh/id_ed25519 ~/.ssh/id_rsa; do
