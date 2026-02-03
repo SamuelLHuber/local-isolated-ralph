@@ -12,6 +12,7 @@ import { resolveRalphHome } from "./embedded.js"
 import { laosDown, laosLogs, laosStatus, laosUp } from "./laos.js"
 import { syncCredentials } from "./credentials.js"
 import { dispatchRun } from "./dispatch.js"
+import { minifySpecs, validateSpecs } from "./specs.js"
 
 const defaultRalphHome = process.env.LOCAL_RALPH_HOME ?? join(homedir(), "git", "local-isolated-ralph")
 
@@ -186,8 +187,10 @@ const validateCommand = Command.make(
   "validate",
   { dir: Options.text("dir").pipe(Options.withDescription("Specs directory"), Options.withDefault("specs")) },
   ({ dir }) => {
-    const home = resolveRalphHome(defaultRalphHome)
-    return runScript("bun", ["run", resolve(home, "scripts", "validate-specs.ts"), dir])
+    return Effect.sync(() => {
+      validateSpecs(dir)
+      Console.log("All spec/todo JSON files passed schema checks.")
+    })
   }
 ).pipe(Command.withDescription("Validate spec/todo JSON"))
 
@@ -195,8 +198,10 @@ const minifyCommand = Command.make(
   "minify",
   { dir: Options.text("dir").pipe(Options.withDescription("Specs directory"), Options.withDefault("specs")) },
   ({ dir }) => {
-    const home = resolveRalphHome(defaultRalphHome)
-    return runScript("bun", ["run", resolve(home, "scripts", "minify-specs.ts"), dir])
+    return Effect.sync(() => {
+      minifySpecs(dir)
+      Console.log(`Minified JSON in ${dir}`)
+    })
   }
 ).pipe(Command.withDescription("Minify spec/todo JSON"))
 
