@@ -31,6 +31,12 @@ Interview → spec.json → todo.json → Smithers workflow → report.json
 - TODOs (human): `specs/*.todo.json`
 - TODOs (Smithers input): `specs/*.todo.min.json`
 
+## Current Specs
+- `000-base`
+- `020-fabrik-v0-2-0`
+- `021-fabrik-run-persistence`
+- `022-fabrik-doctor`
+
 ## Report Format (per task)
 `reports/<task>.report.json` fields include:
 - `status`, `work`, `files`, `tests`, `issues`, `next`

@@ -1,0 +1,23 @@
+{
+  "v": 1,
+  "id": "022-fabrik-doctor",
+  "tdd": true,
+  "dod": ["bun test", "bun run typecheck"],
+  "tasks": [
+    {
+      "id": "doctor-command",
+      "do": "Define the 'fabrik doctor' command and implement core checks with clear remediation output.",
+      "verify": "Command exits non-zero on critical failures and prints actionable fixes."
+    },
+    {
+      "id": "doctor-json-output",
+      "do": "Add '--json' output for automation with per-check status and remediation.",
+      "verify": "JSON schema is stable and includes pass/fail + details."
+    },
+    {
+      "id": "doctor-docs",
+      "do": "Update README/SETUP/WORKFLOW docs to include 'fabrik doctor' usage and known issues flow.",
+      "verify": "Docs include examples for macOS and Linux."
+    }
+  ]
+}

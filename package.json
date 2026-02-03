@@ -15,7 +15,8 @@
   "dependencies": {
     "@effect/cli": "latest",
     "@effect/platform-node": "latest",
-    "effect": "latest"
+    "effect": "latest",
+    "typescript": "latest"
   },
   "devDependencies": {
     "@changesets/changelog-github": "latest",

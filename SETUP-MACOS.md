@@ -115,7 +115,7 @@ The `create-ralph.sh` script builds a NixOS image (if needed) and creates a VM w
 The script will:
 1. Build the NixOS QCOW2 image from `nix/flake.nix`
 2. Create a Lima VM with the image
-3. Copy credentials from host (~/.claude, ~/.claude.json, ~/.ssh, ~/.gitconfig, ~/.config/gh)
+3. Copy credentials from host (~/.codex/auth.json, ~/.local/share/opencode/auth.json, ~/.claude, ~/.claude.json, ~/.ssh, ~/.gitconfig, ~/.config/gh)
 4. Copy ralph-loop.sh to the VM
 
 ### Verify VM is running
@@ -149,6 +149,9 @@ Generate a token that persists across sessions:
 ```bash
 # On host (macOS), generate a token
 claude setup-token
+
+# Optional: OpenCode auth (only if using opencode)
+opencode auth login
 
 # Put the token in ralph.env so it can be synced to VMs
 ./scripts/create-ralph-env.sh

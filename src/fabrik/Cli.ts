@@ -42,6 +42,10 @@ const reviewModelsOption = Options.text("review-models").pipe(
   Options.optional,
   Options.withDescription("JSON file mapping reviewer_id -> model")
 )
+const requireAgentsOption = Options.text("require-agents").pipe(
+  Options.optional,
+  Options.withDescription("Comma-separated list of required agents when workflow uses dynamic components")
+)
 
 const decisionOption = Options.text("decision").pipe(Options.withDescription("approve | reject"))
 const notesOption = Options.text("notes").pipe(Options.withDescription("Human notes"))
@@ -110,7 +114,8 @@ const runCommand = Command.make(
     prompt: promptOption,
     reviewPrompt: reviewPromptOption,
     reviewMax: reviewMaxOption,
-    reviewModels: reviewModelsOption
+    reviewModels: reviewModelsOption,
+    requireAgents: requireAgentsOption
   },
   ({
     ralphHome,
@@ -127,7 +132,8 @@ const runCommand = Command.make(
     prompt,
     reviewPrompt,
     reviewMax,
-    reviewModels
+    reviewModels,
+    requireAgents
   }) => {
     const home = resolveRalphHome(ralphHome)
     const args: string[] = []
@@ -142,6 +148,7 @@ const runCommand = Command.make(
     const reviewPromptValue = unwrapOptional(reviewPrompt)
     const reviewMaxValue = unwrapOptional(reviewMax)
     const reviewModelsValue = unwrapOptional(reviewModels)
+    const requireAgentsValue = unwrapOptional(requireAgents)
     if (!projectValue) {
       const cwd = process.cwd()
       if (existsSync(join(cwd, ".git")) || existsSync(join(cwd, ".jj"))) {
@@ -165,7 +172,8 @@ const runCommand = Command.make(
           prompt: promptValue ? resolve(promptValue) : undefined,
           reviewPrompt: reviewPromptValue ? resolve(reviewPromptValue) : undefined,
           reviewModels: reviewModelsValue ? resolve(reviewModelsValue) : undefined,
-          reviewMax: reviewMaxValue ?? undefined
+          reviewMax: reviewMaxValue ?? undefined,
+          requireAgents: requireAgentsValue ? requireAgentsValue.split(",") : undefined
         })
       )
     }
@@ -183,6 +191,7 @@ const runCommand = Command.make(
       args.push("--review-max", String(reviewMaxValue))
     }
     if (reviewModelsValue) args.push("--review-models", reviewModelsValue)
+    if (requireAgentsValue) args.push("--require-agents", requireAgentsValue)
     args.push(vm, spec)
     if (projectValue) args.push(projectValue)
     if (typeof iterationsValue === "number" && Number.isFinite(iterationsValue)) {

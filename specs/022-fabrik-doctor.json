@@ -1,0 +1,53 @@
+{
+  "v": 1,
+  "id": "022-fabrik-doctor",
+  "title": "Fabrik Doctor Command (Environment + Auth Checks)",
+  "status": "Proposed",
+  "version": "1.0",
+  "lastUpdated": "2026-02-03",
+  "supersedes": [],
+  "dependsOn": ["020-fabrik-v0-2-0"],
+  "goals": [
+    "Provide a single 'fabrik doctor' command that validates common local/VM setup issues.",
+    "Detect missing credentials and auth files for Codex, Claude, OpenCode, and GitHub.",
+    "Report actionable fixes with clear, copy-pastable commands.",
+    "Work on macOS (Lima) and Linux (libvirt) with the same behavior."
+  ],
+  "nonGoals": [
+    "Automatically fixing all issues (doctor is diagnostic by default).",
+    "Modifying system configuration outside the repo without explicit user action.",
+    "Replacing full CI checks or comprehensive runtime tests."
+  ],
+  "req": {
+    "behavior": [
+      "Exit code is non-zero when critical checks fail.",
+      "Outputs a concise summary plus per-check details.",
+      "Supports '--json' output for automation."
+    ],
+    "checks": [
+      "Codex auth presence: ~/.codex/auth.json (host + VM)",
+      "OpenCode auth presence: ~/.local/share/opencode/auth.json (host + VM)",
+      "Claude auth presence: ~/.claude and/or ~/.claude.json (host + VM)",
+      "GitHub token presence: ~/.config/ralph/ralph.env (host + VM)",
+      "jj identity configured (name + email) with default fallback guidance",
+      "smithers and bun binaries installed in VM"
+    ],
+    "docs": [
+      "Document doctor command in README/WORKFLOW/SETUP docs",
+      "Known-issues section references doctor output"
+    ]
+  },
+  "cfg": {
+    "env": ["GITHUB_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]
+  },
+  "accept": [
+    "Running 'fabrik doctor --vm valpha' reports missing OpenCode auth and explains how to sync it.",
+    "Running 'fabrik doctor' on Linux and macOS produces the same checks.",
+    "JSON output includes pass/fail and remediation text per check."
+  ],
+  "assume": [
+    "VM user is 'ralph' and home is /home/ralph.",
+    "OpenCode auth uses ~/.local/share/opencode/auth.json.",
+    "Codex auth uses ~/.codex/auth.json."
+  ]
+}

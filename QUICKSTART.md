@@ -9,7 +9,9 @@ Before starting, ensure you have:
 - [ ] **macOS 13+** (Ventura) or **Linux** with KVM support
 - [ ] **Docker** installed and running
 - [ ] **SSH key** generated (`ls ~/.ssh/id_*.pub`)
-- [ ] **Claude subscription** with Claude Code CLI authenticated (`claude auth login` on host)
+- [ ] **Codex auth** on host (`codex login`) — default agent
+- [ ] **Claude auth** if using Claude (`claude auth login`)
+- [ ] **OpenCode auth** if using OpenCode (`opencode auth login`)
 
 **macOS specific:**
 ```bash
@@ -58,15 +60,27 @@ cd /path/to/local-isolated-ralph
 
 ---
 
-## Step 2: Authenticate Claude on Your Host
+## Step 2: Authenticate Agents on Your Host
 
-If you haven't already, authenticate Claude Code on your host machine:
+If you haven't already, authenticate Codex on your host machine:
+
+```bash
+codex login
+```
+
+This creates `~/.codex/auth.json` which will be copied to your VMs.
+
+Optional (only if using Claude):
 
 ```bash
 claude auth login
 ```
 
-This creates `~/.claude` which will be copied to your VMs.
+Optional (only if using OpenCode):
+
+```bash
+opencode auth login
+```
 
 ---
 

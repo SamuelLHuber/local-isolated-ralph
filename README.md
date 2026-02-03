@@ -442,6 +442,17 @@ Agents need `GITHUB_TOKEN` to push code and create PRs.
 
 The token is used by both `git push/pull` (credential helper) and `gh` CLI (auto-detects env var).
 
+Agent auth files are synced to VMs when you run `fabrik credentials sync` (or the bash equivalent).
+
+Required by default (Codex):
+- `~/.codex/auth.json` (created by `codex login`)
+
+Optional (only if using `RALPH_AGENT=opencode`):
+- `~/.local/share/opencode/auth.json` (created by `opencode auth login`)
+
+Optional (only if using `RALPH_AGENT=claude`):
+- `~/.claude` or `~/.claude.json` (created by `claude login` / `claude setup-token`)
+
 ## Prerequisites
 
 ```bash

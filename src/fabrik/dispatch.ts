@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { createHash } from "node:crypto"
 import { basename, join, resolve, relative, isAbsolute } from "node:path"
+import ts from "typescript"
 
 type DispatchOptions = {
   vm: string
@@ -18,6 +19,7 @@ type DispatchOptions = {
   reviewModels?: string
   reviewMax?: number
   branch?: string
+  requireAgents?: string[]
 }
 
 const run = (cmd: string, args: string[], input?: string) => {
@@ -28,6 +30,45 @@ const readText = (path?: string) => {
   if (!path) return ""
   if (!existsSync(path)) return ""
   return readFileSync(path, "utf8")
+}
+
+const workflowAgentNeeds = (workflowPath: string) => {
+  const text = readText(workflowPath)
+  if (!text) return { needsCodex: false, needsClaude: false, needsOpencode: false }
+  const source = ts.createSourceFile(workflowPath, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  let needsCodex = false
+  let needsClaude = false
+  let needsOpencode = false
+  const checkTag = (tagName: string) => {
+    if (tagName === "Codex") needsCodex = true
+    if (tagName === "Claude") needsClaude = true
+    if (tagName === "OpenCode") needsOpencode = true
+  }
+  const visit = (node: ts.Node) => {
+    if (ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) {
+      const tag = node.tagName
+      if (ts.isIdentifier(tag)) {
+        checkTag(tag.text)
+      } else if (ts.isPropertyAccessExpression(tag)) {
+        const base = tag.expression
+        if (ts.isIdentifier(base) && base.text === "Orchestrator") {
+          checkTag(tag.name.text)
+        }
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return { needsCodex, needsClaude, needsOpencode }
+}
+
+const requireFile = (label: string, path: string, hint: string) => {
+  if (existsSync(path)) return
+  const message = [
+    `Missing ${label}: ${path}`,
+    hint
+  ]
+  throw new Error(message.join("\n"))
 }
 
 const readSpecId = (path: string) => {
@@ -202,10 +243,13 @@ export const dispatchRun = (options: DispatchOptions) => {
   const todoPath = safeRealpath(options.todo)!
   const workflowPath = safeRealpath(options.workflow ?? "scripts/smithers-spec-runner.tsx")!
   const workflowSha = sha256(workflowPath)
+  const workflowNeeds = workflowAgentNeeds(workflowPath)
+  const requiredAgents = options.requireAgents?.map((a) => a.trim().toLowerCase()).filter(Boolean) ?? []
   const promptPath = safeRealpath(options.prompt)
   const reviewPromptPath = safeRealpath(options.reviewPrompt)
   const reviewModelsPath = safeRealpath(options.reviewModels)
   const projectDir = options.project ? safeRealpath(options.project)! : undefined
+  const agentKind = (process.env.SMITHERS_AGENT ?? process.env.RALPH_AGENT ?? "codex").toLowerCase()
   const specId = readSpecId(specPath)
   const runId = `${new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "")}`
   const branch = sanitizeBranch(options.branch ?? (specId ? `spec-${specId}` : `spec-run-${runId}`))
@@ -224,6 +268,56 @@ export const dispatchRun = (options: DispatchOptions) => {
   console.log(`[${options.vm}] Include .git: ${options.includeGit}`)
   console.log(`[${options.vm}] Work dir: ${vmWorkdir}`)
   console.log(`[${options.vm}] Branch: ${branch}`)
+  const detectedAgents = [
+    workflowNeeds.needsCodex ? "codex" : null,
+    workflowNeeds.needsClaude ? "claude" : null,
+    workflowNeeds.needsOpencode ? "opencode" : null
+  ].filter(Boolean)
+  console.log(`[${options.vm}] Workflow agents detected: ${detectedAgents.length ? detectedAgents.join(", ") : "none"}`)
+  if (!detectedAgents.length && !requiredAgents.length) {
+    throw new Error(
+      [
+        "No agent components detected in workflow.",
+        "Provide explicit requirements with --require-agents codex,opencode (comma-separated)."
+      ].join("\n")
+    )
+  }
+
+  const needsCodex =
+    workflowNeeds.needsCodex || requiredAgents.includes("codex") || agentKind === "codex"
+  const needsOpencode =
+    workflowNeeds.needsOpencode || requiredAgents.includes("opencode") || agentKind === "opencode"
+  const needsClaude =
+    workflowNeeds.needsClaude || requiredAgents.includes("claude") || agentKind === "claude"
+
+  if (needsCodex) {
+    requireFile(
+      "Codex auth",
+      join(process.env.HOME ?? "", ".codex/auth.json"),
+      "Run `codex login` or copy ~/.codex/auth.json before dispatch."
+    )
+  }
+
+  if (needsOpencode) {
+    requireFile(
+      "OpenCode auth",
+      join(process.env.HOME ?? "", ".local/share/opencode/auth.json"),
+      "Run `opencode auth login` or copy ~/.local/share/opencode/auth.json before dispatch."
+    )
+  }
+
+  if (needsClaude) {
+    const claudeJson = join(process.env.HOME ?? "", ".claude.json")
+    const claudeDir = join(process.env.HOME ?? "", ".claude")
+    if (!existsSync(claudeJson) && !existsSync(claudeDir)) {
+      throw new Error(
+        [
+          "Missing Claude auth (~/.claude.json or ~/.claude).",
+          "Run `claude login` or set ANTHROPIC_API_KEY in ~/.config/ralph/ralph.env before dispatch."
+        ].join("\n")
+      )
+    }
+  }
 
   if (process.platform === "darwin") {
     ensureVmRunning(options.vm)
