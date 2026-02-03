@@ -3,6 +3,7 @@ import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { randomBytes } from "node:crypto"
 import { execFileSync } from "node:child_process"
+import { requireDocker, requireVcs } from "./prereqs.js"
 
 const defaultRepo = "https://github.com/dtechvision/laos"
 const defaultBranch = "main"
@@ -23,22 +24,8 @@ const run = (cmd: string, args: string[], cwd?: string) => {
   execFileSync(cmd, args, { stdio: "inherit", cwd })
 }
 
-const assertCommand = (cmd: string): boolean => {
-  try {
-    execFileSync("which", [cmd], { stdio: "ignore" })
-    return true
-  } catch {
-    return false
-  }
-}
-
 const pickVcs = () => {
-  const hasJj = assertCommand("jj")
-  const hasGit = assertCommand("git")
-  if (!hasJj && !hasGit) {
-    throw new Error("Required command not found in PATH: jj or git")
-  }
-  return { hasJj, hasGit }
+  return requireVcs()
 }
 
 const ensureRepoWithGit = (repoUrl: string, branch: string, dir: string) => {
@@ -114,34 +101,26 @@ const ensureEnv = (dir: string) => {
 }
 
 export const laosUp = (config: LaosConfig) => {
-  if (!assertCommand("docker")) {
-    throw new Error("Required command not found in PATH: docker")
-  }
+  requireDocker()
   const dir = ensureRepo(config)
   ensureEnv(dir)
   run("docker", ["compose", "up", "-d"], dir)
 }
 
 export const laosDown = (config: LaosConfig) => {
-  if (!assertCommand("docker")) {
-    throw new Error("Required command not found in PATH: docker")
-  }
+  requireDocker()
   const dir = ensureRepo(config)
   run("docker", ["compose", "down"], dir)
 }
 
 export const laosStatus = (config: LaosConfig) => {
-  if (!assertCommand("docker")) {
-    throw new Error("Required command not found in PATH: docker")
-  }
+  requireDocker()
   const dir = ensureRepo(config)
   run("docker", ["compose", "ps"], dir)
 }
 
 export const laosLogs = (config: LaosConfig, follow: boolean) => {
-  if (!assertCommand("docker")) {
-    throw new Error("Required command not found in PATH: docker")
-  }
+  requireDocker()
   const dir = ensureRepo(config)
   const args = ["compose", "logs"]
   if (follow) args.push("-f")

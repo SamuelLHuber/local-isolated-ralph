@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { requireVmHostTools } from "./prereqs.js"
 
 type SyncConfig = {
   vm: string
@@ -190,6 +191,7 @@ const copyCredentialsLinux = (vm: string) => {
 
 export const syncCredentials = ({ vm }: SyncConfig) => {
   console.log(`\n>>> Copying credentials to VM ${vm}...`)
+  requireVmHostTools()
   if (process.platform === "darwin") {
     copyCredentialsLima(vm)
   } else if (process.platform === "linux") {

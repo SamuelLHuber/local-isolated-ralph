@@ -1,6 +1,10 @@
 import { execFileSync } from "node:child_process"
-import { existsSync, readFileSync } from "node:fs"
-import { basename, join, resolve, relative, isAbsolute } from "node:path"
+import { createHash } from "node:crypto"
+import { accessSync, chmodSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs"
+import { homedir, tmpdir } from "node:os"
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
+import { CLI_VERSION } from "./version.js"
+import { requireVmHostTools } from "./prereqs.js"
 
 type DispatchOptions = {
   vm: string
@@ -148,7 +152,151 @@ const pathWithin = (root: string, target: string) => {
   return rel && !rel.startsWith("..") && !isAbsolute(rel)
 }
 
+const isWritable = (path: string) => {
+  try {
+    accessSync(path, constants.W_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const resolveDbPath = () => {
+  const baseDir = join(homedir(), ".cache", "ralph")
+  const requested = process.env.RALPH_DB_PATH ?? join(baseDir, "ralph.db")
+  const requestedDir = dirname(requested)
+  const fallbackPath = () => {
+    const fallbackDir = join(tmpdir(), "ralph")
+    mkdirSync(fallbackDir, { recursive: true })
+    const fallback = join(fallbackDir, "ralph.db")
+    console.warn(`[WARN] Falling back to writable DB path: ${fallback}`)
+    return fallback
+  }
+  mkdirSync(requestedDir, { recursive: true })
+  try {
+    chmodSync(requestedDir, 0o700)
+  } catch {}
+  if (existsSync(requested)) {
+    try {
+      chmodSync(requested, 0o600)
+    } catch {}
+  }
+  if (existsSync(requested) && !isWritable(requested)) {
+    console.warn(`[WARN] DB not writable: ${requested}`)
+    return fallbackPath()
+  }
+  if (!existsSync(requested) && !isWritable(requestedDir)) {
+    return fallbackPath()
+  }
+  return requested
+}
+
+const getBinarySha256 = () => {
+  try {
+    const data = readFileSync(process.execPath)
+    return createHash("sha256").update(data).digest("hex")
+  } catch {
+    return ""
+  }
+}
+
+const getGitSha = () => {
+  try {
+    return execFileSync("jj", ["log", "-r", "@", "--no-graph", "--template", "commit_id"], {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "ignore"]
+    })
+      .toString()
+      .trim()
+  } catch {
+    return ""
+  }
+}
+
+const insertRunRecord = (dbPath: string, workdir: string, specPath: string, todoPath: string, vm: string) => {
+  const auditOs = process.platform
+  const auditGitSha = getGitSha()
+  const auditBinary = getBinarySha256()
+  const script = `
+import sqlite3
+import sys
+from datetime import datetime, timezone
+
+db_path, vm, workdir, spec, todo, cli_version, git_sha, os_name, bin_sha = sys.argv[1:10]
+conn = sqlite3.connect(db_path)
+conn.execute(\"\"\"
+CREATE TABLE IF NOT EXISTS runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  vm_name TEXT NOT NULL,
+  workdir TEXT NOT NULL,
+  spec_path TEXT NOT NULL,
+  todo_path TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  status TEXT NOT NULL,
+  exit_code INTEGER,
+  cli_version TEXT,
+  git_sha TEXT,
+  os TEXT,
+  binary_sha256 TEXT
+)
+\"\"\")
+conn.execute(\"CREATE INDEX IF NOT EXISTS runs_vm_started ON runs(vm_name, started_at)\")
+cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
+for col, coltype in [
+  ("cli_version", "TEXT"),
+  ("git_sha", "TEXT"),
+  ("os", "TEXT"),
+  ("binary_sha256", "TEXT")
+]:
+  if col not in cols:
+    conn.execute(f"ALTER TABLE runs ADD COLUMN {col} {coltype}")
+started_at = datetime.now(timezone.utc).isoformat()
+cur = conn.execute(
+  "INSERT INTO runs (vm_name, workdir, spec_path, todo_path, started_at, status, cli_version, git_sha, os, binary_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  (
+    vm,
+    workdir,
+    spec,
+    todo,
+    started_at,
+    "running",
+    cli_version,
+    git_sha or None,
+    os_name,
+    bin_sha or None,
+  )
+)
+conn.commit()
+print(cur.lastrowid)
+conn.close()
+`
+  const output = execFileSync(
+    "python3",
+    ["-", dbPath, vm, workdir, specPath, todoPath, CLI_VERSION, auditGitSha, auditOs, auditBinary],
+    { input: script }
+  )
+    .toString()
+    .trim()
+  return output || ""
+}
+
+const updateRunStatus = (dbPath: string, runId: string, exitCode: number) => {
+  const script = `
+import sqlite3
+import sys
+
+db_path, run_id, exit_code = sys.argv[1:4]
+status = "success" if exit_code == "0" else "failed"
+conn = sqlite3.connect(db_path)
+conn.execute("UPDATE runs SET status = ?, exit_code = ? WHERE id = ?", (status, int(exit_code), int(run_id)))
+conn.commit()
+conn.close()
+`
+  execFileSync("python3", ["-", dbPath, runId, String(exitCode)], { input: script })
+}
+
 export const dispatchRun = (options: DispatchOptions) => {
+  requireVmHostTools()
   const specPath = safeRealpath(options.spec)!
   const todoPath = safeRealpath(options.todo)!
   const workflowPath = safeRealpath(options.workflow ?? "scripts/smithers-spec-runner.tsx")!
@@ -166,6 +314,16 @@ export const dispatchRun = (options: DispatchOptions) => {
   const controlDir = `/home/ralph/work/${options.vm}/.runs/${workSubdir}`
   const reportDir = options.reportDir ?? `${controlDir}/reports`
   const projectRelative = projectDir ? (path: string) => relative(projectDir, path) : undefined
+  const dbPath = resolveDbPath()
+  let runId = ""
+  if (dbPath) {
+    try {
+      runId = insertRunRecord(dbPath, vmWorkdir, specPath, todoPath, options.vm)
+    } catch (error) {
+      console.warn("[WARN] Failed to record run in DB:", error)
+      runId = ""
+    }
+  }
 
   console.log(`[${options.vm}] Dispatching spec: ${specPath}`)
   console.log(`[${options.vm}] Include .git: ${options.includeGit}`)
@@ -331,11 +489,31 @@ export const dispatchRun = (options: DispatchOptions) => {
     .filter(Boolean)
     .join("\n")
 
-  if (process.platform === "darwin") {
-    limactlShell(options.vm, ["bash", "-lc", smithersScript])
-  } else if (process.platform === "linux") {
-    const ip = getVmIp(options.vm)
-    if (!ip) throw new Error(`Could not determine IP for VM '${options.vm}'. Is it running?`)
-    ssh(ip, ["bash", "-lc", smithersScript])
+  let exitCode = 0
+  try {
+    if (process.platform === "darwin") {
+      limactlShell(options.vm, ["bash", "-lc", smithersScript])
+    } else if (process.platform === "linux") {
+      const ip = getVmIp(options.vm)
+      if (!ip) throw new Error(`Could not determine IP for VM '${options.vm}'. Is it running?`)
+      ssh(ip, ["bash", "-lc", smithersScript])
+    }
+  } catch (error: any) {
+    exitCode = typeof error?.status === "number" ? error.status : 1
+    if (dbPath && runId) {
+      try {
+        updateRunStatus(dbPath, runId, exitCode)
+      } catch (dbError) {
+        console.warn("[WARN] Failed to update run status:", dbError)
+      }
+    }
+    throw error
+  }
+  if (dbPath && runId) {
+    try {
+      updateRunStatus(dbPath, runId, exitCode)
+    } catch (dbError) {
+      console.warn("[WARN] Failed to update run status:", dbError)
+    }
   }
 }
