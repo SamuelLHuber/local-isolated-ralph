@@ -593,7 +593,37 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
     `[ -f "${vmWorkdir}/PROMPT.md" ] && export SMITHERS_PROMPT_PATH="${vmWorkdir}/PROMPT.md" || true`,
     `[ -f "${vmWorkdir}/REVIEW_PROMPT.md" ] && export SMITHERS_REVIEW_PROMPT_PATH="${vmWorkdir}/REVIEW_PROMPT.md" || true`,
     `[ -f "${vmWorkdir}/reviewer-models.json" ] && export SMITHERS_REVIEW_MODELS_FILE="${vmWorkdir}/reviewer-models.json" || true`,
-    `smithers "${workflowInVm}"`
+    `CONTROL_DIR="${controlDir}"`,
+    "PID_FILE=\"${CONTROL_DIR}/smithers.pid\"",
+    "HEARTBEAT_FILE=\"${CONTROL_DIR}/heartbeat.json\"",
+    "DB_GLOB=\"${CONTROL_DIR}/.smithers/*.db\"",
+    "HEARTBEAT_SECONDS=30",
+    "if [ -f \"$PID_FILE\" ]; then",
+    "  OLD_PID=$(cat \"$PID_FILE\" || true)",
+    "  if [ -n \"$OLD_PID\" ] && ! kill -0 \"$OLD_PID\" 2>/dev/null; then",
+    "    python3 - <<'PY'",
+    "import glob, os, sqlite3",
+    "dbs = glob.glob(os.path.expanduser(os.environ.get('DB_GLOB','')))",
+    "for db_path in dbs:",
+    "    try:",
+    "        conn = sqlite3.connect(db_path)",
+    "        conn.execute(\"UPDATE executions SET status='failed', end_reason='stale_process', completed_at=datetime('now') WHERE status='running'\")",
+    "        conn.commit()",
+    "        conn.close()",
+    "    except Exception:",
+    "        pass",
+    "PY",
+    "    rm -f \"$PID_FILE\"",
+    "  fi",
+    "fi",
+    `smithers "${workflowInVm}" &`,
+    "SMITHERS_PID=$!",
+    "echo \"$SMITHERS_PID\" > \"$PID_FILE\"",
+    "(\nwhile kill -0 \"$SMITHERS_PID\" 2>/dev/null; do\n  python3 - <<'PY'\nimport glob, json, os, sqlite3\nfrom datetime import datetime, timezone\ncontrol = os.environ.get('CONTROL_DIR','')\nheartbeat = os.environ.get('HEARTBEAT_FILE','')\nrun_id = os.environ.get('SMITHERS_RUN_ID','')\nspec_path = os.environ.get('SMITHERS_SPEC_PATH','')\nphase = ''\ntry:\n    dbs = glob.glob(os.path.join(control, '.smithers', '*.db'))\n    if dbs:\n        conn = sqlite3.connect(dbs[0])\n        cur = conn.execute(\"SELECT value FROM state WHERE key='phase'\")\n        row = cur.fetchone()\n        if row and row[0]:\n            phase = str(row[0])\n        conn.close()\nexcept Exception:\n    pass\npayload = {\n  'v': 1,\n  'ts': datetime.now(timezone.utc).isoformat(),\n  'pid': int(os.environ.get('SMITHERS_PID','0') or 0),\n  'run_id': run_id,\n  'spec_path': spec_path,\n  'phase': phase\n}\ntry:\n    with open(heartbeat, 'w', encoding='utf-8') as f:\n        json.dump(payload, f)\nexcept Exception:\n    pass\nPY\n  sleep \"$HEARTBEAT_SECONDS\"\ndone\n) &",
+    "wait \"$SMITHERS_PID\"",
+    "EXIT_CODE=$?",
+    "echo \"$EXIT_CODE\" > \"${CONTROL_DIR}/exit_code\"",
+    "rm -f \"$PID_FILE\""
   ]
     .filter(Boolean)
     .join("\n")
@@ -603,7 +633,7 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
     writeFileInVm(options.vm, runScriptPath, `${smithersScript}\n`)
     const runCmd = follow
       ? `bash "${runScriptPath}"`
-      : `nohup bash "${runScriptPath}" > "${controlDir}/smithers.log" 2>&1 &`
+      : `nohup bash "${runScriptPath}" >> "${controlDir}/smithers.log" 2>&1 &`
     limactlShell(options.vm, ["bash", "-lc", runCmd])
   } else if (process.platform === "linux") {
     const ip = getVmIp(options.vm)
@@ -613,7 +643,7 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
     ssh(ip, ["bash", "-lc", script])
     const runCmd = follow
       ? `bash "${runScriptPath}"`
-      : `nohup bash "${runScriptPath}" > "${controlDir}/smithers.log" 2>&1 &`
+      : `nohup bash "${runScriptPath}" >> "${controlDir}/smithers.log" 2>&1 &`
     ssh(ip, ["bash", "-lc", runCmd])
   }
 

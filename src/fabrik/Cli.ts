@@ -12,6 +12,7 @@ import { resolveRalphHome } from "./embedded.js"
 import { laosDown, laosLogs, laosStatus, laosUp } from "./laos.js"
 import { syncCredentials } from "./credentials.js"
 import { dispatchRun } from "./dispatch.js"
+import { reconcileRuns } from "./reconcile.js"
 import { orchestrateRuns } from "./orchestrate.js"
 import { minifySpecs, validateSpecs } from "./specs.js"
 
@@ -406,8 +407,38 @@ const laosCommand = Command.make("laos").pipe(
   ])
 )
 
+const runsReconcileCommand = Command.make(
+  "reconcile",
+  {
+    db: Options.text("db").pipe(
+      Options.optional,
+      Options.withDescription("Path to ralph.db (default: ~/.cache/ralph/ralph.db)")
+    ),
+    limit: Options.integer("limit").pipe(Options.optional, Options.withDescription("Max rows (default 50)")),
+    heartbeatSeconds: Options.integer("heartbeat-seconds").pipe(
+      Options.optional,
+      Options.withDescription("Seconds before heartbeat is stale (default: 180)")
+    )
+  },
+  ({ db, limit, heartbeatSeconds }) =>
+    Effect.sync(() => {
+      const dbValue = unwrapOptional(db)
+      const dbPath = dbValue ?? resolve(homedir(), ".cache", "ralph", "ralph.db")
+      if (!existsSync(dbPath)) {
+        console.log(`No DB found at ${dbPath}`)
+        return
+      }
+      reconcileRuns({
+        dbPath,
+        limit: unwrapOptional(limit) ?? 50,
+        heartbeatSeconds: unwrapOptional(heartbeatSeconds) ?? 180
+      })
+    }).pipe(Effect.withSpan("runs.reconcile"))
+).pipe(Command.withDescription("Reconcile run status against VM processes"))
+
 const runsCommand = Command.make("runs").pipe(
   Command.withSubcommands([
+    runsReconcileCommand,
     Command.make(
       "list",
       {
@@ -425,6 +456,11 @@ const runsCommand = Command.make("runs").pipe(
           if (!existsSync(dbPath)) {
             console.log(`No DB found at ${dbPath}`)
             return
+          }
+          try {
+            reconcileRuns({ dbPath, limit: limitValue ?? 10, heartbeatSeconds: 180 })
+          } catch {
+            // best-effort
           }
           const script = `
 import sqlite3
@@ -468,6 +504,11 @@ else:
           if (!existsSync(dbPath)) {
             console.log(`No DB found at ${dbPath}`)
             return
+          }
+          try {
+            reconcileRuns({ dbPath, limit: 50, heartbeatSeconds: 180 })
+          } catch {
+            // best-effort
           }
           const script = `
 import sqlite3
@@ -574,6 +615,11 @@ else:
           if (!existsSync(dbPath)) {
             console.log(`No DB found at ${dbPath}`)
             return
+          }
+          try {
+            reconcileRuns({ dbPath, limit: 50, heartbeatSeconds: 180 })
+          } catch {
+            // best-effort
           }
 
           const runIdValue = unwrapOptional(runId)

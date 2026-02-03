@@ -32,6 +32,25 @@ type RunStatus = {
   blockedTask?: string
 }
 
+const updateRunStatus = (runId: string, status: "running" | "blocked" | "done", exitCode: number | null) => {
+  const dbPath = resolve(process.env.HOME ?? "", ".cache", "ralph", "ralph.db")
+  if (!existsSync(dbPath)) return
+  const script = `
+import sqlite3, sys
+db_path = sys.argv[1]
+rid = int(sys.argv[2])
+status = sys.argv[3]
+exit_code = sys.argv[4]
+conn = sqlite3.connect(db_path)
+conn.execute('UPDATE runs SET status = ?, exit_code = ? WHERE id = ?', (status, None if exit_code == 'null' else int(exit_code), rid))
+conn.commit()
+conn.close()
+`
+  execFileSync("python3", ["-", dbPath, runId, status, exitCode === null ? "null" : String(exitCode)], {
+    input: script
+  })
+}
+
 const sleep = (ms: number) => new Promise((resolveFn) => setTimeout(resolveFn, ms))
 
 const runRemote = (vm: string, command: string) => {
@@ -154,16 +173,19 @@ export const orchestrateRuns = async (options: OrchestrateOptions) => {
         status.status = "blocked"
         status.blockedTask = blockedTask
         console.log(`[${status.vm}] blocked on ${blockedTask}`)
+        updateRunStatus(status.runId, "blocked", 1)
         continue
       }
       if (isSmithersDone(status.vm, status.workdir, status.specId)) {
         status.status = "done"
         console.log(`[${status.vm}] done (smithers task.done=1)`)
+        updateRunStatus(status.runId, "done", 0)
         continue
       }
       if (hasHumanGate(status.vm, status.reportDir)) {
         status.status = "done"
         console.log(`[${status.vm}] done (human gate written)`)
+        updateRunStatus(status.runId, "done", 0)
         continue
       }
       allDone = false
