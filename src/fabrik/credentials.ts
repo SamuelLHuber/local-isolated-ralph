@@ -41,7 +41,12 @@ const hasClaudeToken = () => {
 const copyFileLima = (vm: string, src: string, dest: string) => {
   const data = existsSync(src) ? execFileSync("cat", [src]).toString() : ""
   if (!data) return false
-  run("limactl", ["shell", vm, "sudo", "-u", "ralph", "tee", dest], undefined, data)
+  run(
+    "limactl",
+    ["shell", vm, "bash", "-lc", `sudo -u ralph tee "${dest}" >/dev/null`],
+    undefined,
+    data
+  )
   return true
 }
 
