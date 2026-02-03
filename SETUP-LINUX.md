@@ -284,6 +284,16 @@ for i in 1 2 3 4; do
 done
 ```
 
+### Measured timings (Linux)
+
+Run with `/usr/bin/time -p` on your host and record the results:
+
+| Step | Command | Real |
+|------|---------|------|
+| Create VM (cached image) | `/usr/bin/time -p ./scripts/create-ralph.sh ralph-bench 2 4 20` | _(measure on host)_ |
+| Clone (virt-clone) | `/usr/bin/time -p virt-clone --original ralph-template --name ralph-bench-clone --auto-clone` | _(measure on host)_ |
+| Start clone | `/usr/bin/time -p virsh start ralph-bench-clone` | _(measure on host)_ |
+
 ## 9. Cleanup & Teardown
 
 ### Stop VMs

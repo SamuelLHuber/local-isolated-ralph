@@ -263,6 +263,40 @@ limactl shell ralph-1 -- -L 9222:localhost:9222 -N &
 limactl shell ralph-2 -- -L 9223:localhost:9222 -N &
 ```
 
+## 9. Clone a Template VM (Fast Start)
+
+Lima can clone a stopped VM for fast provisioning. Use this when you have a
+fully configured "golden" VM.
+
+```bash
+# Create and configure a template VM once
+./scripts/create-ralph.sh ralph-template 4 6 30
+
+# Stop before cloning
+limactl stop ralph-template
+
+# Clone without starting
+limactl clone ralph-template ralph-1
+
+# Start the clone
+limactl start ralph-1
+```
+
+### Measured timings (macOS)
+
+Run with `/usr/bin/time -p` on your host. Example results from this machine
+on 2026-02-03:
+
+| Step | Command | Real |
+|------|---------|------|
+| Create VM (cached image) | `/usr/bin/time -p ./scripts/create-ralph.sh ralph-bench 2 4 20` | 50.10s |
+| Clone (no start) | `/usr/bin/time -p limactl clone ralph-bench ralph-bench-clone` | 0.03s |
+| Start clone (SSH ready) | `/usr/bin/time -p limactl start ralph-bench-clone` | >76s (SSH not ready; stopped) |
+
+Notes:
+- Clone time measures disk copy only (fast). Start time depends on guest boot and SSH availability.
+- If SSH readiness is slow, check `/Users/<you>/.lima/<vm>/ha.stderr.log` for details.
+
 ### Dispatch tasks to the fleet
 
 ```bash
