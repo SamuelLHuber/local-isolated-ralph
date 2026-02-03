@@ -84,6 +84,7 @@ const reviewersDir = env.SMITHERS_REVIEWERS_DIR
 const reviewModelsPath = env.SMITHERS_REVIEW_MODELS_FILE
 const execCwd = env.SMITHERS_CWD ? resolve(env.SMITHERS_CWD) : process.cwd()
 const runId = env.SMITHERS_RUN_ID ?? ""
+const specId = spec.id ?? ""
 const branchName = env.SMITHERS_BRANCH ?? ""
 const workflowShaExpected = env.SMITHERS_WORKFLOW_SHA ?? ""
   const agentKind = (env.SMITHERS_AGENT ?? env.RALPH_AGENT ?? "codex").toLowerCase()
@@ -213,6 +214,38 @@ const pushBookmark = (branch: string) => {
     return
   }
   console.log(`[WARN] Failed to push JJ bookmark ${branch}: ${first.output || "unknown error"}`)
+}
+
+const hasWorkingChanges = () => {
+  const result = runJj(["diff", "--stat"])
+  return result.ok && result.output.trim().length > 0
+}
+
+const composeCommitMessage = (taskId: string, report: Report) => {
+  const subject = `feat(spec-${specId}): ${taskId}`
+  const why = report.reasoning || report.rootCause || "No root cause provided."
+  const fix = report.fix || "No fix summary provided."
+  const work = report.work?.length ? report.work.map((item) => `- ${item}`).join("\n") : "- No work items reported."
+  const trailers = [
+    specId ? `[spec:${specId}]` : "",
+    taskId ? `[todo:${taskId}]` : "",
+    runId ? `[run:${runId}]` : ""
+  ].filter(Boolean).join(" ")
+
+  return [
+    subject,
+    "",
+    "Why:",
+    why,
+    "",
+    "Fix:",
+    fix,
+    "",
+    "Work:",
+    work,
+    "",
+    trailers
+  ].join("\n").trim()
 }
 
 const codexTimeout = Number(env.SMITHERS_AGENT_TIMEOUT_MS ?? env.SMITERS_AGENT_TIMEOUT_MS ?? 1800000)
@@ -840,21 +873,18 @@ const prompt = [
         return
       }
 
-      if (!report.commit) {
-        report.status = "blocked"
-        report.error = "Missing commit message in report.commit"
-        report.rootCause = "Commit message not provided"
-        report.reasoning = "Review tasks must include a Conventional Commit message for audit."
-        report.fix = "Set report.commit with a Conventional Commit message including spec/todo/run context."
+      if (!hasWorkingChanges()) {
+        report.commit = "no-op"
+        report.work = [...report.work, "No working copy changes detected; skipped describe/push."]
         writeReport(report)
-        db.state.set("task.blocked", 1, "commit_missing")
-        db.state.set("task.done", 1, "commit_missing")
-        db.state.set("phase", "done", "commit_missing")
+        db.state.set("review.task.index", reviewTaskIndex + 1, "review_task_advance")
         ralph?.signalComplete()
         return
       }
 
-      const describeResult = runJj(["describe", "-m", report.commit])
+      const commitMessage = report.commit || composeCommitMessage(task.id, report)
+      report.commit = commitMessage
+      const describeResult = runJj(["describe", "-m", commitMessage])
       if (!describeResult.ok) {
         report.status = "blocked"
         report.error = `jj describe failed: ${describeResult.output || "unknown error"}`
@@ -1009,21 +1039,21 @@ const prompt = [
       return
     }
 
-    if (!report.commit) {
-      report.status = "blocked"
-      report.error = "Missing commit message in report.commit"
-      report.rootCause = "Commit message not provided"
-      report.reasoning = "Each task must include a Conventional Commit message for audit."
-      report.fix = "Set report.commit with a Conventional Commit message including spec/todo/run context."
+    if (!hasWorkingChanges()) {
+      report.commit = "no-op"
+      report.work = [...report.work, "No working copy changes detected; skipped describe/push."]
       writeReport(report)
-      db.state.set("task.blocked", 1, "commit_missing")
-      db.state.set("task.done", 1, "commit_missing")
-      db.state.set("phase", "done", "commit_missing")
+      db.state.set("task.index", index + 1, "advance")
+      if (index + 1 >= todo.tasks.length) {
+        db.state.set("task.done", 1, "complete")
+      }
       ralph?.signalComplete()
       return
     }
 
-    const describeResult = runJj(["describe", "-m", report.commit])
+    const commitMessage = report.commit || composeCommitMessage(task.id, report)
+    report.commit = commitMessage
+    const describeResult = runJj(["describe", "-m", commitMessage])
     if (!describeResult.ok) {
       report.status = "blocked"
       report.error = `jj describe failed: ${describeResult.output || "unknown error"}`
