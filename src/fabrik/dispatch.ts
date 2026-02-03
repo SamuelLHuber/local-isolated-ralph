@@ -303,6 +303,16 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
   const reportDir = options.reportDir ?? `${controlDir}/reports`
   const projectRelative = projectDir ? (path: string) => relative(projectDir, path) : undefined
 
+  if (!projectDir) {
+    throw new Error(
+      [
+        "Missing project repository.",
+        "Dispatch requires a repo to apply tasks.",
+        "Provide --project /path/to/repo (or add repo-url support)."
+      ].join("\n")
+    )
+  }
+
   console.log(`[${options.vm}] Dispatching spec: ${specPath}`)
   console.log(`[${options.vm}] Include .git: ${options.includeGit}`)
   console.log(`[${options.vm}] Work dir: ${vmWorkdir}`)

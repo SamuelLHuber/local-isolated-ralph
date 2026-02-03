@@ -25,7 +25,7 @@ let
   installAgentCLIs = pkgs.writeShellScriptBin "install-agent-clis" ''
     set -euo pipefail
     export BUN_INSTALL="$HOME/.bun"
-    export PATH="$BUN_INSTALL/bin:${pkgs.bun}/bin:$PATH"
+    export PATH="${pkgs.bun}/bin:$BUN_INSTALL/bin:$PATH"
 
     echo "Installing agent CLIs via bun..."
     ${lib.concatMapStringsSep "\n" (pkg: ''
@@ -340,7 +340,7 @@ in {
         Environment = [
           "HOME=/home/${cfg.user}"
           "BUN_INSTALL=/home/${cfg.user}/.bun"
-          "PATH=/home/${cfg.user}/.bun/bin:${pkgs.bun}/bin:${pkgs.git}/bin:/run/current-system/sw/bin"
+          "PATH=${pkgs.bun}/bin:/home/${cfg.user}/.bun/bin:${pkgs.git}/bin:/run/current-system/sw/bin"
         ];
         ExecStart = "${installAgentCLIs}/bin/install-agent-clis";
         ExecStartPost = "${pkgs.coreutils}/bin/touch /var/lib/ralph/.agents-installed";
@@ -362,7 +362,7 @@ in {
 
     # Add bun global bin to PATH and Playwright library dependencies
     environment.shellInit = ''
-      export PATH="$HOME/.bun/bin:$PATH"
+      export PATH="${pkgs.bun}/bin:$HOME/.bun/bin:$PATH"
     '' + optionalString cfg.browser.enable ''
       # Playwright browser dependencies (for npm-installed browsers)
       export LD_LIBRARY_PATH="${lib.makeLibraryPath (with pkgs; [
