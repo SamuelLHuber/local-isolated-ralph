@@ -23,7 +23,7 @@ Provide per-run instructions with `PROMPT.md` and reviewer instructions with `RE
 ```
 Clone:              jj git clone <url> <dir>
 Init in repo:       jj git init
-Start change:       jj new main
+Start change:       jj new master
 Status:             jj status
 Diff:               jj diff
 Describe change:    jj describe
@@ -89,9 +89,9 @@ jj git clone git@github.com:org/repo.git
 cd repo
 
 # Create changes for each Ralph (no explicit branches needed)
-jj new main -m "feat: user auth"      # Creates change A
-jj new main -m "feat: dashboard"      # Creates change B
-jj new main -m "fix: api error"       # Creates change C
+jj new master -m "feat: user auth"      # Creates change A
+jj new master -m "feat: dashboard"      # Creates change B
+jj new master -m "fix: api error"       # Creates change C
 
 # Each Ralph works on a different change
 # jj handles rebasing automatically when main updates
@@ -116,10 +116,10 @@ Multiple Ralphs can work on ONE large spec, each picking different tasks:
 #   - Task 4: Add documentation
 
 # All Ralphs start from main, work on different tasks
-jj new main -m "task-1: user model"     # Ralph-1 picks this
-jj new main -m "task-2: auth endpoints" # Ralph-2 picks this
-jj new main -m "task-3: tests"          # Ralph-3 picks this
-jj new main -m "task-4: docs"           # Ralph-4 picks this
+jj new master -m "task-1: user model"     # Ralph-1 picks this
+jj new master -m "task-2: auth endpoints" # Ralph-2 picks this
+jj new master -m "task-3: tests"          # Ralph-3 picks this
+jj new master -m "task-4: docs"           # Ralph-4 picks this
 
 # jj automatically handles when tasks touch same files
 # Conflicts surface immediately, agents can coordinate
@@ -165,7 +165,7 @@ Multiple Ralphs work on the same large feature, each owning a task:
 │  └── Task 4: Add documentation (Ralph-4)                        │
 └─────────────────────────────────────────────────────────────────┘
                              │
-                    jj new main (×4)
+                    jj new master (×4)
                              │
          ┌───────────┬───────┴───────┬───────────┐
          ▼           ▼               ▼           ▼
@@ -222,10 +222,10 @@ EOF
 
 # 2. Create jj changes for each task
 cd ~/projects/myapp
-jj new main -m "task-1: user model"
-jj new main -m "task-2: auth endpoints"
-jj new main -m "task-3: tests"
-jj new main -m "task-4: documentation"
+jj new master -m "task-1: user model"
+jj new master -m "task-2: auth endpoints"
+jj new master -m "task-3: tests"
+jj new master -m "task-4: documentation"
 
 # 3. Prepare spec/todo JSON for each task
 #    (store in specs/, then validate + minify)

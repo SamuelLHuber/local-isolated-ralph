@@ -357,7 +357,7 @@ JJ uses a colocated Git backend. The repo still has `.git`, but you use `jj` com
 ```
 Clone:              jj git clone <url> <dir>
 Init in repo:       jj git init
-Start change:       jj new main
+Start change:       jj new master
 Status:             jj status
 Diff:               jj diff
 Describe change:    jj describe
@@ -381,7 +381,7 @@ Changesets stays the same; JJ only replaces Git commands locally:
 bunx changeset
 
 # Work in a new JJ change
-jj new main
+jj new master
 
 # Review + commit
 jj status
