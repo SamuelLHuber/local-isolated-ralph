@@ -853,10 +853,26 @@ function SpecWorkflowInner() {
     reactiveDb,
     "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'task.done'"
   )
+  const { data: phaseRaw } = useQueryValue<string>(
+    reactiveDb,
+    "SELECT value FROM state WHERE key = 'phase'"
+  )
+  const decodeStateString = (value?: string) => {
+    if (!value) return value
+    const trimmed = value.trim()
+    if (!trimmed) return value
+    try {
+      const parsed = JSON.parse(trimmed)
+      return typeof parsed === "string" ? parsed : value
+    } catch {
+      return value
+    }
+  }
   const done = Boolean(doneRaw ?? 0)
+  const phase = decodeStateString(phaseRaw) ?? "tasks"
 
   return (
-    <Ralph id="spec-ralph" condition={() => !done} maxIterations={maxIterations}>
+    <Ralph id="spec-ralph" condition={() => !done || phase !== "done"} maxIterations={maxIterations}>
       <TaskRunner />
     </Ralph>
   )
