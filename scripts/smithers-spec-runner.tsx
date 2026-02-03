@@ -75,6 +75,8 @@ const reviewPromptPath = env.SMITHERS_REVIEW_PROMPT_PATH
 const reviewersDir = env.SMITHERS_REVIEWERS_DIR
 const reviewModelsPath = env.SMITHERS_REVIEW_MODELS_FILE
 const execCwd = env.SMITHERS_CWD ? resolve(env.SMITHERS_CWD) : process.cwd()
+const runId = env.SMITHERS_RUN_ID ?? ""
+const branchName = env.SMITHERS_BRANCH ?? ""
 const agentKind = (env.SMITHERS_AGENT ?? env.RALPH_AGENT ?? "codex").toLowerCase()
 const model =
   env.SMITHERS_MODEL ??
@@ -105,6 +107,8 @@ if (!existsSync(reportDir)) {
 const systemPrompt = [
   `Spec ID: ${spec.id}`,
   `Title: ${spec.title}`,
+  runId ? `Run ID: ${runId}` : "",
+  branchName ? `Branch: ${branchName}` : "",
   "",
   "Goals:",
   ...spec.goals.map((g) => `- ${g}`),
@@ -509,7 +513,7 @@ function TaskRunner() {
       return <review status="review-restart" />
     }
 
-    const prompt = [
+const prompt = [
       globalPrompt,
       systemPrompt,
       "",
@@ -526,7 +530,13 @@ function TaskRunner() {
       "- Create a new change before work: `jj new master`.",
       "- Note: The working copy may already include changes from earlier tasks in this run. Treat those as expected and continue unless they are clearly unrelated.",
       "- Update the change description with `jj describe`.",
-      "- Push with `jj git push --change @` when ready.",
+      branchName ? `- Use this branch/bookmark for all pushes: ${branchName}` : "- Use a single branch/bookmark for all pushes.",
+      branchName
+        ? `- Push with: jj git push --bookmark ${branchName}`
+        : "- Push with: jj git push --change @",
+      "- Commit messages must follow Conventional Commits (type(scope): subject).",
+      "- Commit message must include spec + todo context and run id.",
+      "- Example: feat(spec-020-fabrik-v0-2-0): implement dispatch auth [todo:git-credentials-vm] [spec:020-fabrik-v0-2-0] [run:20260203T120945Z]",
       "",
       "Output:",
       "Return a single JSON object that matches this schema:",
@@ -613,7 +623,13 @@ function TaskRunner() {
     "- Create a new change before work: `jj new master`.",
     "- Note: The working copy may already include changes from earlier tasks in this run. Treat those as expected and continue unless they are clearly unrelated.",
     "- Update the change description with `jj describe`.",
-    "- Push with `jj git push --change @` when ready.",
+    branchName ? `- Use this branch/bookmark for all pushes: ${branchName}` : "- Use a single branch/bookmark for all pushes.",
+    branchName
+      ? `- Push with: jj git push --bookmark ${branchName}`
+      : "- Push with: jj git push --change @",
+    "- Commit messages must follow Conventional Commits (type(scope): subject).",
+    "- Commit message must include spec + todo context and run id.",
+    "- Example: feat(spec-020-fabrik-v0-2-0): implement dispatch auth [todo:git-credentials-vm] [spec:020-fabrik-v0-2-0] [run:20260203T120945Z]",
     "",
     "Output:",
     "Return a single JSON object that matches this schema:",

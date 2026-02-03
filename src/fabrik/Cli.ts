@@ -30,6 +30,10 @@ const workflowOption = Options.text("workflow").pipe(Options.optional, Options.w
 const reportDirOption = Options.text("report-dir").pipe(Options.optional, Options.withDescription("Report directory inside VM"))
 const modelOption = Options.text("model").pipe(Options.optional, Options.withDescription("Model name"))
 const iterationsOption = Options.integer("iterations").pipe(Options.optional, Options.withDescription("Max iterations"))
+const branchOption = Options.text("branch").pipe(
+  Options.optional,
+  Options.withDescription("Branch/bookmark name for this run (default: spec-<specId>)")
+)
 const reviewMaxOption = Options.integer("review-max").pipe(
   Options.optional,
   Options.withDescription("Max review reruns before human gate (default: 2)")
@@ -102,6 +106,7 @@ const runCommand = Command.make(
     reportDir: reportDirOption,
     model: modelOption,
     iterations: iterationsOption,
+    branch: branchOption,
     prompt: promptOption,
     reviewPrompt: reviewPromptOption,
     reviewMax: reviewMaxOption,
@@ -118,6 +123,7 @@ const runCommand = Command.make(
     reportDir,
     model,
     iterations,
+    branch,
     prompt,
     reviewPrompt,
     reviewMax,
@@ -131,6 +137,7 @@ const runCommand = Command.make(
     const reportDirValue = unwrapOptional(reportDir)
     const modelValue = unwrapOptional(model)
     const iterationsValue = unwrapOptional(iterations)
+    const branchValue = unwrapOptional(branch)
     const promptValue = unwrapOptional(prompt)
     const reviewPromptValue = unwrapOptional(reviewPrompt)
     const reviewMaxValue = unwrapOptional(reviewMax)
@@ -154,6 +161,7 @@ const runCommand = Command.make(
           reportDir: reportDirValue,
           model: modelValue,
           iterations: iterationsValue ?? undefined,
+          branch: branchValue ?? undefined,
           prompt: promptValue ? resolve(promptValue) : undefined,
           reviewPrompt: reviewPromptValue ? resolve(reviewPromptValue) : undefined,
           reviewModels: reviewModelsValue ? resolve(reviewModelsValue) : undefined,
@@ -168,6 +176,7 @@ const runCommand = Command.make(
     if (workflowValue) args.push("--workflow", workflowValue)
     if (reportDirValue) args.push("--report-dir", reportDirValue)
     if (modelValue) args.push("--model", modelValue)
+    if (branchValue) args.push("--branch", branchValue)
     if (promptValue) args.push("--prompt", promptValue)
     if (reviewPromptValue) args.push("--review-prompt", reviewPromptValue)
     if (typeof reviewMaxValue === "number" && Number.isFinite(reviewMaxValue)) {

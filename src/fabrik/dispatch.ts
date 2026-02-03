@@ -16,6 +16,7 @@ type DispatchOptions = {
   reviewPrompt?: string
   reviewModels?: string
   reviewMax?: number
+  branch?: string
 }
 
 const run = (cmd: string, args: string[], input?: string) => {
@@ -27,6 +28,24 @@ const readText = (path?: string) => {
   if (!existsSync(path)) return ""
   return readFileSync(path, "utf8")
 }
+
+const readSpecId = (path: string) => {
+  try {
+    const raw = readFileSync(path, "utf8")
+    const parsed = JSON.parse(raw) as { id?: string }
+    return typeof parsed.id === "string" ? parsed.id : ""
+  } catch {
+    return ""
+  }
+}
+
+const sanitizeBranch = (name: string) =>
+  name
+    .trim()
+    .replace(/[^a-zA-Z0-9._/-]+/g, "-")
+    .replace(/--+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120)
 
 const safeRealpath = (path?: string) => {
   if (!path) return undefined
@@ -176,6 +195,9 @@ export const dispatchRun = (options: DispatchOptions) => {
   const reviewPromptPath = safeRealpath(options.reviewPrompt)
   const reviewModelsPath = safeRealpath(options.reviewModels)
   const projectDir = options.project ? safeRealpath(options.project)! : undefined
+  const specId = readSpecId(specPath)
+  const runId = `${new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "")}`
+  const branch = sanitizeBranch(options.branch ?? (specId ? `spec-${specId}` : `spec-run-${runId}`))
   const timestamp = new Date()
     .toISOString()
     .replace(/[-:]/g, "")
@@ -190,6 +212,7 @@ export const dispatchRun = (options: DispatchOptions) => {
   console.log(`[${options.vm}] Dispatching spec: ${specPath}`)
   console.log(`[${options.vm}] Include .git: ${options.includeGit}`)
   console.log(`[${options.vm}] Work dir: ${vmWorkdir}`)
+  console.log(`[${options.vm}] Branch: ${branch}`)
 
   if (process.platform === "darwin") {
     ensureVmRunning(options.vm)
@@ -363,6 +386,8 @@ export const dispatchRun = (options: DispatchOptions) => {
     `export SMITHERS_REPORT_DIR="${reportDir}"`,
     `export SMITHERS_AGENT=codex`,
     `export SMITHERS_CWD="${vmWorkdir}"`,
+    `export SMITHERS_BRANCH="${branch}"`,
+    `export SMITHERS_RUN_ID="${runId}"`,
     options.model ? `export SMITHERS_MODEL="${options.model}"` : "",
     options.reviewMax ? `export SMITHERS_REVIEW_MAX="${options.reviewMax}"` : "",
     `[ -f "${vmWorkdir}/PROMPT.md" ] && export SMITHERS_PROMPT_PATH="${vmWorkdir}/PROMPT.md" || true`,
