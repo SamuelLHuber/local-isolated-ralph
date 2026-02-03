@@ -1,7 +1,8 @@
 #!/usr/bin/env smithers
 /** @jsxImportSource smithers-orchestrator */
-import { readFileSync, mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs"
+import { readFileSync, mkdirSync, writeFileSync, existsSync, readdirSync, lstatSync, symlinkSync } from "node:fs"
 import { basename, join, resolve } from "node:path"
+import { homedir } from "node:os"
 import * as Orchestrator from "smithers-orchestrator"
 
 type Spec = {
@@ -90,6 +91,39 @@ const model =
 const maxIterations = Number(env.SMITHERS_MAX_ITERATIONS ?? env.MAX_ITERATIONS ?? 100)
 const runReview = true
 const reviewMax = Number(env.SMITHERS_REVIEW_MAX ?? 2)
+
+const ensureDir = (path: string) => {
+  if (!existsSync(path)) mkdirSync(path, { recursive: true })
+}
+
+const linkMailbox = (localPath: string, targetPath: string) => {
+  try {
+    if (existsSync(localPath)) {
+      const stat = lstatSync(localPath)
+      if (stat.isDirectory() || stat.isSymbolicLink()) return
+      return
+    }
+    ensureDir(targetPath)
+    symlinkSync(targetPath, localPath, "dir")
+  } catch {
+    ensureDir(localPath)
+  }
+}
+
+const setupMailboxes = (role: string) => {
+  const queueRoot = resolve(
+    env.SMITHERS_QUEUE_DIR ?? env.RALPH_QUEUE_DIR ?? join(homedir(), ".cache", "ralph", "queue")
+  )
+  const inbox = join(queueRoot, role, "inbox")
+  const outbox = join(queueRoot, role, "outbox")
+  ensureDir(inbox)
+  ensureDir(outbox)
+  linkMailbox(join(execCwd, "inbox"), inbox)
+  linkMailbox(join(execCwd, "outbox"), outbox)
+  return { queueRoot, inbox, outbox }
+}
+
+setupMailboxes((env.SMITHERS_ROLE ?? "implementer").toLowerCase())
 
 if (!Orchestrator.OpenCode && agentKind === "opencode") {
   console.log("[WARN] OpenCode export missing; falling back to Codex for opencode.")
