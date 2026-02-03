@@ -430,6 +430,17 @@ const readReports = (): string => {
 function TaskRunner() {
   const { db, reactiveDb } = useSmithers()
   const ralph = useRalphIteration()
+  const decodeStateString = (value?: string) => {
+    if (!value) return value
+    const trimmed = value.trim()
+    if (!trimmed) return value
+    try {
+      const parsed = JSON.parse(trimmed)
+      return typeof parsed === "string" ? parsed : value
+    } catch {
+      return value
+    }
+  }
   const { data: indexRaw } = useQueryValue<number>(
     reactiveDb,
     "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'task.index'"
@@ -466,12 +477,12 @@ function TaskRunner() {
   )
   const index = indexRaw ?? 0
   const done = Boolean(doneRaw ?? 0)
-  const phase = phaseRaw ?? "tasks"
+  const phase = decodeStateString(phaseRaw) ?? "tasks"
   const reviewIndex = reviewIndexRaw ?? 0
   const reviewRetry = reviewRetryRaw ?? 0
   const reviewTaskIndex = reviewTaskIndexRaw ?? 0
-  const reviewTransition = reviewTransitionRaw ?? ""
-  const reviewTasksTransition = reviewTasksTransitionRaw ?? ""
+  const reviewTransition = decodeStateString(reviewTransitionRaw) ?? ""
+  const reviewTasksTransition = decodeStateString(reviewTasksTransitionRaw) ?? ""
   const reviewStarted = useQueryValue<string>(
     reactiveDb,
     "SELECT value FROM state WHERE key = 'review.started_at'",
