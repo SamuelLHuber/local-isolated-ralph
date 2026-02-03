@@ -720,10 +720,14 @@ const prompt = [
       db.state.set("task.done", 1, "complete")
     }
     if (runReview) {
-      db.state.set("phase", "review", "review_start")
+      if (phase !== "review") {
+        db.state.set("phase", "review", "review_start")
+      }
       return <review status="pending" />
     }
-    db.state.set("phase", "done", "complete")
+    if (phase !== "done") {
+      db.state.set("phase", "done", "complete")
+    }
     return <done status="complete" />
   }
 
