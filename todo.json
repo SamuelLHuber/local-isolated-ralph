@@ -148,6 +148,16 @@
       "id": "cli-known-issues",
       "do": "Add fabrik known-issues command that prints a concise list of common problems and the exact command sequence to resolve each one. Include the bun untrusted scripts flow: run `bun pm untrusted`, review package + script, then `bun pm trust <pkg>` if acceptable; otherwise remove the dependency.",
       "verify": "fabrik known-issues prints a short list with actionable copy-paste steps for each workaround, including the explicit bun untrusted trust-or-remove guidance."
+    },
+    {
+      "id": "non-interactive-dispatch",
+      "do": "Change fabrik run to be non-interactive by default: dispatch returns immediately while the VM executes independently. Add an explicit --follow (or --verbose) flag to stream live output, and make sure this works on both macOS (limactl) and Linux (ssh). When running Smithers, tee stdout/stderr to a durable log file (e.g., reports/smithers.log) so output can be reattached later.",
+      "verify": "Default fabrik run returns immediately; `--follow` streams live output on both macOS and Linux; smithers output is persisted to reports/smithers.log."
+    },
+    {
+      "id": "attach-logs",
+      "do": "Add `fabrik run attach --id <run>` to reattach to an existing run and stream output. Implement both macOS (limactl) and Linux (ssh) attach paths. Tail the persisted smithers log (reports/smithers.log) and optionally fall back to reports/*.report.json if the log is missing.",
+      "verify": "`fabrik run attach --id` streams smithers.log for active runs on both macOS and Linux, and gracefully falls back if missing."
     }
   ]
 }
