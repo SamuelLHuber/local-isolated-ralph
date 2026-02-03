@@ -357,6 +357,31 @@ const defaultReview = (status: Review["status"]): Review => ({
   next: []
 })
 
+const isRateLimitError = (output?: string) => {
+  if (!output) return false
+  const haystack = output.toLowerCase()
+  return (
+    haystack.includes("usage_limit_reached") ||
+    haystack.includes("rate limit") ||
+    haystack.includes("http 429") ||
+    haystack.includes("too many requests")
+  )
+}
+
+const computeBackoffMs = (attempt: number) => {
+  if (attempt === 0) return 60 * 60 * 1000
+  if (attempt === 1) return 2 * 60 * 60 * 1000
+  if (attempt === 2) return 3 * 60 * 60 * 1000
+  return 0
+}
+
+const formatBackoffLabel = (attempt: number) => {
+  if (attempt === 0) return "1 hour"
+  if (attempt === 1) return "2 hours"
+  if (attempt === 2) return "3 hours"
+  return "no further retries"
+}
+
 const parseReview = (output?: string): Review => {
   if (!output) {
     return defaultReview("changes_requested")
@@ -476,6 +501,16 @@ function TaskRunner() {
     "SELECT value FROM state WHERE key = 'review.tick'",
     []
   )
+  const { data: rateLimitCountRaw } = useQueryValue<number>(
+    reactiveDb,
+    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'rate.limit.count'",
+    []
+  )
+  const { data: rateLimitUntilRaw } = useQueryValue<string>(
+    reactiveDb,
+    "SELECT value FROM state WHERE key = 'rate.limit.until'",
+    []
+  )
   const index = indexRaw ?? 0
   const done = Boolean(doneRaw ?? 0)
   const phase = decodeStateString(phaseRaw) ?? "tasks"
@@ -484,6 +519,8 @@ function TaskRunner() {
   const reviewTransition = decodeStateString(reviewTransitionRaw) ?? ""
   const reviewTasksTransition = decodeStateString(reviewTasksTransitionRaw) ?? ""
   const reviewTick = decodeStateString(reviewTickRaw) ?? ""
+  const rateLimitCount = rateLimitCountRaw ?? 0
+  const rateLimitUntil = decodeStateString(rateLimitUntilRaw)
   const reviewStarted = useQueryValue<string>(
     reactiveDb,
     "SELECT value FROM state WHERE key = 'review.started_at'",
@@ -572,6 +609,9 @@ function TaskRunner() {
     if (allReviewsComplete()) {
       return <review status="pending" />
     }
+    if (rateLimitUntil) {
+      return <review status="rate-limited" />
+    }
     return (
       <review status="running">
         <Orchestrator.Parallel>
@@ -608,6 +648,20 @@ function TaskRunner() {
               .filter((line) => line !== "")
               .join("\n")
             const handleReviewFinished = (result: { output?: string }) => {
+              if (isRateLimitError(result.output)) {
+                const delayMs = computeBackoffMs(rateLimitCount)
+                const until = new Date(Date.now() + delayMs).toISOString()
+                const label = formatBackoffLabel(rateLimitCount)
+                writeHumanGate(`Rate limit hit during review. Backoff: ${label}. Resume after ${until}.`)
+                db.state.set("rate.limit.count", rateLimitCount + 1, "rate_limit")
+                if (delayMs > 0) {
+                  db.state.set("rate.limit.until", until, "rate_limit")
+                }
+                db.state.set("task.blocked", 1, "rate_limit")
+                db.state.set("task.done", 1, "rate_limit")
+                db.state.set("phase", "done", "rate_limit")
+                return
+              }
               const review = parseReview(result.output)
               writeReviewerResult(reviewer.id, review)
               db.state.set("review.tick", new Date().toISOString(), "review_tick")
@@ -810,6 +864,27 @@ const prompt = [
     .join("\n")
 
   const handleFinished = (result: { output?: string }) => {
+    if (isRateLimitError(result.output)) {
+      const delayMs = computeBackoffMs(rateLimitCount)
+      const until = new Date(Date.now() + delayMs).toISOString()
+      const label = formatBackoffLabel(rateLimitCount)
+      const report = defaultReport(task.id, "blocked")
+      report.error = `Rate limit hit. Backoff: ${label}. Resume after ${until}.`
+      report.rootCause = "Rate limit reached"
+      report.reasoning = "Provider returned 429/usage_limit_reached during task execution."
+      report.fix = "Wait for quota reset then resume the run."
+      writeReport(report)
+      writeHumanGate(`Rate limit hit. Backoff: ${label}. Resume after ${until}.`)
+      db.state.set("rate.limit.count", rateLimitCount + 1, "rate_limit")
+      if (delayMs > 0) {
+        db.state.set("rate.limit.until", until, "rate_limit")
+      }
+      db.state.set("task.blocked", 1, "rate_limit")
+      db.state.set("task.done", 1, "rate_limit")
+      db.state.set("phase", "done", "rate_limit")
+      ralph?.signalComplete()
+      return
+    }
     const report = parseReport(task.id, result.output)
     writeReport(report)
 
@@ -906,3 +981,10 @@ try {
 } finally {
   db.close()
 }
+  useEffect(() => {
+    if (!rateLimitUntil) return
+    const until = Date.parse(rateLimitUntil)
+    if (!Number.isFinite(until)) return
+    if (Date.now() < until) return
+    db.state.set("rate.limit.until", "", "rate_limit_clear")
+  }, [rateLimitUntil])
