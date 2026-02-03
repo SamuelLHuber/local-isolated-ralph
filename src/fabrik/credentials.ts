@@ -43,7 +43,7 @@ const copyFileLima = (vm: string, src: string, dest: string) => {
   if (!data) return false
   run(
     "limactl",
-    ["shell", vm, "bash", "-lc", `sudo -u ralph tee "${dest}" >/dev/null`],
+    ["shell", "--workdir", "/home/ralph", vm, "bash", "-lc", `sudo -u ralph tee "${dest}" >/dev/null`],
     undefined,
     data
   )
@@ -53,7 +53,7 @@ const copyFileLima = (vm: string, src: string, dest: string) => {
 const copyTarLima = (vm: string, baseDir: string, entry: string, destDir: string) => {
   const abs = join(baseDir, entry)
   if (!existsSync(abs)) return false
-  const script = `COPYFILE_DISABLE=1 tar -C "${baseDir}" -cf - "${entry}" | limactl shell "${vm}" sudo -u ralph tar --warning=no-unknown-keyword -C "${destDir}" -xf -`
+  const script = `COPYFILE_DISABLE=1 tar -C "${baseDir}" -cf - "${entry}" | limactl shell --workdir /home/ralph "${vm}" sudo -u ralph tar --warning=no-unknown-keyword -C "${destDir}" -xf -`
   runShell(script)
   return true
 }
@@ -62,18 +62,18 @@ const copyCredentialsLima = (vm: string) => {
   const home = homedir()
   const userHome = "/home/ralph"
 
-  run("limactl", ["shell", vm, "sudo", "mkdir", "-p", `${userHome}/.config`])
-  run("limactl", ["shell", vm, "sudo", "chown", "-R", "ralph:users", `${userHome}/.config`])
-  run("limactl", ["shell", vm, "sudo", "-u", "ralph", "chmod", "700", `${userHome}/.config`])
+  run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "mkdir", "-p", `${userHome}/.config`])
+  run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "chown", "-R", "ralph:users", `${userHome}/.config`])
+  run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "-u", "ralph", "chmod", "700", `${userHome}/.config`])
 
   if (!copyTarLima(vm, home, ".claude", userHome)) {
     console.log("    Note: ~/.claude not found")
   } else {
-    run("limactl", ["shell", vm, "chown", "-R", "ralph:users", `${userHome}/.claude`])
+    run("limactl", ["shell", "--workdir", "/home/ralph", vm, "chown", "-R", "ralph:users", `${userHome}/.claude`])
   }
 
   if (copyFileLima(vm, hostPath(".claude.json"), `${userHome}/.claude.json`)) {
-    run("limactl", ["shell", vm, "sudo", "-u", "ralph", "chmod", "600", `${userHome}/.claude.json`])
+    run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "-u", "ralph", "chmod", "600", `${userHome}/.claude.json`])
     if (!hasClaudeToken()) {
       console.log("    Warning: ~/.claude.json has no token. Run `claude setup-token` or set ANTHROPIC_API_KEY in ralph.env.")
     }
@@ -92,13 +92,13 @@ const copyCredentialsLima = (vm: string) => {
     const pubPath = `${keyPath}.pub`
     if (!existsSync(keyPath)) continue
     hasKeys = true
-    run("limactl", ["shell", vm, "sudo", "-u", "ralph", "mkdir", "-p", `${userHome}/.ssh`])
-    run("limactl", ["shell", vm, "sudo", "-u", "ralph", "chmod", "700", `${userHome}/.ssh`])
+    run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "-u", "ralph", "mkdir", "-p", `${userHome}/.ssh`])
+    run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "-u", "ralph", "chmod", "700", `${userHome}/.ssh`])
     copyFileLima(vm, keyPath, `${userHome}/.ssh/${key}`)
     if (existsSync(pubPath)) {
       copyFileLima(vm, pubPath, `${userHome}/.ssh/${key}.pub`)
     }
-    run("limactl", ["shell", vm, "sudo", "-u", "ralph", "chmod", "600", `${userHome}/.ssh/${key}`])
+    run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "-u", "ralph", "chmod", "600", `${userHome}/.ssh/${key}`])
   }
   if (!hasKeys) console.log("    Note: No SSH keys found")
 
@@ -106,11 +106,11 @@ const copyCredentialsLima = (vm: string) => {
     console.log("    Warning: Failed to copy ~/.config/gh")
 
   if (copyFileLima(vm, hostPath(".codex/auth.json"), `${userHome}/.codex/auth.json`)) {
-    run("limactl", ["shell", vm, "sudo", "-u", "ralph", "chmod", "600", `${userHome}/.codex/auth.json`])
+    run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "-u", "ralph", "chmod", "600", `${userHome}/.codex/auth.json`])
   }
 
   if (copyFileLima(vm, hostPath(".config/ralph/ralph.env"), `${userHome}/.config/ralph/ralph.env`)) {
-    run("limactl", ["shell", vm, "sudo", "-u", "ralph", "chmod", "600", `${userHome}/.config/ralph/ralph.env`])
+    run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "-u", "ralph", "chmod", "600", `${userHome}/.config/ralph/ralph.env`])
   } else {
     console.log("    Note: ~/.config/ralph/ralph.env not found")
   }
