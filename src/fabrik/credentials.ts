@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process"
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
@@ -18,6 +18,25 @@ const runShell = (script: string, cwd?: string) => {
 const sshOpts = ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"]
 
 const hostPath = (rel: string) => join(homedir(), rel)
+
+const hasClaudeToken = () => {
+  const path = hostPath(".claude.json")
+  if (!existsSync(path)) return false
+  try {
+    const data = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
+    return Boolean(
+      data.accessToken ||
+        data.token ||
+        data.oauthToken ||
+        data.anthropicApiKey ||
+        data.apiKey ||
+        data.claudeCodeOAuthToken ||
+        data.claude_code_oauth_token
+    )
+  } catch {
+    return false
+  }
+}
 
 const copyFileLima = (vm: string, src: string, dest: string) => {
   const data = existsSync(src) ? execFileSync("cat", [src]).toString() : ""
@@ -50,6 +69,9 @@ const copyCredentialsLima = (vm: string) => {
 
   if (copyFileLima(vm, hostPath(".claude.json"), `${userHome}/.claude.json`)) {
     run("limactl", ["shell", vm, "sudo", "-u", "ralph", "chmod", "600", `${userHome}/.claude.json`])
+    if (!hasClaudeToken()) {
+      console.log("    Warning: ~/.claude.json has no token. Run `claude setup-token` or set ANTHROPIC_API_KEY in ralph.env.")
+    }
   } else {
     console.log("    Note: ~/.claude.json not found")
   }
@@ -114,6 +136,9 @@ const copyCredentialsLinux = (vm: string) => {
   if (existsSync(hostPath(".claude.json"))) {
     scp([hostPath(".claude.json"), `ralph@${ip}:~/`])
     ssh(ip, ["chmod", "600", "~/.claude.json"])
+    if (!hasClaudeToken()) {
+      console.log("    Warning: ~/.claude.json has no token. Run `claude setup-token` or set ANTHROPIC_API_KEY in ralph.env.")
+    }
   } else {
     console.log("    Note: ~/.claude.json not found")
   }
