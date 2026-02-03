@@ -227,15 +227,15 @@ From any repo (e.g. `~/git/<your-repo>`):
 
 ```bash
 # Build once (in local-ralph)
-cd /Users/samuel/git/local-isolated-ralph
+cd ~/git/local-isolated-ralph
 bun install
 bun build src/fabrik/bin.ts --compile --outfile dist/fabrik
 
 # Use from another repo
 cd ~/git/<your-repo>
-/Users/samuel/git/local-isolated-ralph/dist/fabrik spec validate
-/Users/samuel/git/local-isolated-ralph/dist/fabrik spec minify
-/Users/samuel/git/local-isolated-ralph/dist/fabrik run --spec specs/001-foo.min.json --vm ralph-1
+~/git/local-isolated-ralph/dist/fabrik spec validate
+~/git/local-isolated-ralph/dist/fabrik spec minify
+~/git/local-isolated-ralph/dist/fabrik run --spec specs/001-foo.min.json --vm ralph-1
 ```
 
 ### Binary Releases (GitHub)

@@ -143,6 +143,11 @@
       "id": "push-safety",
       "do": "Warn explicitly when --include-git is not set (push disabled) and when repo is not writable.",
       "verify": "CLI warns about push limitations in these cases."
+    },
+    {
+      "id": "cli-known-issues",
+      "do": "Add fabrik known-issues command that prints a concise list of common problems and the exact command sequence to resolve each one. Include the bun untrusted scripts flow: run `bun pm untrusted`, review package + script, then `bun pm trust <pkg>` if acceptable; otherwise remove the dependency.",
+      "verify": "fabrik known-issues prints a short list with actionable copy-paste steps for each workaround, including the explicit bun untrusted trust-or-remove guidance."
     }
   ]
 }
