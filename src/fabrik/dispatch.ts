@@ -98,7 +98,7 @@ const verifyGitAndInitJj = (vm: string, workdir: string) => {
       "fi",
       "REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo 'none')",
       "REMOTE_URL_SAFE=$(echo \"$REMOTE_URL\" | sed -E 's|://[^:]+:[^@]+@|://***@|')",
-      `echo "[${vm}] Git remote: ${REMOTE_URL_SAFE}"`,
+      `echo "[${vm}] Git remote: \\$REMOTE_URL_SAFE"`,
       "if git ls-remote --exit-code origin HEAD >/dev/null 2>&1; then",
       `  echo "[${vm}] Git remote access: OK"`,
       "else",
