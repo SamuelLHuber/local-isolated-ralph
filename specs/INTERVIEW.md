@@ -87,12 +87,12 @@ Return todo.json only.
 ### Execution Prompt
 ```
 You are executing todo.min.json with TDD.
-Complete tasks in order. After each task, output report.json.
+Complete tasks in order. After each task, output report.json with rootCause/reasoning/fix/error/commit.
 Stop if blocked.
 ```
 
 ### Review Prompt
 ```
 You are reviewing report.json against spec.json and todo.json.
-Confirm requirements and tests. Output report.json with status done/blocked/failed.
+Confirm requirements and tests. Output report.json with status done/blocked/failed and rootCause/reasoning/fix/error/commit when applicable.
 ```

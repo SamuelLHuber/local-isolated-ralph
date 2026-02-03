@@ -30,6 +30,11 @@ type Report = {
   tests: string[]
   issues: string[]
   next: string[]
+  rootCause: string
+  reasoning: string
+  fix: string
+  error: string
+  commit: string
 }
 
 type Review = {
@@ -268,7 +273,12 @@ const defaultReport = (taskId: string, status: Report["status"]): Report => ({
   files: [],
   tests: [],
   issues: [],
-  next: []
+  next: [],
+  rootCause: "",
+  reasoning: "",
+  fix: "",
+  error: "",
+  commit: ""
 })
 
 const parseReport = (taskId: string, output?: string): Report => {
@@ -288,6 +298,11 @@ const parseReport = (taskId: string, output?: string): Report => {
     if (!parsed.tests) parsed.tests = []
     if (!parsed.issues) parsed.issues = []
     if (!parsed.next) parsed.next = []
+    if (!parsed.rootCause) parsed.rootCause = ""
+    if (!parsed.reasoning) parsed.reasoning = ""
+    if (!parsed.fix) parsed.fix = ""
+    if (!parsed.error) parsed.error = ""
+    if (!parsed.commit) parsed.commit = ""
     if (parsed.v !== 1) parsed.v = 1
     return parsed
   } catch {
@@ -550,7 +565,12 @@ const prompt = [
           files: ["..."],
           tests: ["..."],
           issues: ["..."],
-          next: ["..."]
+          next: ["..."],
+          rootCause: "...",
+          reasoning: "...",
+          fix: "...",
+          error: "...",
+          commit: "..."
         },
         null,
         2
@@ -644,7 +664,12 @@ const prompt = [
         files: ["..."],
         tests: ["..."],
         issues: ["..."],
-        next: ["..."]
+        next: ["..."],
+        rootCause: "...",
+        reasoning: "...",
+        fix: "...",
+        error: "...",
+        commit: "..."
       },
       null,
       2

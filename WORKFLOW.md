@@ -27,8 +27,13 @@ Start change:       jj new master
 Status:             jj status
 Diff:               jj diff
 Describe change:    jj describe
-Push change:        jj git push --change @
+Push change:        jj git push --bookmark <branch>
 ```
+
+Commit message rules:
+- Conventional Commits: type(scope): subject
+- Trailers: spec, todo, run
+- For root-cause fixes, include: cause → reasoning → fix and relevant error output
 
 ```
 Host dispatch.sh

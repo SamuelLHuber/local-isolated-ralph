@@ -13,7 +13,7 @@ This repo follows a strict, test-driven flow for all features.
 
 3) **TODO → Implementation (Smithers)**
    - Smithers runs tasks in order with tests first.
-   - Emit `report.json` per task.
+   - Emit `report.json` per task (includes root-cause fields).
 
 4) **Manual Review Checkpoints**
    - Review after each spec before proceeding to the next.
@@ -30,6 +30,11 @@ Interview → spec.json → todo.json → Smithers workflow → report.json
 - Specs (Smithers input): `specs/*.min.json`
 - TODOs (human): `specs/*.todo.json`
 - TODOs (Smithers input): `specs/*.todo.min.json`
+
+## Report Format (per task)
+`reports/<task>.report.json` fields include:
+- `status`, `work`, `files`, `tests`, `issues`, `next`
+- `rootCause`, `reasoning`, `fix`, `error`, `commit`
 
 ## Minified Inputs (Smithers)
 - Humans generate minified JSON for token-efficient runs.
