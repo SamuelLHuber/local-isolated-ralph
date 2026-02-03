@@ -5,6 +5,11 @@
   "dod": ["bun run build", "manual CLI smoke tests"],
   "tasks": [
     {
+      "id": "ts-dispatch-repo-url",
+      "do": "Add first-class Git URL dispatch support to fabrik run with --repo and --ref/--branch options. The CLI must support: (1) repo only -> clone default branch, (2) repo + branch/ref -> checkout that branch/ref. The implementation must prefer jj (jj git clone + jj rebase to origin/<ref>) and fall back to git clone + git checkout + jj git init (colocated). Record repo URL + ref in the run DB and include them in reports/run-context.json for auditability. Make sure this works on macOS (limactl) and Linux (ssh/virsh).",
+      "verify": "Run fabrik run --repo <url> --vm <vm> and confirm the default branch is cloned in the VM, spec/todo/workflow paths resolve inside the repo, and Smithers starts. Run fabrik run --repo <url> --ref <branch> and confirm the branch is checked out (git or jj), jj is initialized/colocated, and Smithers uses the repo-relative spec/todo paths. Verify both macOS (limactl) and Linux (ssh/virsh) paths."
+    },
+    {
       "id": "ts-dispatch",
       "do": "Implement TypeScript equivalent of scripts/dispatch.sh and wire fabrik run to use TS path.",
       "verify": "fabrik run works end-to-end on macOS and Linux (or at least macOS) without calling bash dispatch."
