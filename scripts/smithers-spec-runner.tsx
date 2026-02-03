@@ -568,7 +568,7 @@ function TaskRunner() {
     }
     return (
       <review status="running">
-        <Parallel>
+        <Orchestrator.Parallel>
           {reviewers.map((reviewer) => {
             if (existsSync(join(reportDir, `review-${reviewer.id}.json`))) {
               return <reviewer-node key={reviewer.id} />
@@ -621,7 +621,7 @@ function TaskRunner() {
               </reviewer-node>
             )
           })}
-        </Parallel>
+        </Orchestrator.Parallel>
       </review>
     )
   }
