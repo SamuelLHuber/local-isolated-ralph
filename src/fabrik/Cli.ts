@@ -52,6 +52,22 @@ const notesOption = Options.text("notes").pipe(Options.withDescription("Human no
 
 const keepOption = Options.integer("keep").pipe(Options.optional, Options.withDescription("Workdirs to keep"))
 const dryRunOption = Options.boolean("dry-run").pipe(Options.withDefault(false), Options.withDescription("Dry-run cleanup"))
+const intervalOption = Options.integer("interval").pipe(
+  Options.optional,
+  Options.withDescription("Polling interval in seconds (default: 30)")
+)
+const notifyOption = Options.boolean("notify").pipe(
+  Options.withDefault(true),
+  Options.withDescription("Send desktop notifications when blocked tasks appear")
+)
+const onceOption = Options.boolean("once").pipe(
+  Options.withDefault(false),
+  Options.withDescription("Check once and exit")
+)
+const runIdOption = Options.integer("run-id").pipe(
+  Options.optional,
+  Options.withDescription("Run id (defaults to latest run for VM)")
+)
 
 const specsDirOption = Options.text("specs-dir").pipe(Options.withDescription("Directory containing spec/todo min files"))
 const vmPrefixOption = Options.text("vm-prefix").pipe(Options.withDescription("VM name prefix (default: ralph)"))
@@ -85,6 +101,43 @@ const runScript = (scriptPath: string, args: string[]) =>
     }
     execFileSync(scriptPath, args, { stdio: "inherit" })
   })
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const notifyDesktop = (title: string, message: string) => {
+  if (process.platform === "darwin") {
+    try {
+      execFileSync("terminal-notifier", ["-title", title, "-message", message, "-group", "fabrik"], { stdio: "ignore" })
+      return
+    } catch {
+      // fall through to console only
+    }
+  }
+  if (process.platform === "linux") {
+    try {
+      execFileSync("notify-send", [title, message], { stdio: "ignore" })
+      return
+    } catch {
+      // fall through to console only
+    }
+  }
+}
+
+const runRemote = (vm: string, command: string) => {
+  if (process.platform === "darwin") {
+    return execFileSync("limactl", ["shell", "--workdir", "/home/ralph", vm, "bash", "-lc", command]).toString()
+  }
+  if (process.platform === "linux") {
+    const ip = execFileSync("virsh", ["domifaddr", vm]).toString().split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.includes("ipv4"))
+      ?.split(/\s+/)[3]
+      ?.split("/")[0]
+    if (!ip) throw new Error(`Could not determine IP for VM '${vm}'. Is it running?`)
+    return execFileSync("ssh", ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", `ralph@${ip}`, command]).toString()
+  }
+  throw new Error(`Unsupported OS: ${process.platform}`)
+}
 
 const unwrapOptional = <A>(value: Option.Option<A>) => Option.getOrUndefined(value)
 
@@ -477,6 +530,109 @@ else:
           )
         }).pipe(Effect.withSpan("runs.feedback"))
     ).pipe(Command.withDescription("Record feedback for a run id"))
+    ,
+    Command.make(
+      "watch",
+      {
+        vm: vmOption,
+        runId: runIdOption,
+        interval: intervalOption,
+        notify: notifyOption,
+        once: onceOption,
+        db: Options.text("db").pipe(
+          Options.optional,
+          Options.withDescription("Path to ralph.db (default: ~/.cache/ralph/ralph.db)")
+        )
+      },
+      ({ vm, runId, interval, notify, once, db }) =>
+        Effect.promise(async () => {
+          const dbValue = unwrapOptional(db)
+          const dbPath = dbValue ?? resolve(homedir(), ".cache", "ralph", "ralph.db")
+          if (!existsSync(dbPath)) {
+            console.log(`No DB found at ${dbPath}`)
+            return
+          }
+
+          const runIdValue = unwrapOptional(runId)
+          const intervalSeconds = unwrapOptional(interval) ?? 30
+          const notifyEnabled = notify
+          const onceValue = once
+
+          const lookupScript = `
+import sqlite3
+import sys
+
+db_path = sys.argv[1]
+rid = sys.argv[2]
+vm = sys.argv[3]
+conn = sqlite3.connect(db_path)
+if rid != "":
+  cur = conn.execute(
+    "SELECT id, vm_name, workdir FROM runs WHERE id = ?",
+    (int(rid),)
+  )
+else:
+  cur = conn.execute(
+    "SELECT id, vm_name, workdir FROM runs WHERE vm_name = ? ORDER BY started_at DESC LIMIT 1",
+    (vm,)
+  )
+row = cur.fetchone()
+conn.close()
+if not row:
+  print("")
+else:
+  rid, vm_name, workdir = row
+  print(f"{rid}|{vm_name}|{workdir}")
+`
+          const result = execFileSync("python3", ["-", dbPath, String(runIdValue ?? ""), vm], {
+            input: lookupScript
+          }).toString().trim()
+          if (!result) {
+            console.log("Run not found.")
+            return
+          }
+          const [rid, vmName, workdir] = result.split("|")
+          const workBase = workdir.split("/").pop() ?? ""
+          const reportsDir = `/home/ralph/work/${vmName}/.runs/${workBase}/reports`
+          const seen = new Set<string>()
+          console.log(`[${vmName}] Watching reports for run ${rid}`)
+
+          while (true) {
+            const script = `
+import json, os
+path = "${reportsDir}"
+items = []
+if os.path.isdir(path):
+  for name in sorted(os.listdir(path)):
+    if not name.endswith(".report.json"):
+      continue
+    try:
+      with open(os.path.join(path, name), "r") as f:
+        data = json.load(f)
+      status = data.get("status")
+      if status == "blocked":
+        items.append((name, data.get("taskId", ""), data.get("issues", []), data.get("next", [])))
+    except Exception:
+      continue
+for name, task_id, issues, nxt in items:
+  print(name + "|" + task_id + "|" + "; ".join(issues) + "|" + "; ".join(nxt))
+`
+            const output = runRemote(vmName, `python3 - <<'PY'\n${script}\nPY`).trim()
+            if (output) {
+              for (const line of output.split("\n")) {
+                const [file, taskId, issues, next] = line.split("|")
+                if (seen.has(file)) continue
+                seen.add(file)
+                const msg = `Blocked: ${taskId}\n${issues}\nNext: ${next}`
+                console.log(`[${vmName}] ${msg}`)
+                if (notifyEnabled) notifyDesktop("fabrik", msg)
+              }
+            }
+            if (onceValue) return
+            await sleep(intervalSeconds * 1000)
+          }
+        }).pipe(Effect.withSpan("runs.watch"))
+    ).pipe(Command.withDescription("Watch a run for blocked tasks and notify"))
   ])
 )
 

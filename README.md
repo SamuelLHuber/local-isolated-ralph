@@ -112,9 +112,20 @@ open http://localhost:3010
 
 # Or attach to a VM session directly
 # limactl shell <vm> or ssh ralph@<ip>
+
+# Watch for blocked tasks and get desktop notifications
+fabrik runs watch --vm ralph-1
 ```
 
 When done, Smithers writes `reports/<task>.report.json` per task and exits when all tasks are done.
+
+### Desktop notifications
+
+`fabrik runs watch` will send notifications when blocked tasks appear.
+
+Install a notifier:
+- macOS: `brew install terminal-notifier`
+- Linux: `sudo apt install libnotify-bin` (provides `notify-send`)
 
 ## Workflows
 

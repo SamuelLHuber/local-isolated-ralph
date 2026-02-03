@@ -238,6 +238,7 @@ The workflow will:
 - Watch the terminal output directly
 - Or check Grafana at http://localhost:3010 for logs
 - Check iteration status: `cat ~/work/state/status`
+- Or use the CLI watcher: `fabrik runs watch --vm ralph-1`
 
 **Human review gate:**
 
@@ -258,6 +259,13 @@ Record feedback:
 ./scripts/record-human-feedback.sh --vm ralph-1 --spec specs/001-hello-world.min.json \
   --decision approve --notes "Matches spec."
 ```
+
+### Desktop notifications
+
+Install a notifier to get popups from `fabrik runs watch`:
+
+- macOS: `brew install terminal-notifier`
+- Linux: `sudo apt install libnotify-bin` (provides `notify-send`)
 
 **Immutable runs:**
 
