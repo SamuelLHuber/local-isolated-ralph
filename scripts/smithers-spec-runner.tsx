@@ -840,6 +840,35 @@ const prompt = [
         return
       }
 
+      if (!report.commit) {
+        report.status = "blocked"
+        report.error = "Missing commit message in report.commit"
+        report.rootCause = "Commit message not provided"
+        report.reasoning = "Review tasks must include a Conventional Commit message for audit."
+        report.fix = "Set report.commit with a Conventional Commit message including spec/todo/run context."
+        writeReport(report)
+        db.state.set("task.blocked", 1, "commit_missing")
+        db.state.set("task.done", 1, "commit_missing")
+        db.state.set("phase", "done", "commit_missing")
+        ralph?.signalComplete()
+        return
+      }
+
+      const describeResult = runJj(["describe", "-m", report.commit])
+      if (!describeResult.ok) {
+        report.status = "blocked"
+        report.error = `jj describe failed: ${describeResult.output || "unknown error"}`
+        report.rootCause = "Failed to set commit message"
+        report.reasoning = "JJ describe must succeed before push."
+        report.fix = "Resolve JJ error and retry."
+        writeReport(report)
+        db.state.set("task.blocked", 1, "commit_describe_failed")
+        db.state.set("task.done", 1, "commit_describe_failed")
+        db.state.set("phase", "done", "commit_describe_failed")
+        ralph?.signalComplete()
+        return
+      }
+
       pushBookmark(branchName)
       db.state.set("review.task.index", reviewTaskIndex + 1, "review_task_advance")
       ralph?.signalComplete()
@@ -976,6 +1005,35 @@ const prompt = [
       db.state.set("task.failed", 1, "failed")
       db.state.set("task.done", 1, "failed")
       db.state.set("phase", "done", "failed")
+      ralph?.signalComplete()
+      return
+    }
+
+    if (!report.commit) {
+      report.status = "blocked"
+      report.error = "Missing commit message in report.commit"
+      report.rootCause = "Commit message not provided"
+      report.reasoning = "Each task must include a Conventional Commit message for audit."
+      report.fix = "Set report.commit with a Conventional Commit message including spec/todo/run context."
+      writeReport(report)
+      db.state.set("task.blocked", 1, "commit_missing")
+      db.state.set("task.done", 1, "commit_missing")
+      db.state.set("phase", "done", "commit_missing")
+      ralph?.signalComplete()
+      return
+    }
+
+    const describeResult = runJj(["describe", "-m", report.commit])
+    if (!describeResult.ok) {
+      report.status = "blocked"
+      report.error = `jj describe failed: ${describeResult.output || "unknown error"}`
+      report.rootCause = "Failed to set commit message"
+      report.reasoning = "JJ describe must succeed before push."
+      report.fix = "Resolve JJ error and retry."
+      writeReport(report)
+      db.state.set("task.blocked", 1, "commit_describe_failed")
+      db.state.set("task.done", 1, "commit_describe_failed")
+      db.state.set("phase", "done", "commit_describe_failed")
       ralph?.signalComplete()
       return
     }
