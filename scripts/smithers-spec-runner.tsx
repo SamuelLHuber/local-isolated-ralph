@@ -171,7 +171,8 @@ const reviewModelFor = (id: string) =>
 
 const codexDefaults = {
   reasoningEffort: "medium",
-  sandboxMode: "danger-full-access"
+  sandboxMode: "danger-full-access",
+  skipGitRepoCheck: true
 } as const
 
 type Reviewer = {

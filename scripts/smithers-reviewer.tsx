@@ -104,7 +104,8 @@ const reviewerPrompt = loadPrompt(reviewPromptPath)
 
 const codexDefaults = {
   reasoningEffort: "medium",
-  sandboxMode: "danger-full-access"
+  sandboxMode: "danger-full-access",
+  skipGitRepoCheck: true
 } as const
 
 const readReports = (): string => {
