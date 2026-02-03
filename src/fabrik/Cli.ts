@@ -125,7 +125,7 @@ const runCommand = Command.make(
     const script = resolve(home, "scripts", "dispatch.sh")
     const args: string[] = []
     const todoValue = unwrapOptional(todo)
-    const projectValue = unwrapOptional(project)
+    let projectValue = unwrapOptional(project)
     const workflowValue = unwrapOptional(workflow)
     const reportDirValue = unwrapOptional(reportDir)
     const modelValue = unwrapOptional(model)
@@ -134,6 +134,13 @@ const runCommand = Command.make(
     const reviewPromptValue = unwrapOptional(reviewPrompt)
     const reviewMaxValue = unwrapOptional(reviewMax)
     const reviewModelsValue = unwrapOptional(reviewModels)
+    if (!projectValue) {
+      const cwd = process.cwd()
+      if (existsSync(join(cwd, ".git")) || existsSync(join(cwd, ".jj"))) {
+        projectValue = cwd
+        console.log(`[INFO] No --project provided; using current repo: ${cwd}`)
+      }
+    }
     if (includeGit) args.push("--include-git")
     args.push("--spec", spec)
     if (todoValue) args.push("--todo", todoValue)
