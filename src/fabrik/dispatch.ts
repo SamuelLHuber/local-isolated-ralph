@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
-import { basename, join, resolve } from "node:path"
+import { basename, join, resolve, relative, isAbsolute } from "node:path"
 
 type DispatchOptions = {
   vm: string
@@ -147,6 +147,7 @@ export const dispatchRun = (options: DispatchOptions) => {
   const workSubdir = `${projectBase}-${timestamp}`
   const vmWorkdir = `/home/ralph/work/${options.vm}/${workSubdir}`
   const reportDir = options.reportDir ?? `${vmWorkdir}/reports`
+  const projectRelative = projectDir ? (path: string) => relative(projectDir, path) : undefined
 
   console.log(`[${options.vm}] Dispatching spec: ${specPath}`)
   console.log(`[${options.vm}] Include .git: ${options.includeGit}`)
@@ -155,19 +156,33 @@ export const dispatchRun = (options: DispatchOptions) => {
   ensureVmRunning(options.vm)
   limactlShell(options.vm, ["sudo", "-u", "ralph", "mkdir", "-p", vmWorkdir])
 
+  let specInVm = `${vmWorkdir}/specs/spec.min.json`
+  let todoInVm = `${vmWorkdir}/specs/todo.min.json`
+  let workflowInVm = `${vmWorkdir}/smithers-workflow.tsx`
+
   if (projectDir) {
     syncProject(options.vm, projectDir, vmWorkdir, options.includeGit)
     if (options.includeGit && existsSync(join(projectDir, ".git"))) {
       verifyGitAndInitJj(options.vm, vmWorkdir)
     }
+    specInVm = `${vmWorkdir}/specs/${basename(specPath)}`
+    todoInVm = `${vmWorkdir}/specs/${basename(todoPath)}`
+    const rel = projectRelative?.(workflowPath)
+    if (rel && !rel.startsWith("..") && !isAbsolute(rel)) {
+      workflowInVm = `${vmWorkdir}/${rel}`
+    }
   }
 
-  // Always write control files after sync so they cannot be clobbered.
+  // Always ensure reports + spec locations exist.
   limactlShell(options.vm, ["sudo", "-u", "ralph", "mkdir", "-p", `${vmWorkdir}/specs`, reportDir])
-  writeFileInVm(options.vm, `${vmWorkdir}/SPEC.md`, readText(specPath))
-  writeFileInVm(options.vm, `${vmWorkdir}/specs/spec.min.json`, readText(specPath))
-  writeFileInVm(options.vm, `${vmWorkdir}/specs/todo.min.json`, readText(todoPath))
-  writeFileInVm(options.vm, `${vmWorkdir}/smithers-workflow.tsx`, readText(workflowPath))
+  if (!projectDir) {
+    writeFileInVm(options.vm, `${vmWorkdir}/SPEC.md`, readText(specPath))
+    writeFileInVm(options.vm, specInVm, readText(specPath))
+    writeFileInVm(options.vm, todoInVm, readText(todoPath))
+  }
+  if (!projectDir || workflowInVm.endsWith("smithers-workflow.tsx")) {
+    writeFileInVm(options.vm, workflowInVm, readText(workflowPath))
+  }
   if (promptPath) writeFileInVm(options.vm, `${vmWorkdir}/PROMPT.md`, readText(promptPath))
   if (reviewPromptPath) writeFileInVm(options.vm, `${vmWorkdir}/REVIEW_PROMPT.md`, readText(reviewPromptPath))
   if (reviewModelsPath) writeFileInVm(options.vm, `${vmWorkdir}/reviewer-models.json`, readText(reviewModelsPath))
@@ -184,8 +199,8 @@ export const dispatchRun = (options: DispatchOptions) => {
       "export PATH=\"$HOME/.bun/bin:$PATH\"",
       `export MAX_ITERATIONS=${options.iterations ?? 100}`,
       `export RALPH_AGENT=codex`,
-      `export SMITHERS_SPEC_PATH="${vmWorkdir}/specs/spec.min.json"`,
-      `export SMITHERS_TODO_PATH="${vmWorkdir}/specs/todo.min.json"`,
+      `export SMITHERS_SPEC_PATH="${specInVm}"`,
+      `export SMITHERS_TODO_PATH="${todoInVm}"`,
       `export SMITHERS_REPORT_DIR="${reportDir}"`,
       `export SMITHERS_AGENT=codex`,
       options.model ? `export SMITHERS_MODEL="${options.model}"` : "",
@@ -193,7 +208,7 @@ export const dispatchRun = (options: DispatchOptions) => {
       `[ -f "${vmWorkdir}/PROMPT.md" ] && export SMITHERS_PROMPT_PATH="${vmWorkdir}/PROMPT.md" || true`,
       `[ -f "${vmWorkdir}/REVIEW_PROMPT.md" ] && export SMITHERS_REVIEW_PROMPT_PATH="${vmWorkdir}/REVIEW_PROMPT.md" || true`,
       `[ -f "${vmWorkdir}/reviewer-models.json" ] && export SMITHERS_REVIEW_MODELS_FILE="${vmWorkdir}/reviewer-models.json" || true`,
-      `smithers "${vmWorkdir}/smithers-workflow.tsx"`,
+      `smithers "${workflowInVm}"`,
       ""
     ]
       .filter(Boolean)
