@@ -141,7 +141,7 @@ const runCommand = Command.make(
         console.log(`[INFO] No --project provided; using current repo: ${cwd}`)
       }
     }
-    if (process.platform === "darwin") {
+    if (process.platform === "darwin" || process.platform === "linux") {
       return Effect.sync(() =>
         dispatchRun({
           vm,

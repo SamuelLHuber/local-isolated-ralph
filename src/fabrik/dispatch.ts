@@ -131,6 +131,23 @@ const maybeInstallDeps = (vm: string, workdir: string) => {
   ])
 }
 
+const sshOpts = ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"]
+
+const getVmIp = (vm: string) => {
+  const raw = execFileSync("virsh", ["domifaddr", vm]).toString().split("\n")
+  const line = raw.map((l) => l.trim()).find((l) => l.includes("ipv4"))
+  return line?.split(/\s+/)[3]?.split("/")[0]
+}
+
+const ssh = (ip: string, args: string[]) => run("ssh", [...sshOpts, `ralph@${ip}`, ...args])
+
+const scp = (args: string[]) => run("scp", [...sshOpts, ...args])
+
+const pathWithin = (root: string, target: string) => {
+  const rel = relative(root, target)
+  return rel && !rel.startsWith("..") && !isAbsolute(rel)
+}
+
 export const dispatchRun = (options: DispatchOptions) => {
   const specPath = safeRealpath(options.spec)!
   const todoPath = safeRealpath(options.todo)!
@@ -153,65 +170,170 @@ export const dispatchRun = (options: DispatchOptions) => {
   console.log(`[${options.vm}] Include .git: ${options.includeGit}`)
   console.log(`[${options.vm}] Work dir: ${vmWorkdir}`)
 
-  ensureVmRunning(options.vm)
-  limactlShell(options.vm, ["sudo", "-u", "ralph", "mkdir", "-p", vmWorkdir])
+  if (process.platform === "darwin") {
+    ensureVmRunning(options.vm)
+    limactlShell(options.vm, ["sudo", "-u", "ralph", "mkdir", "-p", vmWorkdir])
+  }
+
+  if (process.platform === "linux") {
+    const ip = getVmIp(options.vm)
+    if (!ip) throw new Error(`Could not determine IP for VM '${options.vm}'. Is it running?`)
+    ssh(ip, ["mkdir", "-p", vmWorkdir])
+  }
 
   let specInVm = `${vmWorkdir}/specs/spec.min.json`
   let todoInVm = `${vmWorkdir}/specs/todo.min.json`
   let workflowInVm = `${vmWorkdir}/smithers-workflow.tsx`
 
   if (projectDir) {
-    syncProject(options.vm, projectDir, vmWorkdir, options.includeGit)
-    if (options.includeGit && existsSync(join(projectDir, ".git"))) {
-      verifyGitAndInitJj(options.vm, vmWorkdir)
+    if (process.platform === "darwin") {
+      syncProject(options.vm, projectDir, vmWorkdir, options.includeGit)
+      if (options.includeGit && existsSync(join(projectDir, ".git"))) {
+        verifyGitAndInitJj(options.vm, vmWorkdir)
+      }
+    } else if (process.platform === "linux") {
+      const ip = getVmIp(options.vm)
+      if (!ip) throw new Error(`Could not determine IP for VM '${options.vm}'. Is it running?`)
+      console.log(`[${options.vm}] Syncing project directory...`)
+      const excludes = ["--exclude=node_modules", "--exclude=._*", "--exclude=.DS_Store"]
+      if (!options.includeGit) excludes.push("--exclude=.git")
+      run("bash", [
+        "-lc",
+        [
+          "tar",
+          "-C",
+          `"${projectDir}"`,
+          ...excludes.map((x) => x.replace(/=/g, "=")),
+          "-cf",
+          "-",
+          ".",
+          "|",
+          "ssh",
+          ...sshOpts,
+          `ralph@${ip}`,
+          `tar -C "${vmWorkdir}" -xf -`
+        ].join(" ")
+      ])
+      if (options.includeGit && existsSync(join(projectDir, ".git"))) {
+        console.log(`[${options.vm}] Verifying git remote access and initializing jj...`)
+        ssh(ip, [
+          "bash",
+          "-lc",
+          [
+            `cd "${vmWorkdir}"`,
+            "if [ -f ~/.config/ralph/ralph.env ]; then set -a; source ~/.config/ralph/ralph.env; set +a; fi",
+            "if [ -n \"${GITHUB_TOKEN:-}\" ]; then",
+            "  git config --global url.\"https://oauth:${GITHUB_TOKEN}@github.com/\".insteadOf \"https://github.com/\"",
+            "fi",
+            "REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo 'none')",
+            "REMOTE_URL_SAFE=$(echo \"$REMOTE_URL\" | sed -E 's|://[^:]+:[^@]+@|://***@|')",
+            `echo "[${options.vm}] Git remote: $REMOTE_URL_SAFE"`,
+            "if git ls-remote --exit-code origin HEAD >/dev/null 2>&1; then",
+            `  echo "[${options.vm}] Git remote access: OK"`,
+            "else",
+            `  echo "[${options.vm}] WARNING: Cannot access git remote. Push may fail."`,
+            `  echo "[${options.vm}] Ensure GITHUB_TOKEN is set in ~/.config/ralph/ralph.env"`,
+            "fi",
+            "git config user.email >/dev/null 2>&1 || git config user.email 'ralph@local'",
+            "git config user.name >/dev/null 2>&1 || git config user.name 'Ralph Agent'",
+            "if [ ! -d .jj ]; then jj git init >/dev/null 2>&1 || true; fi",
+            `echo "[${options.vm}] JJ: $(jj status -s 2>/dev/null | head -1 || echo 'ready')"`
+          ].join("\n")
+        ])
+      }
     }
-    specInVm = `${vmWorkdir}/specs/${basename(specPath)}`
-    todoInVm = `${vmWorkdir}/specs/${basename(todoPath)}`
-    const rel = projectRelative?.(workflowPath)
-    if (rel && !rel.startsWith("..") && !isAbsolute(rel)) {
-      workflowInVm = `${vmWorkdir}/${rel}`
+
+    if (pathWithin(projectDir, specPath)) {
+      specInVm = `${vmWorkdir}/${projectRelative?.(specPath)}`
+    } else {
+      specInVm = `${vmWorkdir}/specs/${basename(specPath)}`
+    }
+    if (pathWithin(projectDir, todoPath)) {
+      todoInVm = `${vmWorkdir}/${projectRelative?.(todoPath)}`
+    } else {
+      todoInVm = `${vmWorkdir}/specs/${basename(todoPath)}`
+    }
+    if (pathWithin(projectDir, workflowPath)) {
+      workflowInVm = `${vmWorkdir}/${projectRelative?.(workflowPath)}`
     }
   }
 
-  // Always ensure reports + spec locations exist.
-  limactlShell(options.vm, ["sudo", "-u", "ralph", "mkdir", "-p", `${vmWorkdir}/specs`, reportDir])
-  if (!projectDir) {
-    writeFileInVm(options.vm, `${vmWorkdir}/SPEC.md`, readText(specPath))
-    writeFileInVm(options.vm, specInVm, readText(specPath))
-    writeFileInVm(options.vm, todoInVm, readText(todoPath))
-  }
-  if (!projectDir || workflowInVm.endsWith("smithers-workflow.tsx")) {
-    writeFileInVm(options.vm, workflowInVm, readText(workflowPath))
+  if (process.platform === "darwin") {
+    limactlShell(options.vm, ["sudo", "-u", "ralph", "mkdir", "-p", `${vmWorkdir}/specs`, reportDir])
+    if (!projectDir || !pathWithin(projectDir, specPath)) {
+      writeFileInVm(options.vm, specInVm, readText(specPath))
+    }
+    if (!projectDir || !pathWithin(projectDir, todoPath)) {
+      writeFileInVm(options.vm, todoInVm, readText(todoPath))
+    }
+    if (!projectDir || !pathWithin(projectDir, workflowPath)) {
+      writeFileInVm(options.vm, workflowInVm, readText(workflowPath))
+    }
+  } else if (process.platform === "linux") {
+    const ip = getVmIp(options.vm)
+    if (!ip) throw new Error(`Could not determine IP for VM '${options.vm}'. Is it running?`)
+    ssh(ip, ["mkdir", "-p", `${vmWorkdir}/specs`, reportDir])
+    if (!projectDir || !pathWithin(projectDir, specPath)) {
+      scp([specPath, `ralph@${ip}:${specInVm}`])
+    }
+    if (!projectDir || !pathWithin(projectDir, todoPath)) {
+      scp([todoPath, `ralph@${ip}:${todoInVm}`])
+    }
+    if (!projectDir || !pathWithin(projectDir, workflowPath)) {
+      scp([workflowPath, `ralph@${ip}:${workflowInVm}`])
+    }
   }
   if (promptPath) writeFileInVm(options.vm, `${vmWorkdir}/PROMPT.md`, readText(promptPath))
   if (reviewPromptPath) writeFileInVm(options.vm, `${vmWorkdir}/REVIEW_PROMPT.md`, readText(reviewPromptPath))
   if (reviewModelsPath) writeFileInVm(options.vm, `${vmWorkdir}/reviewer-models.json`, readText(reviewModelsPath))
 
-  maybeInstallDeps(options.vm, vmWorkdir)
+  if (process.platform === "darwin") {
+    maybeInstallDeps(options.vm, vmWorkdir)
+  } else if (process.platform === "linux") {
+    const ip = getVmIp(options.vm)
+    if (!ip) throw new Error(`Could not determine IP for VM '${options.vm}'. Is it running?`)
+    ssh(ip, [
+      "bash",
+      "-lc",
+      [
+        `cd "${vmWorkdir}"`,
+        "if [ -f package.json ]; then",
+        `  echo "[${options.vm}] Installing dependencies (bun install)..."`,
+        "  export PATH=\"$HOME/.bun/bin:$PATH\"",
+        "  export BUN_INSTALL_IGNORE_SCRIPTS=0",
+        "  export npm_config_ignore_scripts=false",
+        "  bun install",
+        "fi"
+      ].join("\n")
+    ])
+  }
 
   console.log(`[${options.vm}] Starting Smithers workflow...`)
-  limactlShell(options.vm, [
-    "bash",
-    "-lc",
-    [
-      `cd "${vmWorkdir}"`,
-      `echo "[${options.vm}] Working in: $(pwd)"`,
-      "export PATH=\"$HOME/.bun/bin:$PATH\"",
-      `export MAX_ITERATIONS=${options.iterations ?? 100}`,
-      `export RALPH_AGENT=codex`,
-      `export SMITHERS_SPEC_PATH="${specInVm}"`,
-      `export SMITHERS_TODO_PATH="${todoInVm}"`,
-      `export SMITHERS_REPORT_DIR="${reportDir}"`,
-      `export SMITHERS_AGENT=codex`,
-      options.model ? `export SMITHERS_MODEL="${options.model}"` : "",
-      options.reviewMax ? `export SMITHERS_REVIEW_MAX="${options.reviewMax}"` : "",
-      `[ -f "${vmWorkdir}/PROMPT.md" ] && export SMITHERS_PROMPT_PATH="${vmWorkdir}/PROMPT.md" || true`,
-      `[ -f "${vmWorkdir}/REVIEW_PROMPT.md" ] && export SMITHERS_REVIEW_PROMPT_PATH="${vmWorkdir}/REVIEW_PROMPT.md" || true`,
-      `[ -f "${vmWorkdir}/reviewer-models.json" ] && export SMITHERS_REVIEW_MODELS_FILE="${vmWorkdir}/reviewer-models.json" || true`,
-      `smithers "${workflowInVm}"`,
-      ""
-    ]
-      .filter(Boolean)
-      .join("\n")
-  ])
+  const smithersScript = [
+    `cd "${vmWorkdir}"`,
+    `echo "[${options.vm}] Working in: $(pwd)"`,
+    "export PATH=\"$HOME/.bun/bin:$PATH\"",
+    `export MAX_ITERATIONS=${options.iterations ?? 100}`,
+    `export RALPH_AGENT=codex`,
+    `export SMITHERS_SPEC_PATH="${specInVm}"`,
+    `export SMITHERS_TODO_PATH="${todoInVm}"`,
+    `export SMITHERS_REPORT_DIR="${reportDir}"`,
+    `export SMITHERS_AGENT=codex`,
+    options.model ? `export SMITHERS_MODEL="${options.model}"` : "",
+    options.reviewMax ? `export SMITHERS_REVIEW_MAX="${options.reviewMax}"` : "",
+    `[ -f "${vmWorkdir}/PROMPT.md" ] && export SMITHERS_PROMPT_PATH="${vmWorkdir}/PROMPT.md" || true`,
+    `[ -f "${vmWorkdir}/REVIEW_PROMPT.md" ] && export SMITHERS_REVIEW_PROMPT_PATH="${vmWorkdir}/REVIEW_PROMPT.md" || true`,
+    `[ -f "${vmWorkdir}/reviewer-models.json" ] && export SMITHERS_REVIEW_MODELS_FILE="${vmWorkdir}/reviewer-models.json" || true`,
+    `smithers "${workflowInVm}"`
+  ]
+    .filter(Boolean)
+    .join("\n")
+
+  if (process.platform === "darwin") {
+    limactlShell(options.vm, ["bash", "-lc", smithersScript])
+  } else if (process.platform === "linux") {
+    const ip = getVmIp(options.vm)
+    if (!ip) throw new Error(`Could not determine IP for VM '${options.vm}'. Is it running?`)
+    ssh(ip, ["bash", "-lc", smithersScript])
+  }
 }
