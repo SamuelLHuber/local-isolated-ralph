@@ -21,6 +21,8 @@ Commit message rules:
 - Use Conventional Commits: type(scope): subject
 - Include spec id, todo id, and run id in the message body or trailer
 - When debugging/fixing root causes, include: cause → reasoning → fix, plus relevant error output
+- If `jj git push --bookmark <branch>` fails with "Refusing to create new remote bookmark", run:
+  `jj bookmark track <branch> --remote=origin` then retry push
 - Example:
   feat(spec-020-fabrik-v0-2-0): implement dispatch auth
   

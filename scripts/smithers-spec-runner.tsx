@@ -549,6 +549,9 @@ const prompt = [
       branchName
         ? `- Push with: jj git push --bookmark ${branchName}`
         : "- Push with: jj git push --change @",
+      branchName
+        ? `- If push refuses to create a remote bookmark, run: jj bookmark track ${branchName} --remote=origin`
+        : "- If push refuses to create a remote bookmark, run: jj bookmark track <branch> --remote=origin",
       "- Commit messages must follow Conventional Commits (type(scope): subject).",
       "- Commit message must include spec + todo context and run id.",
       "- For root-cause fixes, include cause → reasoning → fix and relevant error output.",
@@ -648,6 +651,9 @@ const prompt = [
     branchName
       ? `- Push with: jj git push --bookmark ${branchName}`
       : "- Push with: jj git push --change @",
+    branchName
+      ? `- If push refuses to create a remote bookmark, run: jj bookmark track ${branchName} --remote=origin`
+      : "- If push refuses to create a remote bookmark, run: jj bookmark track <branch> --remote=origin",
     "- Commit messages must follow Conventional Commits (type(scope): subject).",
     "- Commit message must include spec + todo context and run id.",
     "- For root-cause fixes, include cause → reasoning → fix and relevant error output.",
