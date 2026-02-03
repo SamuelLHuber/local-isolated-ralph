@@ -83,7 +83,8 @@ const reviewModelsPath = env.SMITHERS_REVIEW_MODELS_FILE
 const execCwd = env.SMITHERS_CWD ? resolve(env.SMITHERS_CWD) : process.cwd()
 const runId = env.SMITHERS_RUN_ID ?? ""
 const branchName = env.SMITHERS_BRANCH ?? ""
-const agentKind = (env.SMITHERS_AGENT ?? env.RALPH_AGENT ?? "codex").toLowerCase()
+  const agentKind = (env.SMITHERS_AGENT ?? env.RALPH_AGENT ?? "codex").toLowerCase()
+  const reviewAgentKind = "codex"
 const model =
   env.SMITHERS_MODEL ??
   env.MODEL ??
@@ -509,25 +510,17 @@ function TaskRunner() {
     }
 
     const defaultProps = { onFinished: handleReviewFinished } as const
-    const claudeProps = { ...defaultProps, model: reviewModelFor(reviewer.id) } as const
     const codexProps = {
       ...defaultProps,
       model: reviewModelFor(reviewer.id),
       ...codexDefaults,
       cwd: execCwd
     } as const
-    const openCodeProps = { ...defaultProps, model: reviewModelFor(reviewer.id) } as const
 
     return (
       <review status="running">
-        <If condition={agentKind === "claude"}>
-          <Claude {...claudeProps}>{prompt}</Claude>
-        </If>
-        <If condition={agentKind === "codex"}>
+        <If condition={reviewAgentKind === "codex"}>
           <Codex {...codexProps}>{prompt}</Codex>
-        </If>
-        <If condition={agentKind === "opencode"}>
-          <OpenCodeComponent {...openCodeProps}>{prompt}</OpenCodeComponent>
         </If>
       </review>
     )
