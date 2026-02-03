@@ -2,6 +2,8 @@
 /** @jsxImportSource smithers-orchestrator */
 import { readFileSync, mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs"
 import { spawnSync } from "node:child_process"
+import { createHash } from "node:crypto"
+import { useEffect } from "react"
 import { basename, join, resolve } from "node:path"
 import * as Orchestrator from "smithers-orchestrator"
 
@@ -83,6 +85,7 @@ const reviewModelsPath = env.SMITHERS_REVIEW_MODELS_FILE
 const execCwd = env.SMITHERS_CWD ? resolve(env.SMITHERS_CWD) : process.cwd()
 const runId = env.SMITHERS_RUN_ID ?? ""
 const branchName = env.SMITHERS_BRANCH ?? ""
+const workflowShaExpected = env.SMITHERS_WORKFLOW_SHA ?? ""
   const agentKind = (env.SMITHERS_AGENT ?? env.RALPH_AGENT ?? "codex").toLowerCase()
   const reviewAgentKind = "codex"
 const model =
@@ -99,6 +102,16 @@ if (!Orchestrator.OpenCode && agentKind === "opencode") {
 
 const spec = JSON.parse(readFileSync(specPath, "utf8")) as Spec
 const todo = JSON.parse(readFileSync(todoPath, "utf8")) as Todo
+
+const workflowPath = process.argv[1]
+const workflowShaActual = (() => {
+  try {
+    const data = readFileSync(workflowPath)
+    return createHash("sha256").update(data).digest("hex")
+  } catch {
+    return ""
+  }
+})()
 
 const smithersDir = resolve(".smithers")
 if (!existsSync(smithersDir)) {
@@ -375,6 +388,8 @@ const writeHumanGate = (reason: string) => {
   writeFileSync(path, `${JSON.stringify(gate, null, 2)}\n`, "utf8")
 }
 
+const reviewTimeoutMs = Number(env.SMITHERS_REVIEW_TIMEOUT_MS ?? 1800000)
+
 const writeReviewTodo = (tasks: ReviewTask[]) => {
   const path = join(reportDir, "review-todo.json")
   writeFileSync(path, `${JSON.stringify({ v: 1, tasks }, null, 2)}\n`, "utf8")
@@ -439,39 +454,110 @@ function TaskRunner() {
     reactiveDb,
     "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'review.task.index'"
   )
+  const { data: reviewTransitionRaw } = useQueryValue<string>(
+    reactiveDb,
+    "SELECT value FROM state WHERE key = 'review.transition'",
+    []
+  )
+  const { data: reviewTasksTransitionRaw } = useQueryValue<string>(
+    reactiveDb,
+    "SELECT value FROM state WHERE key = 'review.tasks.transition'",
+    []
+  )
   const index = indexRaw ?? 0
   const done = Boolean(doneRaw ?? 0)
   const phase = phaseRaw ?? "tasks"
   const reviewIndex = reviewIndexRaw ?? 0
   const reviewRetry = reviewRetryRaw ?? 0
   const reviewTaskIndex = reviewTaskIndexRaw ?? 0
+  const reviewTransition = reviewTransitionRaw ?? ""
+  const reviewTasksTransition = reviewTasksTransitionRaw ?? ""
+  const reviewStarted = useQueryValue<string>(
+    reactiveDb,
+    "SELECT value FROM state WHERE key = 'review.started_at'",
+    []
+  ).data
+
+  useEffect(() => {
+    if (phase !== "review") return
+    const reviewer = reviewers[reviewIndex]
+    if (reviewer) return
+    if (reviewTransition) return
+    const combined = combineReviews()
+    if (combined.status === "approved") {
+      writeReview(combined)
+      writeHumanGate("Human review required before next spec run.")
+      db.state.set("phase", "done", "review_done")
+      db.state.set("task.done", 1, "review_done")
+      db.state.set("review.transition", "done", "review_transition")
+      return
+    }
+
+    if (reviewRetry >= reviewMax) {
+      writeReview(combined)
+      writeHumanGate("Reviewers requested changes. Max retries reached; human decision required.")
+      db.state.set("phase", "done", "review_done")
+      db.state.set("task.done", 1, "review_done")
+      db.state.set("review.transition", "done", "review_transition")
+      return
+    }
+
+    const reviewTasks = buildReviewTasks()
+    writeReviewTodo(reviewTasks)
+    db.state.set("review.retry", reviewRetry + 1, "review_retry")
+    db.state.set("review.task.index", 0, "review_task_start")
+    db.state.set("phase", "review-tasks", "review_task_start")
+    db.state.set("review.transition", "review-tasks", "review_transition")
+  }, [phase, reviewIndex, reviewRetry, reviewTransition])
+
+  useEffect(() => {
+    if (phase !== "review-tasks") return
+    if (reviewTasksTransition) return
+    const reviewTasks = readReviewTodo()
+    if (reviewTasks.length === 0) {
+      writeHumanGate("Reviewer changes requested but no tasks were generated. Human decision required.")
+      db.state.set("phase", "done", "review_done")
+      db.state.set("task.done", 1, "review_done")
+      db.state.set("review.tasks.transition", "done", "review_tasks_transition")
+      return
+    }
+    const task = reviewTasks[reviewTaskIndex]
+    if (!task) {
+      db.state.set("phase", "review", "review_restart")
+      db.state.set("review.index", 0, "review_restart")
+      db.state.set("review.tasks.transition", "restart", "review_tasks_transition")
+    }
+  }, [phase, reviewTaskIndex, reviewTasksTransition])
+
+  useEffect(() => {
+    if (!workflowShaExpected || !workflowShaActual) return
+    if (workflowShaExpected !== workflowShaActual) {
+      writeHumanGate("Workflow SHA mismatch; re-copy smithers-spec-runner.tsx and resume.")
+      db.state.set("task.blocked", 1, "workflow_sha_mismatch")
+      db.state.set("task.done", 1, "workflow_sha_mismatch")
+      db.state.set("phase", "done", "workflow_sha_mismatch")
+    }
+  }, [workflowShaExpected, workflowShaActual])
+
+  useEffect(() => {
+    if (phase !== "review") return
+    if (!reviewStarted) {
+      db.state.set("review.started_at", new Date().toISOString(), "review_started")
+      return
+    }
+    const elapsed = Date.now() - Date.parse(reviewStarted)
+    if (Number.isFinite(reviewTimeoutMs) && elapsed > reviewTimeoutMs) {
+      writeHumanGate("Review timeout exceeded; no review outputs produced.")
+      db.state.set("task.blocked", 1, "review_timeout")
+      db.state.set("task.done", 1, "review_timeout")
+      db.state.set("phase", "done", "review_timeout")
+    }
+  }, [phase, reviewStarted])
 
   if (phase === "review") {
     const reviewer = reviewers[reviewIndex]
     if (!reviewer) {
-      const combined = combineReviews()
-      if (combined.status === "approved") {
-        writeReview(combined)
-        writeHumanGate("Human review required before next spec run.")
-        db.state.set("phase", "done", "review_done")
-        db.state.set("task.done", 1, "review_done")
-        return <review status="complete" />
-      }
-
-      if (reviewRetry >= reviewMax) {
-        writeReview(combined)
-        writeHumanGate("Reviewers requested changes. Max retries reached; human decision required.")
-        db.state.set("phase", "done", "review_done")
-        db.state.set("task.done", 1, "review_done")
-        return <review status="complete" />
-      }
-
-      const reviewTasks = buildReviewTasks()
-      writeReviewTodo(reviewTasks)
-      db.state.set("review.retry", reviewRetry + 1, "review_retry")
-      db.state.set("review.task.index", 0, "review_task_start")
-      db.state.set("phase", "review-tasks", "review_task_start")
-      return <review status="review-tasks" />
+      return <review status="pending" />
     }
     const prompt = [
       reviewerPrompt,
@@ -529,16 +615,11 @@ function TaskRunner() {
   if (phase === "review-tasks") {
     const reviewTasks = readReviewTodo()
     if (reviewTasks.length === 0) {
-      writeHumanGate("Reviewer changes requested but no tasks were generated. Human decision required.")
-      db.state.set("phase", "done", "review_done")
-      db.state.set("task.done", 1, "review_done")
       return <review status="review-tasks-empty" />
     }
 
     const task = reviewTasks[reviewTaskIndex]
     if (!task) {
-      db.state.set("phase", "review", "review_restart")
-      db.state.set("review.index", 0, "review_restart")
       return <review status="review-restart" />
     }
 

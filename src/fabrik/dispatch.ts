@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
+import { createHash } from "node:crypto"
 import { basename, join, resolve, relative, isAbsolute } from "node:path"
 
 type DispatchOptions = {
@@ -34,6 +35,15 @@ const readSpecId = (path: string) => {
     const raw = readFileSync(path, "utf8")
     const parsed = JSON.parse(raw) as { id?: string }
     return typeof parsed.id === "string" ? parsed.id : ""
+  } catch {
+    return ""
+  }
+}
+
+const sha256 = (path: string) => {
+  try {
+    const data = readFileSync(path)
+    return createHash("sha256").update(data).digest("hex")
   } catch {
     return ""
   }
@@ -191,6 +201,7 @@ export const dispatchRun = (options: DispatchOptions) => {
   const specPath = safeRealpath(options.spec)!
   const todoPath = safeRealpath(options.todo)!
   const workflowPath = safeRealpath(options.workflow ?? "scripts/smithers-spec-runner.tsx")!
+  const workflowSha = sha256(workflowPath)
   const promptPath = safeRealpath(options.prompt)
   const reviewPromptPath = safeRealpath(options.reviewPrompt)
   const reviewModelsPath = safeRealpath(options.reviewModels)
@@ -388,6 +399,7 @@ export const dispatchRun = (options: DispatchOptions) => {
     `export SMITHERS_CWD="${vmWorkdir}"`,
     `export SMITHERS_BRANCH="${branch}"`,
     `export SMITHERS_RUN_ID="${runId}"`,
+    workflowSha ? `export SMITHERS_WORKFLOW_SHA="${workflowSha}"` : "",
     options.model ? `export SMITHERS_MODEL="${options.model}"` : "",
     options.reviewMax ? `export SMITHERS_REVIEW_MAX="${options.reviewMax}"` : "",
     `[ -f "${vmWorkdir}/PROMPT.md" ] && export SMITHERS_PROMPT_PATH="${vmWorkdir}/PROMPT.md" || true`,
