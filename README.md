@@ -406,7 +406,7 @@ RALPH_AGENT=codex ./scripts/dispatch.sh --include-git --spec specs/000-base.min.
 - `--review-prompt` - Reviewer PROMPT.md prepended to review prompt
 - `--review-max` - Max review reruns before human gate (default: 2)
 - `--review-models` - JSON map of reviewer_id -> model
-- `RALPH_AGENT` - Agent to use: `claude` (default), `codex`, `opencode`
+- `RALPH_AGENT` - Agent to use: `codex` (default), `claude`, `opencode`
 - `MAX_ITERATIONS` - Max loops (default: 100, 0 = unlimited)
 
 Each dispatch creates a timestamped work directory (`/home/ralph/work/<vm>/<project>-<timestamp>/`), enabling parallel dispatches to the same VM.

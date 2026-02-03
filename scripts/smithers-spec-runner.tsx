@@ -73,7 +73,7 @@ const promptPath = env.SMITHERS_PROMPT_PATH
 const reviewPromptPath = env.SMITHERS_REVIEW_PROMPT_PATH
 const reviewersDir = env.SMITHERS_REVIEWERS_DIR
 const reviewModelsPath = env.SMITHERS_REVIEW_MODELS_FILE
-const agentKind = (env.SMITHERS_AGENT ?? env.RALPH_AGENT ?? "claude").toLowerCase()
+const agentKind = (env.SMITHERS_AGENT ?? env.RALPH_AGENT ?? "codex").toLowerCase()
 const model =
   env.SMITHERS_MODEL ??
   env.MODEL ??

@@ -21,7 +21,7 @@
 #
 # Environment variables:
 #   MAX_ITERATIONS - Max loops before stopping (default: 100, 0 = unlimited)
-#   RALPH_AGENT    - Which agent to use: claude, codex, opencode (default: claude)
+#   RALPH_AGENT    - Which agent to use: claude, codex, opencode (default: codex)
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -96,7 +96,7 @@ VM_NAME="${1:?Usage: $0 [--include-git] <vm-name> <spec-file> [project-dir] [max
 PROMPT_FILE="${2:?Usage: $0 [--include-git] <vm-name> <spec-file> [project-dir] [max-iterations]}"
 PROJECT_DIR="${3:-}"
 MAX_ITERATIONS="${4:-${MAX_ITERATIONS:-100}}"
-RALPH_AGENT="${RALPH_AGENT:-claude}"
+RALPH_AGENT="${RALPH_AGENT:-codex}"
 
 # Set the agent command based on RALPH_AGENT
 case "$RALPH_AGENT" in

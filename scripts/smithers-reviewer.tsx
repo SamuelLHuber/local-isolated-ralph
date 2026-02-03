@@ -40,7 +40,7 @@ const specPath = resolve(env.SMITHERS_SPEC_PATH ?? env.SPEC_PATH ?? "specs/000-b
 const todoPath = resolve(env.SMITHERS_TODO_PATH ?? env.TODO_PATH ?? "specs/000-base.todo.min.json")
 const reportDir = resolve(env.SMITHERS_REPORT_DIR ?? env.REPORT_DIR ?? "reports")
 const reviewPromptPath = env.SMITHERS_REVIEW_PROMPT_PATH
-const agentKind = (env.SMITHERS_AGENT ?? env.RALPH_AGENT ?? "claude").toLowerCase()
+const agentKind = (env.SMITHERS_AGENT ?? env.RALPH_AGENT ?? "codex").toLowerCase()
 const model =
   env.SMITHERS_MODEL ??
   env.MODEL ??
