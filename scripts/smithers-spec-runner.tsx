@@ -1,6 +1,7 @@
 #!/usr/bin/env smithers
 /** @jsxImportSource smithers-orchestrator */
 import { readFileSync, mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs"
+import { spawnSync } from "node:child_process"
 import { basename, join, resolve } from "node:path"
 import * as Orchestrator from "smithers-orchestrator"
 
@@ -179,6 +180,26 @@ const reviewDefaultModel =
 
 const reviewModelFor = (id: string) =>
   reviewModels[id.toLowerCase()] ?? reviewDefaultModel
+
+const runJj = (args: string[]) => {
+  const result = spawnSync("jj", args, { cwd: execCwd, encoding: "utf8" })
+  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim()
+  return { ok: result.status === 0, output }
+}
+
+const pushBookmark = (branch: string) => {
+  if (!branch) return
+  const first = runJj(["git", "push", "--bookmark", branch])
+  if (first.ok) return
+  if (first.output.includes("Refusing to create new remote bookmark")) {
+    runJj(["bookmark", "track", branch, "--remote=origin"])
+    const second = runJj(["git", "push", "--bookmark", branch])
+    if (second.ok) return
+    console.log(`[WARN] Failed to push JJ bookmark ${branch}: ${second.output || "unknown error"}`)
+    return
+  }
+  console.log(`[WARN] Failed to push JJ bookmark ${branch}: ${first.output || "unknown error"}`)
+}
 
 const codexTimeout = Number(env.SMITHERS_AGENT_TIMEOUT_MS ?? env.SMITERS_AGENT_TIMEOUT_MS ?? 1800000)
 const codexDefaults = {
@@ -595,6 +616,7 @@ const prompt = [
         return
       }
 
+      pushBookmark(branchName)
       db.state.set("review.task.index", reviewTaskIndex + 1, "review_task_advance")
       ralph?.signalComplete()
     }
@@ -708,6 +730,7 @@ const prompt = [
       return
     }
 
+    pushBookmark(branchName)
     db.state.set("task.index", index + 1, "advance")
     if (index + 1 >= todo.tasks.length) {
       db.state.set("task.done", 1, "complete")
