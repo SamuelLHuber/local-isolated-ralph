@@ -23,6 +23,9 @@ Commit message rules:
 - When debugging/fixing root causes, include: cause → reasoning → fix, plus relevant error output
 - If `jj git push --bookmark <branch>` fails with "Refusing to create new remote bookmark", run:
   `jj bookmark track <branch> --remote=origin` then retry push
+- Avoid literal `\n` in commit messages. Use a proper multi-line body:
+  - Preferred: `jj describe -m "$(cat <<'EOF'\n<subject>\n\n<trailers>\nEOF\n)"`
+  - Or: `printf '%s\n\n%s\n' "<subject>" "<trailers>" | jj describe -m -`
 - Example:
   feat(spec-020-fabrik-v0-2-0): implement dispatch auth
   
