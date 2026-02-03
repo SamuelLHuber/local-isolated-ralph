@@ -73,6 +73,7 @@ const promptPath = env.SMITHERS_PROMPT_PATH
 const reviewPromptPath = env.SMITHERS_REVIEW_PROMPT_PATH
 const reviewersDir = env.SMITHERS_REVIEWERS_DIR
 const reviewModelsPath = env.SMITHERS_REVIEW_MODELS_FILE
+const execCwd = env.SMITHERS_CWD ? resolve(env.SMITHERS_CWD) : process.cwd()
 const agentKind = (env.SMITHERS_AGENT ?? env.RALPH_AGENT ?? "codex").toLowerCase()
 const model =
   env.SMITHERS_MODEL ??
@@ -467,7 +468,8 @@ function TaskRunner() {
     const codexProps = {
       ...defaultProps,
       model: reviewModelFor(reviewer.id),
-      ...codexDefaults
+      ...codexDefaults,
+      cwd: execCwd
     } as const
     const openCodeProps = { ...defaultProps, model: reviewModelFor(reviewer.id) } as const
 
@@ -555,7 +557,7 @@ function TaskRunner() {
 
     const defaultProps = { onFinished: handleFinished } as const
     const claudeProps = { ...defaultProps, model } as const
-    const codexProps = { ...defaultProps, model, ...codexDefaults } as const
+    const codexProps = { ...defaultProps, model, ...codexDefaults, cwd: execCwd } as const
     const openCodeProps = { ...defaultProps, model } as const
 
     return (
@@ -650,7 +652,7 @@ function TaskRunner() {
 
   const defaultProps = { onFinished: handleFinished } as const
   const claudeProps = { ...defaultProps, model } as const
-  const codexProps = { ...defaultProps, model, ...codexDefaults } as const
+  const codexProps = { ...defaultProps, model, ...codexDefaults, cwd: execCwd } as const
   const openCodeProps = { ...defaultProps, model } as const
 
   return (

@@ -163,7 +163,8 @@ export const dispatchRun = (options: DispatchOptions) => {
   const projectBase = projectDir ? basename(projectDir) : "task"
   const workSubdir = `${projectBase}-${timestamp}`
   const vmWorkdir = `/home/ralph/work/${options.vm}/${workSubdir}`
-  const reportDir = options.reportDir ?? `${vmWorkdir}/reports`
+  const controlDir = `/home/ralph/work/${options.vm}/.runs/${workSubdir}`
+  const reportDir = options.reportDir ?? `${controlDir}/reports`
   const projectRelative = projectDir ? (path: string) => relative(projectDir, path) : undefined
 
   console.log(`[${options.vm}] Dispatching spec: ${specPath}`)
@@ -172,13 +173,13 @@ export const dispatchRun = (options: DispatchOptions) => {
 
   if (process.platform === "darwin") {
     ensureVmRunning(options.vm)
-    limactlShell(options.vm, ["sudo", "-u", "ralph", "mkdir", "-p", vmWorkdir])
+    limactlShell(options.vm, ["sudo", "-u", "ralph", "mkdir", "-p", vmWorkdir, controlDir])
   }
 
   if (process.platform === "linux") {
     const ip = getVmIp(options.vm)
     if (!ip) throw new Error(`Could not determine IP for VM '${options.vm}'. Is it running?`)
-    ssh(ip, ["mkdir", "-p", vmWorkdir])
+    ssh(ip, ["mkdir", "-p", vmWorkdir, controlDir])
   }
 
   let specInVm = `${vmWorkdir}/specs/spec.min.json`
@@ -310,8 +311,8 @@ export const dispatchRun = (options: DispatchOptions) => {
 
   console.log(`[${options.vm}] Starting Smithers workflow...`)
   const smithersScript = [
-    `cd "${vmWorkdir}"`,
-    `echo "[${options.vm}] Working in: $(pwd)"`,
+    `cd "${controlDir}"`,
+    `echo "[${options.vm}] Control dir: $(pwd)"`,
     "export PATH=\"$HOME/.bun/bin:$PATH\"",
     `export MAX_ITERATIONS=${options.iterations ?? 100}`,
     `export RALPH_AGENT=codex`,
@@ -319,6 +320,7 @@ export const dispatchRun = (options: DispatchOptions) => {
     `export SMITHERS_TODO_PATH="${todoInVm}"`,
     `export SMITHERS_REPORT_DIR="${reportDir}"`,
     `export SMITHERS_AGENT=codex`,
+    `export SMITHERS_CWD="${vmWorkdir}"`,
     options.model ? `export SMITHERS_MODEL="${options.model}"` : "",
     options.reviewMax ? `export SMITHERS_REVIEW_MAX="${options.reviewMax}"` : "",
     `[ -f "${vmWorkdir}/PROMPT.md" ] && export SMITHERS_PROMPT_PATH="${vmWorkdir}/PROMPT.md" || true`,

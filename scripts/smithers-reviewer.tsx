@@ -41,6 +41,7 @@ const todoPath = resolve(env.SMITHERS_TODO_PATH ?? env.TODO_PATH ?? "specs/000-b
 const reportDir = resolve(env.SMITHERS_REPORT_DIR ?? env.REPORT_DIR ?? "reports")
 const reviewPromptPath = env.SMITHERS_REVIEW_PROMPT_PATH
 const agentKind = (env.SMITHERS_AGENT ?? env.RALPH_AGENT ?? "codex").toLowerCase()
+const execCwd = env.SMITHERS_CWD ? resolve(env.SMITHERS_CWD) : process.cwd()
 const model =
   env.SMITHERS_MODEL ??
   env.MODEL ??
@@ -197,7 +198,7 @@ function ReviewRunner() {
 
   const defaultProps = { onFinished: handleFinished } as const
   const claudeProps = { ...defaultProps, model } as const
-  const codexProps = { ...defaultProps, model, ...codexDefaults } as const
+  const codexProps = { ...defaultProps, model, ...codexDefaults, cwd: execCwd } as const
   const openCodeProps = { ...defaultProps, model } as const
 
   return (
