@@ -471,6 +471,11 @@ function TaskRunner() {
     "SELECT value FROM state WHERE key = 'review.tasks.transition'",
     []
   )
+  const { data: reviewTickRaw } = useQueryValue<string>(
+    reactiveDb,
+    "SELECT value FROM state WHERE key = 'review.tick'",
+    []
+  )
   const index = indexRaw ?? 0
   const done = Boolean(doneRaw ?? 0)
   const phase = decodeStateString(phaseRaw) ?? "tasks"
@@ -478,6 +483,7 @@ function TaskRunner() {
   const reviewTaskIndex = reviewTaskIndexRaw ?? 0
   const reviewTransition = decodeStateString(reviewTransitionRaw) ?? ""
   const reviewTasksTransition = decodeStateString(reviewTasksTransitionRaw) ?? ""
+  const reviewTick = decodeStateString(reviewTickRaw) ?? ""
   const reviewStarted = useQueryValue<string>(
     reactiveDb,
     "SELECT value FROM state WHERE key = 'review.started_at'",
@@ -516,7 +522,7 @@ function TaskRunner() {
     db.state.set("review.task.index", 0, "review_task_start")
     db.state.set("phase", "review-tasks", "review_task_start")
     db.state.set("review.transition", "review-tasks", "review_transition")
-  }, [phase, reviewRetry, reviewTransition])
+  }, [phase, reviewRetry, reviewTransition, reviewTick])
 
   useEffect(() => {
     if (phase !== "review-tasks") return
@@ -604,6 +610,7 @@ function TaskRunner() {
             const handleReviewFinished = (result: { output?: string }) => {
               const review = parseReview(result.output)
               writeReviewerResult(reviewer.id, review)
+              db.state.set("review.tick", new Date().toISOString(), "review_tick")
               ralph?.signalComplete()
             }
             const defaultProps = { onFinished: handleReviewFinished } as const
