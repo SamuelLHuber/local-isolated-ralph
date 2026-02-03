@@ -220,6 +220,7 @@ const codexDefaults = {
   reasoningEffort: "medium",
   sandboxMode: "danger-full-access",
   skipGitRepoCheck: true,
+  json: true,
   timeout: Number.isFinite(codexTimeout) ? codexTimeout : 1800000
 } as const
 
@@ -511,6 +512,51 @@ function TaskRunner() {
     "SELECT value FROM state WHERE key = 'rate.limit.until'",
     []
   )
+  const { data: usageInputRaw } = useQueryValue<number>(
+    reactiveDb,
+    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'usage.input'",
+    []
+  )
+  const { data: usageOutputRaw } = useQueryValue<number>(
+    reactiveDb,
+    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'usage.output'",
+    []
+  )
+  const { data: usageTotalRaw } = useQueryValue<number>(
+    reactiveDb,
+    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'usage.total'",
+    []
+  )
+  const { data: usageTaskInputRaw } = useQueryValue<number>(
+    reactiveDb,
+    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'usage.task.input'",
+    []
+  )
+  const { data: usageTaskOutputRaw } = useQueryValue<number>(
+    reactiveDb,
+    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'usage.task.output'",
+    []
+  )
+  const { data: usageTaskTotalRaw } = useQueryValue<number>(
+    reactiveDb,
+    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'usage.task.total'",
+    []
+  )
+  const { data: usageReviewInputRaw } = useQueryValue<number>(
+    reactiveDb,
+    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'usage.review.input'",
+    []
+  )
+  const { data: usageReviewOutputRaw } = useQueryValue<number>(
+    reactiveDb,
+    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'usage.review.output'",
+    []
+  )
+  const { data: usageReviewTotalRaw } = useQueryValue<number>(
+    reactiveDb,
+    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'usage.review.total'",
+    []
+  )
   const index = indexRaw ?? 0
   const done = Boolean(doneRaw ?? 0)
   const phase = decodeStateString(phaseRaw) ?? "tasks"
@@ -521,6 +567,34 @@ function TaskRunner() {
   const reviewTick = decodeStateString(reviewTickRaw) ?? ""
   const rateLimitCount = rateLimitCountRaw ?? 0
   const rateLimitUntil = decodeStateString(rateLimitUntilRaw)
+  const usageInput = usageInputRaw ?? 0
+  const usageOutput = usageOutputRaw ?? 0
+  const usageTotal = usageTotalRaw ?? 0
+  const usageTaskInput = usageTaskInputRaw ?? 0
+  const usageTaskOutput = usageTaskOutputRaw ?? 0
+  const usageTaskTotal = usageTaskTotalRaw ?? 0
+  const usageReviewInput = usageReviewInputRaw ?? 0
+  const usageReviewOutput = usageReviewOutputRaw ?? 0
+  const usageReviewTotal = usageReviewTotalRaw ?? 0
+
+  const bumpUsage = (kind: "task" | "review", result: { tokensUsed?: { input?: number; output?: number } }) => {
+    const inputTokens = result.tokensUsed?.input ?? 0
+    const outputTokens = result.tokensUsed?.output ?? 0
+    if (inputTokens === 0 && outputTokens === 0) return
+    const totalTokens = inputTokens + outputTokens
+    db.state.set("usage.input", usageInput + inputTokens, "usage")
+    db.state.set("usage.output", usageOutput + outputTokens, "usage")
+    db.state.set("usage.total", usageTotal + totalTokens, "usage")
+    if (kind === "task") {
+      db.state.set("usage.task.input", usageTaskInput + inputTokens, "usage")
+      db.state.set("usage.task.output", usageTaskOutput + outputTokens, "usage")
+      db.state.set("usage.task.total", usageTaskTotal + totalTokens, "usage")
+    } else {
+      db.state.set("usage.review.input", usageReviewInput + inputTokens, "usage")
+      db.state.set("usage.review.output", usageReviewOutput + outputTokens, "usage")
+      db.state.set("usage.review.total", usageReviewTotal + totalTokens, "usage")
+    }
+  }
   const reviewStarted = useQueryValue<string>(
     reactiveDb,
     "SELECT value FROM state WHERE key = 'review.started_at'",
@@ -664,6 +738,7 @@ function TaskRunner() {
               }
               const review = parseReview(result.output)
               writeReviewerResult(reviewer.id, review)
+              bumpUsage("review", result)
               db.state.set("review.tick", new Date().toISOString(), "review_tick")
               ralph?.signalComplete()
             }
@@ -887,6 +962,7 @@ const prompt = [
     }
     const report = parseReport(task.id, result.output)
     writeReport(report)
+    bumpUsage("task", result)
 
     if (report.status === "blocked") {
       db.state.set("task.blocked", 1, "blocked")
