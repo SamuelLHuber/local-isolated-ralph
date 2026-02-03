@@ -1,0 +1,62 @@
+{
+  "v": 1,
+  "id": "021-fabrik-run-persistence",
+  "title": "Fabrik Run Persistence, Decisions, and Audit Trail",
+  "status": "Draft",
+  "version": "1.0",
+  "lastUpdated": "2026-02-03",
+  "supersedes": [],
+  "dependsOn": ["020-fabrik-v0-2-0"],
+  "goals": [
+    "Persist Smithers runs across VM reboot with durable state and reports",
+    "Guarantee human decision records live in VCS under fabrik/decisions",
+    "Provide an auditable trail without bloating repos with full logs",
+    "Prepare for future fleet/kubernetes job dispatching"
+  ],
+  "nonGoals": [
+    "Archiving full run directories to host by default",
+    "Building a full k8s scheduler in this phase",
+    "Storing all raw task logs in git"
+  ],
+  "req": {
+    "api": [
+      "fabrik decisions write (creates fabrik/decisions/<specId>-<runId>.json)",
+      "fabrik decisions list (optional index view)",
+      "fabrik runs resume (uses .smithers db if present)"
+    ],
+    "behavior": [
+      "Run directory must survive VM reboot; Smithers resumes from .smithers db",
+      "If run dir is missing, restart from task 1 using VCS state as baseline",
+      "Each human decision writes a comprehensive per-run decision file in git",
+      "Decision file includes spec/todo hashes, review summary, human decision, and redaction flag",
+      "Reject decision automatically spawns a follow-up spec/todo run linked by previousRunId",
+      "Report summaries are stored in decision files; raw reports remain in run dir",
+      "Sensitive tokens are redacted from decision files; redaction emits a warning"
+    ],
+    "obs": [
+      "Decision file includes run status (queued/running/review/approved/changes_requested/aborted)",
+      "Decision file includes timestamps and branch/bookmark name",
+      "Emit warning logs when redaction occurs"
+    ]
+  },
+  "cfg": {
+    "env": [
+      "FABRIK_DECISIONS_DIR (default: fabrik/decisions)",
+      "FABRIK_REDACT_PATTERNS (optional)",
+      "FABRIK_RUN_STATUS (set by orchestrator)"
+    ]
+  },
+  "accept": [
+    "A human review produces fabrik/decisions/<specId>-<runId>.json in git",
+    "Decision file is comprehensive and sufficient for audits without run dir",
+    "If a VM reboots, the run resumes using .smithers db without losing task index",
+    "If run dir is missing, the system restarts from task 1 and logs the reason",
+    "A rejected decision creates a follow-up run linked via previousRunId",
+    "Redaction happens automatically and records redacted: true in decision file"
+  ],
+  "assume": [
+    "JJ/Git are available for committing decision files",
+    "Run directories are on VM storage that survives reboot",
+    "Kubernetes dispatcher will later consume decision files and statuses"
+  ]
+}
