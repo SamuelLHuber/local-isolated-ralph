@@ -1,4 +1,5 @@
 #!/usr/bin/env smithers
+/** @jsxImportSource smithers-orchestrator */
 import { readFileSync, mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs"
 import { join, resolve, basename } from "node:path"
 import * as Orchestrator from "smithers-orchestrator"
@@ -52,7 +53,11 @@ if (!Orchestrator.OpenCode && agentKind === "opencode") {
 
 const spec = JSON.parse(readFileSync(specPath, "utf8")) as Spec
 
-const db = createSmithersDB({ path: join(".smithers", `${spec.id}.review.db`) })
+const smithersDir = resolve(".smithers")
+if (!existsSync(smithersDir)) {
+  mkdirSync(smithersDir, { recursive: true })
+}
+const db = createSmithersDB({ path: join(smithersDir, `${spec.id}.review.db`) })
 const executionId = db.execution.start(`${spec.id}: review`, basename(specPath))
 
 if (!existsSync(reportDir)) {

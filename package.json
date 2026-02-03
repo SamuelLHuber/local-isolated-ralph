@@ -20,5 +20,8 @@
   "devDependencies": {
     "@changesets/changelog-github": "latest",
     "@changesets/cli": "latest"
-  }
+  },
+  "trustedDependencies": [
+    "@parcel/watcher"
+  ]
 }

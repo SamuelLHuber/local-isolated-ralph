@@ -15,6 +15,9 @@
       },
     },
   },
+  "trustedDependencies": [
+    "@parcel/watcher",
+  ],
   "packages": {
     "@babel/runtime": ["@babel/runtime@7.28.6", "", {}, "sha512-05WQkdpL9COIMz4LjTxGpPNCdlpyimKppYNoJ5Di5EUObifl8t4tuLuUBBZEpoLYOmfvIWrsp9fCl0HoPRVTdA=="],
 
