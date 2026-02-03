@@ -115,7 +115,7 @@ The `create-ralph.sh` script builds a NixOS image (if needed) and creates a VM w
 The script will:
 1. Build the NixOS QCOW2 image from `nix/flake.nix`
 2. Create a Lima VM with the image
-3. Copy credentials from host (~/.claude, ~/.ssh, ~/.gitconfig, ~/.config/gh)
+3. Copy credentials from host (~/.claude, ~/.claude.json, ~/.ssh, ~/.gitconfig, ~/.config/gh)
 4. Copy ralph-loop.sh to the VM
 
 ### Verify VM is running
@@ -157,6 +157,8 @@ claude setup-token
 
 # Sync credentials to the VM
 ./scripts/sync-credentials.sh ralph-1
+# Or via the CLI
+fabrik credentials sync --vm ralph-1
 
 # Or sync all credentials at once
 ./scripts/sync-credentials.sh ralph-1

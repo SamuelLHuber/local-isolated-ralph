@@ -29,7 +29,7 @@ const copyFileLima = (vm: string, src: string, dest: string) => {
 const copyTarLima = (vm: string, baseDir: string, entry: string, destDir: string) => {
   const abs = join(baseDir, entry)
   if (!existsSync(abs)) return false
-  const script = `tar -C "${baseDir}" -cf - "${entry}" | limactl shell "${vm}" sudo -u ralph tar -C "${destDir}" -xf -`
+  const script = `COPYFILE_DISABLE=1 tar -C "${baseDir}" -cf - "${entry}" | limactl shell "${vm}" sudo -u ralph tar -C "${destDir}" -xf -`
   runShell(script)
   return true
 }
@@ -46,6 +46,12 @@ const copyCredentialsLima = (vm: string) => {
     console.log("    Note: ~/.claude not found")
   } else {
     run("limactl", ["shell", vm, "chown", "-R", "ralph:users", `${userHome}/.claude`])
+  }
+
+  if (copyFileLima(vm, hostPath(".claude.json"), `${userHome}/.claude.json`)) {
+    run("limactl", ["shell", vm, "sudo", "-u", "ralph", "chmod", "600", `${userHome}/.claude.json`])
+  } else {
+    console.log("    Note: ~/.claude.json not found")
   }
 
   if (!copyFileLima(vm, hostPath(".gitconfig"), `${userHome}/.gitconfig`)) {
@@ -103,6 +109,13 @@ const copyCredentialsLinux = (vm: string) => {
     scp(["-r", hostPath(".claude"), `ralph@${ip}:~/`])
   } else {
     console.log("    Note: ~/.claude not found")
+  }
+
+  if (existsSync(hostPath(".claude.json"))) {
+    scp([hostPath(".claude.json"), `ralph@${ip}:~/`])
+    ssh(ip, ["chmod", "600", "~/.claude.json"])
+  } else {
+    console.log("    Note: ~/.claude.json not found")
   }
 
   if (existsSync(hostPath(".gitconfig"))) {

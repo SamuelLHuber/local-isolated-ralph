@@ -152,6 +152,8 @@ If you need to re-sync credentials later:
 
 ```bash
 ./scripts/sync-credentials.sh ralph-1
+# Or via CLI
+fabrik credentials sync --vm ralph-1
 ```
 
 To store a Claude Code token for syncing:
@@ -161,6 +163,8 @@ To store a Claude Code token for syncing:
 # Edit ~/.config/ralph/ralph.env and set:
 # export CLAUDE_CODE_OAUTH_TOKEN="..."
 ```
+
+Note: Claude CLI auth is stored in `~/.claude.json` on the host. Make sure it exists (or set `ANTHROPIC_API_KEY` in `ralph.env`) before syncing.
 
 ---
 
