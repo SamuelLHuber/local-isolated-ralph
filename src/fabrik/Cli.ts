@@ -26,6 +26,14 @@ const specOption = Options.text("spec").pipe(Options.withDescription("Spec minif
 const todoOption = Options.text("todo").pipe(Options.optional, Options.withDescription("Todo minified JSON path (optional)"))
 const vmOption = Options.text("vm").pipe(Options.withDescription("VM name (e.g. ralph-1)"))
 const projectOption = Options.text("project").pipe(Options.optional, Options.withDescription("Project directory to sync"))
+const repoOption = Options.text("repo").pipe(
+  Options.optional,
+  Options.withDescription("Git repo URL to clone inside the VM (mutually exclusive with --project)")
+)
+const repoBranchOption = Options.text("repo-branch").pipe(
+  Options.optional,
+  Options.withDescription("Git branch to checkout when cloning --repo (defaults to repo default branch)")
+)
 const includeGitOption = Options.boolean("include-git").pipe(Options.withDefault(false), Options.withDescription("Include .git in sync"))
 const workflowOption = Options.text("workflow").pipe(Options.optional, Options.withDescription("Smithers workflow path"))
 const reportDirOption = Options.text("report-dir").pipe(Options.optional, Options.withDescription("Report directory inside VM"))
@@ -165,6 +173,8 @@ const runCommand = Command.make(
     vm: vmOption,
     todo: todoOption,
     project: projectOption,
+    repo: repoOption,
+    repoBranch: repoBranchOption,
     includeGit: includeGitOption,
     workflow: workflowOption,
     reportDir: reportDirOption,
@@ -183,6 +193,8 @@ const runCommand = Command.make(
     vm,
     todo,
     project,
+    repo,
+    repoBranch,
     includeGit,
     workflow,
     reportDir,
@@ -199,6 +211,8 @@ const runCommand = Command.make(
     const args: string[] = []
     const todoValue = unwrapOptional(todo)
     let projectValue = unwrapOptional(project)
+    const repoValue = unwrapOptional(repo)
+    const repoBranchValue = unwrapOptional(repoBranch)
     const workflowValue = unwrapOptional(workflow)
     const reportDirValue = unwrapOptional(reportDir)
     const modelValue = unwrapOptional(model)
@@ -209,7 +223,7 @@ const runCommand = Command.make(
     const reviewMaxValue = unwrapOptional(reviewMax)
     const reviewModelsValue = unwrapOptional(reviewModels)
     const requireAgentsValue = unwrapOptional(requireAgents)
-    if (!projectValue) {
+    if (!projectValue && !repoValue) {
       const cwd = process.cwd()
       if (existsSync(join(cwd, ".git")) || existsSync(join(cwd, ".jj"))) {
         projectValue = cwd
@@ -223,6 +237,8 @@ const runCommand = Command.make(
           spec,
           todo: todoValue ?? spec.replace(/\.min\.json$/i, ".todo.min.json"),
           project: projectValue,
+          repoUrl: repoValue ?? undefined,
+          repoBranch: repoBranchValue ?? undefined,
           includeGit,
           workflow: workflowValue ? resolve(workflowValue) : resolve(home, "scripts/smithers-spec-runner.tsx"),
           reportDir: reportDirValue,
@@ -681,6 +697,8 @@ const orchestrateCommand = Command.make(
     specs: specsOption,
     vms: vmsOption,
     project: projectOption,
+    repo: repoOption,
+    repoBranch: repoBranchOption,
     includeGit: includeGitOption,
     workflow: workflowOption,
     prompt: promptOption,
@@ -696,6 +714,8 @@ const orchestrateCommand = Command.make(
     specs,
     vms,
     project,
+    repo,
+    repoBranch,
     includeGit,
     workflow,
     prompt,
@@ -719,10 +739,14 @@ const orchestrateCommand = Command.make(
       const branchPrefixValue = unwrapOptional(branchPrefix)
       const iterationsValue = unwrapOptional(iterations)
       const intervalValue = unwrapOptional(interval)
+      const repoValue = unwrapOptional(repo)
+      const repoBranchValue = unwrapOptional(repoBranch)
       const results = await orchestrateRuns({
         specs: specList,
         vms: vmList,
         project: unwrapOptional(project),
+        repoUrl: repoValue ?? undefined,
+        repoBranch: repoBranchValue ?? undefined,
         includeGit,
         workflow: workflowValue ? resolve(workflowValue) : resolve(defaultRalphHome, "scripts/smithers-spec-runner.tsx"),
         prompt: promptValue ? resolve(promptValue) : undefined,

@@ -9,6 +9,8 @@ type DispatchOptions = {
   spec: string
   todo: string
   project?: string
+  repoUrl?: string
+  repoBranch?: string
   includeGit: boolean
   workflow?: string
   reportDir?: string
@@ -236,6 +238,26 @@ const verifyGitAndInitJj = (vm: string, workdir: string) => {
   ])
 }
 
+const cloneRepoInVm = (vm: string, workdir: string, repoUrl: string, repoBranch?: string) => {
+  const branchArg = repoBranch ? `--branch "${repoBranch}"` : ""
+  const cloneScript = [
+    `cd "${workdir}"`,
+    "if [ -f ~/.config/ralph/ralph.env ]; then set -a; source ~/.config/ralph/ralph.env; set +a; fi",
+    "if [ -n \"${GITHUB_TOKEN:-}\" ]; then",
+    "  export GH_TOKEN=\"${GITHUB_TOKEN}\"",
+    "  git config --global url.\"https://oauth:${GITHUB_TOKEN}@github.com/\".insteadOf \"https://github.com/\"",
+    "fi",
+    `if [ ! -d repo/.git ]; then git clone --depth 1 ${branchArg} "${repoUrl}" repo; fi`
+  ].join("\n")
+  if (process.platform === "darwin") {
+    limactlShell(vm, ["bash", "-lc", cloneScript])
+  } else if (process.platform === "linux") {
+    const ip = getVmIp(vm)
+    if (!ip) throw new Error(`Could not determine IP for VM '${vm}'. Is it running?`)
+    ssh(ip, ["bash", "-lc", cloneScript])
+  }
+}
+
 const maybeInstallDeps = (vm: string, workdir: string) => {
   limactlShell(vm, [
     "bash",
@@ -288,6 +310,8 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
   const reviewPromptPath = safeRealpath(options.reviewPrompt)
   const reviewModelsPath = safeRealpath(options.reviewModels)
   const projectDir = options.project ? safeRealpath(options.project)! : undefined
+  const repoUrl = options.repoUrl?.trim()
+  const repoBranch = options.repoBranch?.trim()
   const agentKind = (process.env.SMITHERS_AGENT ?? process.env.RALPH_AGENT ?? "codex").toLowerCase()
   const specId = readSpecId(specPath)
   const runId = `${new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "")}`
@@ -296,21 +320,27 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
     .toISOString()
     .replace(/[-:]/g, "")
     .replace(/\..+/, "")
-  const projectBase = projectDir ? basename(projectDir) : "task"
+  if (projectDir && repoUrl) {
+    throw new Error("Provide either --project or --repo, not both.")
+  }
+  if (!projectDir && !repoUrl) {
+    throw new Error(
+      [
+        "Missing project repository.",
+        "Dispatch requires a repo to apply tasks.",
+        "Provide --project /path/to/repo or --repo <git-url> (optional --repo-branch)."
+      ].join("\n")
+    )
+  }
+  const projectBase = projectDir ? basename(projectDir) : "repo"
   const workSubdir = `${projectBase}-${timestamp}`
   const vmWorkdir = `/home/ralph/work/${options.vm}/${workSubdir}`
   const controlDir = `/home/ralph/work/${options.vm}/.runs/${workSubdir}`
   const reportDir = options.reportDir ?? `${controlDir}/reports`
   const projectRelative = projectDir ? (path: string) => relative(projectDir, path) : undefined
-
-  if (!projectDir) {
-    throw new Error(
-      [
-        "Missing project repository.",
-        "Dispatch requires a repo to apply tasks.",
-        "Provide --project /path/to/repo (or add repo-url support)."
-      ].join("\n")
-    )
+  const projectRootInVm = repoUrl ? `${vmWorkdir}/repo` : vmWorkdir
+  if (repoUrl && repoBranch && !repoBranch.length) {
+    throw new Error("repo branch provided but empty.")
   }
 
   console.log(`[${options.vm}] Dispatching spec: ${specPath}`)
@@ -505,10 +535,15 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
   if (reviewPromptPath) writeFileInVm(options.vm, `${vmWorkdir}/REVIEW_PROMPT.md`, readText(reviewPromptPath))
   if (reviewModelsPath) writeFileInVm(options.vm, `${vmWorkdir}/reviewer-models.json`, readText(reviewModelsPath))
 
+  if (repoUrl) {
+    cloneRepoInVm(options.vm, vmWorkdir, repoUrl, repoBranch)
+    verifyGitAndInitJj(options.vm, projectRootInVm)
+  }
+
   ensureBunReady(options.vm)
 
   if (process.platform === "darwin") {
-    maybeInstallDeps(options.vm, vmWorkdir)
+    maybeInstallDeps(options.vm, projectRootInVm)
   } else if (process.platform === "linux") {
     const ip = getVmIp(options.vm)
     if (!ip) throw new Error(`Could not determine IP for VM '${options.vm}'. Is it running?`)
@@ -516,7 +551,7 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
       "bash",
       "-lc",
       [
-        `cd "${vmWorkdir}"`,
+        `cd "${projectRootInVm}"`,
         "if [ -f package.json ]; then",
         `  echo "[${options.vm}] Installing dependencies (bun install)..."`,
         "  export PATH=\"$HOME/.bun/bin:$PATH\"",
@@ -549,7 +584,7 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
     `export SMITHERS_TODO_PATH="${todoInVm}"`,
     `export SMITHERS_REPORT_DIR="${reportDir}"`,
     `export SMITHERS_AGENT=codex`,
-    `export SMITHERS_CWD="${vmWorkdir}"`,
+    `export SMITHERS_CWD="${projectRootInVm}"`,
     `export SMITHERS_BRANCH="${branch}"`,
     `export SMITHERS_RUN_ID="${runId}"`,
     workflowSha ? `export SMITHERS_WORKFLOW_SHA="${workflowSha}"` : "",

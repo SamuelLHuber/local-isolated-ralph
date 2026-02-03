@@ -8,6 +8,8 @@ type OrchestrateOptions = {
   vms: string[]
   todo?: string[]
   project?: string
+  repoUrl?: string
+  repoBranch?: string
   includeGit?: boolean
   workflow?: string
   prompt?: string
@@ -117,6 +119,8 @@ export const orchestrateRuns = async (options: OrchestrateOptions) => {
       spec,
       todo: todo ?? spec.replace(/\.min\.json$/i, ".todo.min.json"),
       project: options.project,
+      repoUrl: options.repoUrl,
+      repoBranch: options.repoBranch,
       includeGit: Boolean(options.includeGit),
       workflow: options.workflow,
       prompt: options.prompt,
