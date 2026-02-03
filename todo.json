@@ -143,11 +143,6 @@
       "id": "push-safety",
       "do": "Warn explicitly when --include-git is not set (push disabled) and when repo is not writable.",
       "verify": "CLI warns about push limitations in these cases."
-    },
-    {
-      "id": "cli-vm-commands",
-      "do": "Add fabrik commands to create/delete/list VMs using TypeScript implementations (no bash wrappers).",
-      "verify": "fabrik vm create/delete/list works on macOS and Linux without invoking shell scripts."
     }
   ]
 }

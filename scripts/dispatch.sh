@@ -428,8 +428,15 @@ PY
       echo "[$VM_NAME] Installing dependencies (bun install)..."
       limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph bash -c "cd '${VM_PROJECT_DIR}' \
         && export PATH=\"\$HOME/.bun/bin:\$PATH\" \
-        && export BUN_INSTALL_IGNORE_SCRIPTS=\${BUN_INSTALL_IGNORE_SCRIPTS:-1} \
-        && export npm_config_ignore_scripts=\${npm_config_ignore_scripts:-true} \
+        && export BUN_INSTALL_IGNORE_SCRIPTS=0 \
+        && export npm_config_ignore_scripts=false \
+        && BUN_CHECK_OUTPUT=\$(bun --version 2>&1 || true) \
+        && if echo \"\$BUN_CHECK_OUTPUT\" | grep -q 'postinstall script was not run'; then \
+             echo '[$VM_NAME] Fixing bun postinstall...'; \
+             if command -v node >/dev/null 2>&1 && [[ -f \"\$HOME/.bun/install/global/node_modules/bun/install.js\" ]]; then \
+               node \"\$HOME/.bun/install/global/node_modules/bun/install.js\"; \
+             fi; \
+           fi \
         && bun install" 2>&1 | tail -5
     fi
   else
@@ -644,8 +651,15 @@ PY
       echo "[$VM_NAME] Installing dependencies (bun install)..."
       ssh "ralph@${VM_IP}" "cd '${VM_PROJECT_DIR}' \
         && export PATH=\"\$HOME/.bun/bin:\$PATH\" \
-        && export BUN_INSTALL_IGNORE_SCRIPTS=\${BUN_INSTALL_IGNORE_SCRIPTS:-1} \
-        && export npm_config_ignore_scripts=\${npm_config_ignore_scripts:-true} \
+        && export BUN_INSTALL_IGNORE_SCRIPTS=0 \
+        && export npm_config_ignore_scripts=false \
+        && BUN_CHECK_OUTPUT=\$(bun --version 2>&1 || true) \
+        && if echo \"\$BUN_CHECK_OUTPUT\" | grep -q 'postinstall script was not run'; then \
+             echo '[$VM_NAME] Fixing bun postinstall...'; \
+             if command -v node >/dev/null 2>&1 && [[ -f \"\$HOME/.bun/install/global/node_modules/bun/install.js\" ]]; then \
+               node \"\$HOME/.bun/install/global/node_modules/bun/install.js\"; \
+             fi; \
+           fi \
         && bun install" 2>&1 | tail -5
     fi
   else

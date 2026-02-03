@@ -354,9 +354,6 @@ in {
       RALPH_USER = cfg.user;
       # Bun global install path
       BUN_INSTALL = "$HOME/.bun";
-      # Default to skipping postinstall scripts (can be overridden)
-      BUN_INSTALL_IGNORE_SCRIPTS = "1";
-      npm_config_ignore_scripts = "true";
     } // (optionalAttrs cfg.telemetry.enable {
       HOST_ADDR = cfg.telemetry.hostAddr;
       OTEL_EXPORTER_OTLP_ENDPOINT = "http://${cfg.telemetry.hostAddr}:4317";
