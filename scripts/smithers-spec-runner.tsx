@@ -56,6 +56,7 @@ const {
   createSmithersDB,
   SmithersProvider,
   Ralph,
+  useRalphIteration,
   Claude,
   Codex,
   If,
@@ -372,6 +373,7 @@ const readReports = (): string => {
 
 function TaskRunner() {
   const { db, reactiveDb } = useSmithers()
+  const ralph = useRalphIteration()
   const { data: indexRaw } = useQueryValue<number>(
     reactiveDb,
     "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'task.index'"
@@ -463,6 +465,7 @@ function TaskRunner() {
       const review = parseReview(result.output)
       writeReviewerResult(reviewer.id, review)
       db.state.set("review.index", reviewIndex + 1, "review_advance")
+      ralph?.signalComplete()
     }
 
     const defaultProps = { onFinished: handleReviewFinished } as const
@@ -552,10 +555,12 @@ function TaskRunner() {
       if (report.status !== "done") {
         db.state.set("task.done", 1, "review_task_failed")
         db.state.set("phase", "done", "review_task_failed")
+        ralph?.signalComplete()
         return
       }
 
       db.state.set("review.task.index", reviewTaskIndex + 1, "review_task_advance")
+      ralph?.signalComplete()
     }
 
     const defaultProps = { onFinished: handleFinished } as const
@@ -638,6 +643,7 @@ function TaskRunner() {
       db.state.set("task.blocked", 1, "blocked")
       db.state.set("task.done", 1, "blocked")
       db.state.set("phase", "done", "blocked")
+      ralph?.signalComplete()
       return
     }
 
@@ -645,6 +651,7 @@ function TaskRunner() {
       db.state.set("task.failed", 1, "failed")
       db.state.set("task.done", 1, "failed")
       db.state.set("phase", "done", "failed")
+      ralph?.signalComplete()
       return
     }
 
@@ -652,6 +659,7 @@ function TaskRunner() {
     if (index + 1 >= todo.tasks.length) {
       db.state.set("task.done", 1, "complete")
     }
+    ralph?.signalComplete()
   }
 
   const defaultProps = { onFinished: handleFinished } as const
