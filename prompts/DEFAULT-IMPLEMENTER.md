@@ -20,11 +20,16 @@ When all tests and verifications pass commit your work. If functionality is miss
 Commit message rules:
 - Use Conventional Commits: type(scope): subject
 - Include spec id, todo id, and run id in the message body or trailer
+- When debugging/fixing root causes, include: cause → reasoning → fix, plus relevant error output
 - Example:
   feat(spec-020-fabrik-v0-2-0): implement dispatch auth
   
   todo: git-credentials-vm
   spec: 020-fabrik-v0-2-0
   run: 20260203T120945Z
+  cause: GH auth relied on host keychain; VM had no token
+  reasoning: VM needs env-based auth; ralph.env already contains GITHUB_TOKEN
+  fix: source ralph.env and export GH_TOKEN during dispatch
+  error: gh auth status -> "token in default is invalid"
 
 Update the TODO.md file noting what has been done, attach a screenshot of the UI confirming it's done for frontend changes.
