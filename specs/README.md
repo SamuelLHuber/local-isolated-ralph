@@ -3,9 +3,10 @@
 This repo follows a strict, test-driven flow for all features.
 
 ## Flow
-1) **Interview → Spec**
-   - A human prompts an interview agent.
-   - Agent drafts `spec.json`.
+1) **PRD → Spec**
+   - Human drafts `PRD.md` using `specs/templates/PRD.template.md`.
+   - Human verifies PRD with `specs/PRD-GUIDE.md`.
+   - Agent drafts `spec.json` from the approved PRD.
    - Human reviews and edits `spec.json`.
 
 2) **Spec → TODO**
@@ -21,8 +22,8 @@ This repo follows a strict, test-driven flow for all features.
 ## Diagram
 
 ```
-Interview → spec.json → todo.json → Smithers workflow → report.json
-                       (minify)      (tasks, TDD, DOD)   (per task)
+PRD.md → spec.json → todo.json → Smithers workflow → report.json
+          (minify)      (tasks, TDD, DOD)   (per task)
 ```
 
 ## Files
@@ -58,5 +59,6 @@ bun run scripts/minify-specs.ts
 - Definition of Done: `bun test`, `bun run typecheck`.
 
 ## Start Here
-- Read `specs/000-base.json` and `specs/000-base.todo.json`.
+- Read `specs/templates/PRD.template.md` and `specs/PRD-GUIDE.md`.
+- Read `specs/000-base.md`, `specs/000-base.json`, and `specs/000-base.todo.json`.
 - Implement in order, with tests first.
