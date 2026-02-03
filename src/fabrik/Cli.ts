@@ -12,6 +12,7 @@ import { resolveRalphHome } from "./embedded.js"
 import { laosDown, laosLogs, laosStatus, laosUp } from "./laos.js"
 import { syncCredentials } from "./credentials.js"
 import { dispatchRun } from "./dispatch.js"
+import { orchestrateRuns } from "./orchestrate.js"
 import { minifySpecs, validateSpecs } from "./specs.js"
 
 const defaultRalphHome = process.env.LOCAL_RALPH_HOME ?? join(homedir(), "git", "local-isolated-ralph")
@@ -71,6 +72,12 @@ const runIdOption = Options.integer("run-id").pipe(
 
 const specsDirOption = Options.text("specs-dir").pipe(Options.withDescription("Directory containing spec/todo min files"))
 const vmPrefixOption = Options.text("vm-prefix").pipe(Options.withDescription("VM name prefix (default: ralph)"))
+const vmsOption = Options.text("vms").pipe(Options.withDescription("Comma-separated VM list (e.g. valpha,ralph-2)"))
+const specsOption = Options.text("specs").pipe(Options.withDescription("Comma-separated spec min.json list"))
+const branchPrefixOption = Options.text("branch-prefix").pipe(
+  Options.optional,
+  Options.withDescription("Branch prefix for orchestrated runs (default: spec)")
+)
 
 const topicOption = Options.text("topic").pipe(
   Options.withDescription("Topic: readme | workflow | quickstart | specs"),
@@ -668,6 +675,75 @@ const credentialsCommand = Command.make("credentials").pipe(
   ])
 )
 
+const orchestrateCommand = Command.make(
+  "orchestrate",
+  {
+    specs: specsOption,
+    vms: vmsOption,
+    project: projectOption,
+    includeGit: includeGitOption,
+    workflow: workflowOption,
+    prompt: promptOption,
+    reviewPrompt: reviewPromptOption,
+    reviewModels: reviewModelsOption,
+    reviewMax: reviewMaxOption,
+    requireAgents: requireAgentsOption,
+    branchPrefix: branchPrefixOption,
+    iterations: iterationsOption,
+    interval: intervalOption
+  },
+  ({
+    specs,
+    vms,
+    project,
+    includeGit,
+    workflow,
+    prompt,
+    reviewPrompt,
+    reviewModels,
+    reviewMax,
+    requireAgents,
+    branchPrefix,
+    iterations,
+    interval
+  }) =>
+    Effect.promise(async () => {
+      const specList = specs.split(",").map((s) => s.trim()).filter(Boolean)
+      const vmList = vms.split(",").map((s) => s.trim()).filter(Boolean)
+      const workflowValue = unwrapOptional(workflow)
+      const promptValue = unwrapOptional(prompt)
+      const reviewPromptValue = unwrapOptional(reviewPrompt)
+      const reviewModelsValue = unwrapOptional(reviewModels)
+      const reviewMaxValue = unwrapOptional(reviewMax)
+      const requireAgentsValue = unwrapOptional(requireAgents)
+      const branchPrefixValue = unwrapOptional(branchPrefix)
+      const iterationsValue = unwrapOptional(iterations)
+      const intervalValue = unwrapOptional(interval)
+      const results = await orchestrateRuns({
+        specs: specList,
+        vms: vmList,
+        project: unwrapOptional(project),
+        includeGit,
+        workflow: workflowValue ? resolve(workflowValue) : resolve(defaultRalphHome, "scripts/smithers-spec-runner.tsx"),
+        prompt: promptValue ? resolve(promptValue) : undefined,
+        reviewPrompt: reviewPromptValue ? resolve(reviewPromptValue) : undefined,
+        reviewModels: reviewModelsValue ? resolve(reviewModelsValue) : undefined,
+        reviewMax: reviewMaxValue ?? undefined,
+        requireAgents: requireAgentsValue ? requireAgentsValue.split(",") : undefined,
+        branchPrefix: branchPrefixValue ?? undefined,
+        iterations: iterationsValue ?? undefined,
+        intervalSeconds: intervalValue ?? 30
+      })
+      for (const result of results) {
+        if (result.status === "blocked") {
+          console.log(`[${result.vm}] BLOCKED: ${result.blockedTask ?? "unknown"}`)
+        } else {
+          console.log(`[${result.vm}] DONE`)
+        }
+      }
+    })
+).pipe(Command.withDescription("Dispatch multiple runs and watch for completion"))
+
 const cli = Command.make("fabrik").pipe(
   Command.withSubcommands([
     runCommand,
@@ -679,7 +755,8 @@ const cli = Command.make("fabrik").pipe(
     flowCommand,
     runsCommand,
     laosCommand,
-    credentialsCommand
+    credentialsCommand,
+    orchestrateCommand
   ])
 )
 

@@ -20,6 +20,17 @@ type DispatchOptions = {
   reviewMax?: number
   branch?: string
   requireAgents?: string[]
+  follow?: boolean
+}
+
+export type DispatchResult = {
+  runId: string
+  vm: string
+  workdir: string
+  controlDir: string
+  reportDir: string
+  branch: string
+  specId: string
 }
 
 const run = (cmd: string, args: string[], input?: string) => {
@@ -116,6 +127,27 @@ const limactlShell = (vm: string, args: string[], input?: string) =>
 
 const writeFileInVm = (vm: string, dest: string, content: string) => {
   limactlShell(vm, ["bash", "-lc", `sudo -u ralph tee "${dest}" >/dev/null`], content)
+}
+
+const ensureBunReady = (vm: string) => {
+  const script = [
+    "export PATH=\"$HOME/.bun/bin:$PATH\"",
+    "BUN_CHECK_OUTPUT=$(bun --version 2>&1 || true)",
+    "if echo \"$BUN_CHECK_OUTPUT\" | grep -q 'postinstall script was not run'; then",
+    `  echo "[${vm}] Fixing bun postinstall..."`,
+    "  if command -v node >/dev/null 2>&1 && [ -f \"$HOME/.bun/install/global/node_modules/bun/install.js\" ]; then",
+    "    node \"$HOME/.bun/install/global/node_modules/bun/install.js\"",
+    "  fi",
+    "fi"
+  ].join("\n")
+
+  if (process.platform === "darwin") {
+    limactlShell(vm, ["bash", "-lc", script])
+  } else if (process.platform === "linux") {
+    const ip = getVmIp(vm)
+    if (!ip) throw new Error(`Could not determine IP for VM '${vm}'. Is it running?`)
+    ssh(ip, ["bash", "-lc", script])
+  }
 }
 
 const syncProject = (vm: string, projectDir: string, workdir: string, includeGit: boolean) => {
@@ -215,6 +247,13 @@ const maybeInstallDeps = (vm: string, workdir: string) => {
       "  export PATH=\"$HOME/.bun/bin:$PATH\"",
       "  export BUN_INSTALL_IGNORE_SCRIPTS=0",
       "  export npm_config_ignore_scripts=false",
+      "  BUN_CHECK_OUTPUT=$(bun --version 2>&1 || true)",
+      "  if echo \"$BUN_CHECK_OUTPUT\" | grep -q 'postinstall script was not run'; then",
+      `    echo "[${vm}] Fixing bun postinstall..."`,
+      "    if command -v node >/dev/null 2>&1 && [ -f \"$HOME/.bun/install/global/node_modules/bun/install.js\" ]; then",
+      "      node \"$HOME/.bun/install/global/node_modules/bun/install.js\"",
+      "    fi",
+      "  fi",
       "  bun install",
       "fi"
     ].join("\n")
@@ -238,7 +277,7 @@ const pathWithin = (root: string, target: string) => {
   return rel && !rel.startsWith("..") && !isAbsolute(rel)
 }
 
-export const dispatchRun = (options: DispatchOptions) => {
+export const dispatchRun = (options: DispatchOptions): DispatchResult => {
   const specPath = safeRealpath(options.spec)!
   const todoPath = safeRealpath(options.todo)!
   const workflowPath = safeRealpath(options.workflow ?? "scripts/smithers-spec-runner.tsx")!
@@ -456,6 +495,8 @@ export const dispatchRun = (options: DispatchOptions) => {
   if (reviewPromptPath) writeFileInVm(options.vm, `${vmWorkdir}/REVIEW_PROMPT.md`, readText(reviewPromptPath))
   if (reviewModelsPath) writeFileInVm(options.vm, `${vmWorkdir}/reviewer-models.json`, readText(reviewModelsPath))
 
+  ensureBunReady(options.vm)
+
   if (process.platform === "darwin") {
     maybeInstallDeps(options.vm, vmWorkdir)
   } else if (process.platform === "linux") {
@@ -471,6 +512,13 @@ export const dispatchRun = (options: DispatchOptions) => {
         "  export PATH=\"$HOME/.bun/bin:$PATH\"",
         "  export BUN_INSTALL_IGNORE_SCRIPTS=0",
         "  export npm_config_ignore_scripts=false",
+        "  BUN_CHECK_OUTPUT=$(bun --version 2>&1 || true)",
+        "  if echo \"$BUN_CHECK_OUTPUT\" | grep -q 'postinstall script was not run'; then",
+        `    echo "[${options.vm}] Fixing bun postinstall..."`,
+        "    if command -v node >/dev/null 2>&1 && [ -f \"$HOME/.bun/install/global/node_modules/bun/install.js\" ]; then",
+        "      node \"$HOME/.bun/install/global/node_modules/bun/install.js\"",
+        "    fi",
+        "  fi",
         "  bun install",
         "fi"
       ].join("\n")
@@ -478,6 +526,7 @@ export const dispatchRun = (options: DispatchOptions) => {
   }
 
   console.log(`[${options.vm}] Starting Smithers workflow...`)
+  const follow = options.follow !== false
   const smithersScript = [
     `cd "${controlDir}"`,
     `echo "[${options.vm}] Control dir: $(pwd)"`,
@@ -505,10 +554,31 @@ export const dispatchRun = (options: DispatchOptions) => {
     .join("\n")
 
   if (process.platform === "darwin") {
-    limactlShell(options.vm, ["bash", "-lc", smithersScript])
+    const runScriptPath = `${controlDir}/run.sh`
+    writeFileInVm(options.vm, runScriptPath, `${smithersScript}\n`)
+    const runCmd = follow
+      ? `bash "${runScriptPath}"`
+      : `nohup bash "${runScriptPath}" > "${controlDir}/smithers.log" 2>&1 &`
+    limactlShell(options.vm, ["bash", "-lc", runCmd])
   } else if (process.platform === "linux") {
     const ip = getVmIp(options.vm)
     if (!ip) throw new Error(`Could not determine IP for VM '${options.vm}'. Is it running?`)
-    ssh(ip, ["bash", "-lc", smithersScript])
+    const runScriptPath = `${controlDir}/run.sh`
+    const script = `cat <<'EOF' > "${runScriptPath}"\n${smithersScript}\nEOF\nchmod +x "${runScriptPath}"`
+    ssh(ip, ["bash", "-lc", script])
+    const runCmd = follow
+      ? `bash "${runScriptPath}"`
+      : `nohup bash "${runScriptPath}" > "${controlDir}/smithers.log" 2>&1 &`
+    ssh(ip, ["bash", "-lc", runCmd])
+  }
+
+  return {
+    runId,
+    vm: options.vm,
+    workdir: vmWorkdir,
+    controlDir,
+    reportDir,
+    branch,
+    specId
   }
 }
