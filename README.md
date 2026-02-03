@@ -364,6 +364,14 @@ Describe change:    jj describe
 Push change:        jj git push --change @
 ```
 
+Set your JJ identity (recommended):
+```bash
+jj config set --user user.name "Your Name"
+jj config set --user user.email "you@company.com"
+```
+
+If JJ identity is missing, fabrik falls back to git identity (if set) or uses defaults.
+
 ### Changesets + JJ
 
 Changesets stays the same; JJ only replaces Git commands locally:

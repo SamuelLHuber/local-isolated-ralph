@@ -53,7 +53,7 @@ const copyFileLima = (vm: string, src: string, dest: string) => {
 const copyTarLima = (vm: string, baseDir: string, entry: string, destDir: string) => {
   const abs = join(baseDir, entry)
   if (!existsSync(abs)) return false
-  const script = `COPYFILE_DISABLE=1 tar -C "${baseDir}" -cf - "${entry}" | limactl shell "${vm}" sudo -u ralph tar -C "${destDir}" -xf -`
+  const script = `COPYFILE_DISABLE=1 tar -C "${baseDir}" -cf - "${entry}" | limactl shell "${vm}" sudo -u ralph tar --warning=no-unknown-keyword -C "${destDir}" -xf -`
   runShell(script)
   return true
 }
