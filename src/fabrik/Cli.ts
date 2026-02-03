@@ -11,6 +11,7 @@ import { listSpecs } from "./specs.js"
 import { resolveRalphHome } from "./embedded.js"
 import { laosDown, laosLogs, laosStatus, laosUp } from "./laos.js"
 import { syncCredentials } from "./credentials.js"
+import { dispatchRun } from "./dispatch.js"
 
 const defaultRalphHome = process.env.LOCAL_RALPH_HOME ?? join(homedir(), "git", "local-isolated-ralph")
 
@@ -122,7 +123,6 @@ const runCommand = Command.make(
     reviewModels
   }) => {
     const home = resolveRalphHome(ralphHome)
-    const script = resolve(home, "scripts", "dispatch.sh")
     const args: string[] = []
     const todoValue = unwrapOptional(todo)
     let projectValue = unwrapOptional(project)
@@ -141,6 +141,26 @@ const runCommand = Command.make(
         console.log(`[INFO] No --project provided; using current repo: ${cwd}`)
       }
     }
+    if (process.platform === "darwin") {
+      return Effect.sync(() =>
+        dispatchRun({
+          vm,
+          spec,
+          todo: todoValue ?? spec.replace(/\.min\.json$/i, ".todo.min.json"),
+          project: projectValue,
+          includeGit,
+          workflow: workflowValue ? resolve(workflowValue) : resolve(home, "scripts/smithers-spec-runner.tsx"),
+          reportDir: reportDirValue,
+          model: modelValue,
+          iterations: iterationsValue ?? undefined,
+          prompt: promptValue ? resolve(promptValue) : undefined,
+          reviewPrompt: reviewPromptValue ? resolve(reviewPromptValue) : undefined,
+          reviewModels: reviewModelsValue ? resolve(reviewModelsValue) : undefined,
+          reviewMax: reviewMaxValue ?? undefined
+        })
+      )
+    }
+    const script = resolve(home, "scripts", "dispatch.sh")
     if (includeGit) args.push("--include-git")
     args.push("--spec", spec)
     if (todoValue) args.push("--todo", todoValue)
