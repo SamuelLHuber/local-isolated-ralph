@@ -453,10 +453,6 @@ function TaskRunner() {
     reactiveDb,
     "SELECT value FROM state WHERE key = 'phase'"
   )
-  const { data: reviewIndexRaw } = useQueryValue<number>(
-    reactiveDb,
-    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'review.index'"
-  )
   const { data: reviewRetryRaw } = useQueryValue<number>(
     reactiveDb,
     "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'review.retry'"
@@ -478,7 +474,6 @@ function TaskRunner() {
   const index = indexRaw ?? 0
   const done = Boolean(doneRaw ?? 0)
   const phase = decodeStateString(phaseRaw) ?? "tasks"
-  const reviewIndex = reviewIndexRaw ?? 0
   const reviewRetry = reviewRetryRaw ?? 0
   const reviewTaskIndex = reviewTaskIndexRaw ?? 0
   const reviewTransition = decodeStateString(reviewTransitionRaw) ?? ""
@@ -489,11 +484,13 @@ function TaskRunner() {
     []
   ).data
 
+  const allReviewsComplete = () =>
+    reviewers.every((reviewer) => existsSync(join(reportDir, `review-${reviewer.id}.json`)))
+
   useEffect(() => {
     if (phase !== "review") return
-    const reviewer = reviewers[reviewIndex]
-    if (reviewer) return
     if (reviewTransition) return
+    if (!allReviewsComplete()) return
     const combined = combineReviews()
     if (combined.status === "approved") {
       writeReview(combined)
@@ -519,7 +516,7 @@ function TaskRunner() {
     db.state.set("review.task.index", 0, "review_task_start")
     db.state.set("phase", "review-tasks", "review_task_start")
     db.state.set("review.transition", "review-tasks", "review_transition")
-  }, [phase, reviewIndex, reviewRetry, reviewTransition])
+  }, [phase, reviewRetry, reviewTransition])
 
   useEffect(() => {
     if (phase !== "review-tasks") return
@@ -566,59 +563,65 @@ function TaskRunner() {
   }, [phase, reviewStarted])
 
   if (phase === "review") {
-    const reviewer = reviewers[reviewIndex]
-    if (!reviewer) {
+    if (allReviewsComplete()) {
       return <review status="pending" />
     }
-    const prompt = [
-      reviewerPrompt,
-      reviewer.prompt,
-      systemPrompt,
-      "",
-      `Reviewer: ${reviewer.title}`,
-      "Review the implementation against the spec, todo, and task reports.",
-      "Focus on correctness, tests, security, and strict spec compliance.",
-      "Verify changes were pushed (jj git push --change @) if applicable.",
-      "",
-      "Reports:",
-      readReports(),
-      "",
-      "Output:",
-      "Return a single JSON object that matches this schema:",
-      JSON.stringify(
-        {
-          v: 1,
-          status: "approved | changes_requested",
-          issues: ["..."],
-          next: ["..."]
-        },
-        null,
-        2
-      )
-    ]
-      .filter((line) => line !== "")
-      .join("\n")
-
-    const handleReviewFinished = (result: { output?: string }) => {
-      const review = parseReview(result.output)
-      writeReviewerResult(reviewer.id, review)
-      db.state.set("review.index", reviewIndex + 1, "review_advance")
-      ralph?.signalComplete()
-    }
-
-    const defaultProps = { onFinished: handleReviewFinished } as const
-    const codexProps = {
-      ...defaultProps,
-      model: reviewModelFor(reviewer.id),
-      ...codexDefaults,
-      cwd: execCwd
-    } as const
-
     return (
       <review status="running">
-        <If condition={reviewAgentKind === "codex"}>
-          <Codex {...codexProps}>{prompt}</Codex>
-        </If>
+        <Parallel>
+          {reviewers.map((reviewer) => {
+            if (existsSync(join(reportDir, `review-${reviewer.id}.json`))) {
+              return <reviewer-node key={reviewer.id} />
+            }
+            const prompt = [
+              reviewerPrompt,
+              reviewer.prompt,
+              systemPrompt,
+              "",
+              `Reviewer: ${reviewer.title}`,
+              "Review the implementation against the spec, todo, and task reports.",
+              "Focus on correctness, tests, security, and strict spec compliance.",
+              "Verify changes were pushed (jj git push --change @) if applicable.",
+              "",
+              "Reports:",
+              readReports(),
+              "",
+              "Output:",
+              "Return a single JSON object that matches this schema:",
+              JSON.stringify(
+                {
+                  v: 1,
+                  status: "approved | changes_requested",
+                  issues: ["..."],
+                  next: ["..."]
+                },
+                null,
+                2
+              )
+            ]
+              .filter((line) => line !== "")
+              .join("\n")
+            const handleReviewFinished = (result: { output?: string }) => {
+              const review = parseReview(result.output)
+              writeReviewerResult(reviewer.id, review)
+              ralph?.signalComplete()
+            }
+            const defaultProps = { onFinished: handleReviewFinished } as const
+            const codexProps = {
+              ...defaultProps,
+              model: reviewModelFor(reviewer.id),
+              ...codexDefaults,
+              cwd: execCwd
+            } as const
+            return (
+              <reviewer-node key={reviewer.id}>
+                <If condition={reviewAgentKind === "codex"}>
+                  <Codex {...codexProps}>{prompt}</Codex>
+                </If>
+              </reviewer-node>
+            )
+          })}
+        </Parallel>
       </review>
     )
   }
