@@ -266,7 +266,7 @@ Smithers is required. It consumes minified spec/todo JSON and executes tasks wit
 
 Default models:
 - Claude: `opus`
-- Codex: `codex-5.2` (reasoning `medium`, sandbox `danger-full-access`, approval policy `never`)
+- Codex: `gpt-5.2-codex` (reasoning `medium`, sandbox `danger-full-access`)
 
 PROMPT control:
 - Pass `--prompt` to prepend a per-run `PROMPT.md` (implementation instructions).

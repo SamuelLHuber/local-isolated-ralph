@@ -44,7 +44,7 @@ const agentKind = (env.SMITHERS_AGENT ?? env.RALPH_AGENT ?? "codex").toLowerCase
 const model =
   env.SMITHERS_MODEL ??
   env.MODEL ??
-  (agentKind === "codex" ? "codex-5.2" : "opus")
+  (agentKind === "codex" ? "gpt-5.2-codex" : "opus")
 const maxIterations = Number(env.SMITHERS_MAX_ITERATIONS ?? env.MAX_ITERATIONS ?? 3)
 
 if (!Orchestrator.OpenCode && agentKind === "opencode") {
