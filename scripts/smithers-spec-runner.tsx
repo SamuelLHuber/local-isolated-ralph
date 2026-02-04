@@ -924,18 +924,22 @@ const prompt = [
     )
   }
 
-  if (done || index >= todo.tasks.length) {
-    if (!done) {
-      db.state.set("task.done", 1, "complete")
+  useEffect(() => {
+    if (done) return
+    if (index < todo.tasks.length) return
+    db.state.set("task.done", 1, "complete")
+    if (runReview && phase !== "review") {
+      db.state.set("phase", "review", "review_start")
+      return
     }
-    if (runReview) {
-      if (phase !== "review") {
-        db.state.set("phase", "review", "review_start")
-      }
-      return <review status="pending" />
-    }
-    if (phase !== "done") {
+    if (!runReview && phase !== "done") {
       db.state.set("phase", "done", "complete")
+    }
+  }, [done, index, phase])
+
+  if (done || index >= todo.tasks.length) {
+    if (runReview) {
+      return <review status="pending" />
     }
     return <done status="complete" />
   }
