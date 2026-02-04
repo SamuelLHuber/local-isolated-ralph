@@ -650,7 +650,7 @@ function TaskRunner() {
     const until = Date.parse(rateLimitUntil)
     if (!Number.isFinite(until)) return
     if (Date.now() < until) return
-    db.state.set("rate.limit.until", "", "rate_limit_clear")
+    setState("rate.limit.until", "", "rate_limit_clear")
   }, [rateLimitUntil])
 
   useEffect(() => {
