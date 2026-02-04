@@ -84,7 +84,6 @@ const reviewersDir = env.SMITHERS_REVIEWERS_DIR
 const reviewModelsPath = env.SMITHERS_REVIEW_MODELS_FILE
 const execCwd = env.SMITHERS_CWD ? resolve(env.SMITHERS_CWD) : process.cwd()
 const runId = env.SMITHERS_RUN_ID ?? ""
-const specId = spec.id ?? ""
 const branchName = env.SMITHERS_BRANCH ?? ""
 const workflowShaExpected = env.SMITHERS_WORKFLOW_SHA ?? ""
   const agentKind = (env.SMITHERS_AGENT ?? env.RALPH_AGENT ?? "codex").toLowerCase()
@@ -103,6 +102,7 @@ if (!Orchestrator.OpenCode && agentKind === "opencode") {
 
 const spec = JSON.parse(readFileSync(specPath, "utf8")) as Spec
 const todo = JSON.parse(readFileSync(todoPath, "utf8")) as Todo
+const specId = spec.id ?? ""
 
 const workflowPath = process.argv[1]
 const workflowShaActual = (() => {
