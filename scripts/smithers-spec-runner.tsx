@@ -1,9 +1,9 @@
 #!/usr/bin/env smithers
 /** @jsxImportSource smithers-orchestrator */
-import { readFileSync, mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs"
+import { readFileSync, mkdirSync, writeFileSync, existsSync, readdirSync, unlinkSync } from "node:fs"
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import { basename, join, resolve } from "node:path"
 import * as Orchestrator from "smithers-orchestrator"
 
@@ -203,18 +203,19 @@ const runJj = (args: string[]) => {
 }
 
 const pushBookmark = (branch: string) => {
-  if (!branch) return
+  if (!branch) return { ok: false, output: "missing branch name" }
   const first = runJj(["git", "push", "--bookmark", branch])
-  if (first.ok) return
+  if (first.ok) return { ok: true, output: first.output }
   if (first.output.includes("Refusing to create new remote bookmark")) {
     runJj(["bookmark", "track", branch, "--remote=origin"])
     const second = runJj(["git", "push", "--bookmark", branch])
-    if (second.ok) return
-    console.log(`[WARN] Failed to push JJ bookmark ${branch}: ${second.output || "unknown error"}`)
-    return
+    if (second.ok) return { ok: true, output: second.output }
+    return { ok: false, output: second.output || "unknown error" }
   }
-  console.log(`[WARN] Failed to push JJ bookmark ${branch}: ${first.output || "unknown error"}`)
+  return { ok: false, output: first.output || "unknown error" }
 }
+
+const pushChange = () => runJj(["git", "push", "--change", "@"])
 
 const hasWorkingChanges = () => {
   const result = runJj(["diff", "--stat"])
@@ -486,9 +487,22 @@ const readReports = (): string => {
   }
 }
 
+const clearReviewArtifacts = () => {
+  for (const reviewer of reviewers) {
+    const path = join(reportDir, `review-${reviewer.id}.json`)
+    if (existsSync(path)) unlinkSync(path)
+  }
+  const combined = join(reportDir, "review.json")
+  if (existsSync(combined)) unlinkSync(combined)
+  const todo = join(reportDir, "review-todo.json")
+  if (existsSync(todo)) unlinkSync(todo)
+}
+
 function TaskRunner() {
   const { db, reactiveDb } = useSmithers()
   const ralph = useRalphIteration()
+  const reviewTransitionRef = useRef<string>("")
+  const taskToReviewRef = useRef<string>("")
   const setState = (key: string, value: string | number, reason: string) => {
     setTimeout(() => db.state.set(key, value, reason), 0)
   }
@@ -590,28 +604,46 @@ function TaskRunner() {
 
   // Rate limit and review-start timers are handled externally to avoid re-render loops.
 
+  useEffect(() => {
+    if (!runReview) return
+    if (phase !== "tasks") return
+    if (!done && index < todo.tasks.length) return
+    const key = `tasks-to-review:${index}:${done}`
+    if (taskToReviewRef.current === key) return
+    taskToReviewRef.current = key
+    setState("phase", "review", "tasks_complete")
+  }, [phase, done, index])
+
+  useEffect(() => {
+    if (phase !== "review") return
+    if (!allReviewsComplete()) return
+    const key = `review-complete:${reviewRetry}:${reviewTick}`
+    if (reviewTransitionRef.current === key) return
+    reviewTransitionRef.current = key
+    const combined = combineReviews()
+    writeReview(combined)
+    if (combined.status === "approved") {
+      writeHumanGate("Human review required before next spec run.")
+      setState("phase", "done", "review_done")
+      setState("task.done", 1, "review_done")
+      return
+    }
+    if (reviewRetry >= reviewMax) {
+      writeHumanGate("Reviewers requested changes. Max retries reached; human decision required.")
+      setState("phase", "done", "review_done")
+      setState("task.done", 1, "review_done")
+      return
+    }
+    const reviewTasks = buildReviewTasks()
+    writeReviewTodo(reviewTasks)
+    setState("review.retry", reviewRetry + 1, "review_retry")
+    setState("review.task.index", 0, "review_task_start")
+    setState("phase", "review-tasks", "review_task_start")
+  }, [phase, reviewRetry, reviewTick])
+
   if (phase === "review") {
     const allComplete = allReviewsComplete()
     if (allComplete) {
-      const combined = combineReviews()
-      writeReview(combined)
-      if (combined.status === "approved") {
-        writeHumanGate("Human review required before next spec run.")
-        setState("phase", "done", "review_done")
-        setState("task.done", 1, "review_done")
-        return <review status="pending" />
-      }
-      if (reviewRetry >= reviewMax) {
-        writeHumanGate("Reviewers requested changes. Max retries reached; human decision required.")
-        setState("phase", "done", "review_done")
-        setState("task.done", 1, "review_done")
-        return <review status="pending" />
-      }
-      const reviewTasks = buildReviewTasks()
-      writeReviewTodo(reviewTasks)
-      setState("review.retry", reviewRetry + 1, "review_retry")
-      setState("review.task.index", 0, "review_task_start")
-      setState("phase", "review-tasks", "review_task_start")
       return <review status="pending" />
     }
     if (rateLimitUntil) {
@@ -775,7 +807,12 @@ const prompt = [
         report.commit = "no-op"
         report.work = [...report.work, "No working copy changes detected; skipped describe/push."]
         writeReport(report)
-        setState("review.task.index", reviewTaskIndex + 1, "review_task_advance")
+        const nextIndex = reviewTaskIndex + 1
+        setState("review.task.index", nextIndex, "review_task_advance")
+        if (nextIndex >= reviewTasks.length) {
+          clearReviewArtifacts()
+          setState("phase", "review", "review_task_complete")
+        }
         ralph?.signalComplete()
         return
       }
@@ -797,8 +834,26 @@ const prompt = [
         return
       }
 
-      pushBookmark(branchName)
-      setState("review.task.index", reviewTaskIndex + 1, "review_task_advance")
+      const pushResult = branchName ? pushBookmark(branchName) : pushChange()
+      if (!pushResult.ok) {
+        report.status = "blocked"
+        report.error = `jj push failed: ${pushResult.output || "unknown error"}`
+        report.rootCause = "Failed to push changes"
+        report.reasoning = "Changes must be pushed to the remote branch for safety."
+        report.fix = "Resolve JJ push error and retry."
+        writeReport(report)
+        setState("task.blocked", 1, "commit_push_failed")
+        setState("task.done", 1, "commit_push_failed")
+        setState("phase", "done", "commit_push_failed")
+        ralph?.signalComplete()
+        return
+      }
+      const nextIndex = reviewTaskIndex + 1
+      setState("review.task.index", nextIndex, "review_task_advance")
+      if (nextIndex >= reviewTasks.length) {
+        clearReviewArtifacts()
+        setState("phase", "review", "review_task_complete")
+      }
       ralph?.signalComplete()
     }
 
@@ -935,6 +990,9 @@ const prompt = [
       setState("task.index", index + 1, "advance")
       if (index + 1 >= todo.tasks.length) {
         setState("task.done", 1, "complete")
+        if (runReview) {
+          setState("phase", "review", "tasks_complete")
+        }
       }
       ralph?.signalComplete()
       return
@@ -957,10 +1015,26 @@ const prompt = [
       return
     }
 
-    pushBookmark(branchName)
+    const pushResult = branchName ? pushBookmark(branchName) : pushChange()
+    if (!pushResult.ok) {
+      report.status = "blocked"
+      report.error = `jj push failed: ${pushResult.output || "unknown error"}`
+      report.rootCause = "Failed to push changes"
+      report.reasoning = "Changes must be pushed to the remote branch for safety."
+      report.fix = "Resolve JJ push error and retry."
+      writeReport(report)
+      setState("task.blocked", 1, "commit_push_failed")
+      setState("task.done", 1, "commit_push_failed")
+      setState("phase", "done", "commit_push_failed")
+      ralph?.signalComplete()
+      return
+    }
     setState("task.index", index + 1, "advance")
     if (index + 1 >= todo.tasks.length) {
       setState("task.done", 1, "complete")
+      if (runReview) {
+        setState("phase", "review", "tasks_complete")
+      }
     }
     ralph?.signalComplete()
   }
