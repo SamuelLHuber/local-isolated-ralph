@@ -581,21 +581,12 @@ function TaskRunner() {
     // Disabled: usage accounting caused nested state update loops in production Smithers builds.
   }
   const reviewStarted = ""
-
   const allReviewsComplete = () =>
     reviewers.every((reviewer) => existsSync(join(reportDir, `review-${reviewer.id}.json`)))
 
   // Review transitions are handled explicitly by task completion to avoid nested update loops.
 
-  useEffect(() => {
-    if (!workflowShaExpected || !workflowShaActual) return
-    if (workflowShaExpected !== workflowShaActual) {
-      writeHumanGate("Workflow SHA mismatch; re-copy smithers-spec-runner.tsx and resume.")
-      setState("task.blocked", 1, "workflow_sha_mismatch")
-      setState("task.done", 1, "workflow_sha_mismatch")
-      setState("phase", "done", "workflow_sha_mismatch")
-    }
-  }, [workflowShaExpected, workflowShaActual])
+  // Workflow SHA is validated during dispatch; avoid state writes here to prevent nested updates.
 
   // Rate limit and review-start timers are handled externally to avoid re-render loops.
 
@@ -705,16 +696,11 @@ function TaskRunner() {
   if (phase === "review-tasks") {
     const reviewTasks = readReviewTodo()
     if (reviewTasks.length === 0) {
-      writeHumanGate("Reviewer changes requested but no tasks were generated. Human decision required.")
-      setState("phase", "done", "review_done")
-      setState("task.done", 1, "review_done")
       return <review status="review-tasks-empty" />
     }
 
     const task = reviewTasks[reviewTaskIndex]
     if (!task) {
-      setState("phase", "review", "review_restart")
-      setState("review.index", 0, "review_restart")
       return <review status="review-restart" />
     }
 
@@ -835,19 +821,6 @@ const prompt = [
       </review-task>
     )
   }
-
-  useEffect(() => {
-    if (done) return
-    if (index < todo.tasks.length) return
-    setState("task.done", 1, "complete")
-    if (runReview && phase !== "review") {
-      setState("phase", "review", "review_start")
-      return
-    }
-    if (!runReview && phase !== "done") {
-      setState("phase", "done", "complete")
-    }
-  }, [done, index, phase])
 
   if (done || index >= todo.tasks.length) {
     if (runReview) {
