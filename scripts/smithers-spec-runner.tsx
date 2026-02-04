@@ -545,51 +545,15 @@ function TaskRunner() {
     "SELECT value FROM state WHERE key = 'rate.limit.until'",
     []
   )
-  const { data: usageInputRaw } = useQueryValue<number>(
-    reactiveDb,
-    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'usage.input'",
-    []
-  )
-  const { data: usageOutputRaw } = useQueryValue<number>(
-    reactiveDb,
-    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'usage.output'",
-    []
-  )
-  const { data: usageTotalRaw } = useQueryValue<number>(
-    reactiveDb,
-    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'usage.total'",
-    []
-  )
-  const { data: usageTaskInputRaw } = useQueryValue<number>(
-    reactiveDb,
-    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'usage.task.input'",
-    []
-  )
-  const { data: usageTaskOutputRaw } = useQueryValue<number>(
-    reactiveDb,
-    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'usage.task.output'",
-    []
-  )
-  const { data: usageTaskTotalRaw } = useQueryValue<number>(
-    reactiveDb,
-    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'usage.task.total'",
-    []
-  )
-  const { data: usageReviewInputRaw } = useQueryValue<number>(
-    reactiveDb,
-    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'usage.review.input'",
-    []
-  )
-  const { data: usageReviewOutputRaw } = useQueryValue<number>(
-    reactiveDb,
-    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'usage.review.output'",
-    []
-  )
-  const { data: usageReviewTotalRaw } = useQueryValue<number>(
-    reactiveDb,
-    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'usage.review.total'",
-    []
-  )
+  const usageInputRaw = 0
+  const usageOutputRaw = 0
+  const usageTotalRaw = 0
+  const usageTaskInputRaw = 0
+  const usageTaskOutputRaw = 0
+  const usageTaskTotalRaw = 0
+  const usageReviewInputRaw = 0
+  const usageReviewOutputRaw = 0
+  const usageReviewTotalRaw = 0
   const index = indexRaw ?? 0
   const done = Boolean(doneRaw ?? 0)
   const phase = decodeStateString(phaseRaw) ?? "tasks"
