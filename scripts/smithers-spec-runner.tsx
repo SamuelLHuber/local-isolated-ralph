@@ -580,11 +580,7 @@ function TaskRunner() {
   const bumpUsage = (_kind: "task" | "review", _result: { tokensUsed?: { input?: number; output?: number } }) => {
     // Disabled: usage accounting caused nested state update loops in production Smithers builds.
   }
-  const reviewStarted = useQueryValue<string>(
-    reactiveDb,
-    "SELECT value FROM state WHERE key = 'review.started_at'",
-    []
-  ).data
+  const reviewStarted = ""
 
   const allReviewsComplete = () =>
     reviewers.every((reviewer) => existsSync(join(reportDir, `review-${reviewer.id}.json`)))
@@ -659,18 +655,9 @@ function TaskRunner() {
 
   useEffect(() => {
     if (phase !== "review") return
-    if (!reviewStarted) {
-      setState("review.started_at", new Date().toISOString(), "review_started")
-      return
-    }
-    const elapsed = Date.now() - Date.parse(reviewStarted)
-    if (Number.isFinite(reviewTimeoutMs) && elapsed > reviewTimeoutMs) {
-      writeHumanGate("Review timeout exceeded; no review outputs produced.")
-      setState("task.blocked", 1, "review_timeout")
-      setState("task.done", 1, "review_timeout")
-      setState("phase", "done", "review_timeout")
-    }
-  }, [phase, reviewStarted])
+    const startedAt = new Date().toISOString()
+    setState("review.started_at", startedAt, "review_started")
+  }, [phase])
 
   if (phase === "review") {
     if (allReviewsComplete()) {
