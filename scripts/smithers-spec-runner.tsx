@@ -490,7 +490,7 @@ function TaskRunner() {
   const { db, reactiveDb } = useSmithers()
   const ralph = useRalphIteration()
   const setState = (key: string, value: string | number, reason: string) => {
-    queueMicrotask(() => db.state.set(key, value, reason))
+    setTimeout(() => db.state.set(key, value, reason), 0)
   }
   const decodeStateString = (value?: string) => {
     if (!value) return value
