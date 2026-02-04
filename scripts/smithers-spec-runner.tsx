@@ -574,23 +574,8 @@ function TaskRunner() {
   const usageReviewOutput = usageReviewOutputRaw ?? 0
   const usageReviewTotal = usageReviewTotalRaw ?? 0
 
-  const bumpUsage = (kind: "task" | "review", result: { tokensUsed?: { input?: number; output?: number } }) => {
-    const inputTokens = result.tokensUsed?.input ?? 0
-    const outputTokens = result.tokensUsed?.output ?? 0
-    if (inputTokens === 0 && outputTokens === 0) return
-    const totalTokens = inputTokens + outputTokens
-    db.state.set("usage.input", usageInput + inputTokens, "usage")
-    db.state.set("usage.output", usageOutput + outputTokens, "usage")
-    db.state.set("usage.total", usageTotal + totalTokens, "usage")
-    if (kind === "task") {
-      db.state.set("usage.task.input", usageTaskInput + inputTokens, "usage")
-      db.state.set("usage.task.output", usageTaskOutput + outputTokens, "usage")
-      db.state.set("usage.task.total", usageTaskTotal + totalTokens, "usage")
-    } else {
-      db.state.set("usage.review.input", usageReviewInput + inputTokens, "usage")
-      db.state.set("usage.review.output", usageReviewOutput + outputTokens, "usage")
-      db.state.set("usage.review.total", usageReviewTotal + totalTokens, "usage")
-    }
+  const bumpUsage = (_kind: "task" | "review", _result: { tokensUsed?: { input?: number; output?: number } }) => {
+    // Disabled: usage accounting caused nested state update loops in production Smithers builds.
   }
   const reviewStarted = useQueryValue<string>(
     reactiveDb,
