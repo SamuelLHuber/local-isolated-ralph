@@ -602,21 +602,16 @@ function TaskRunner() {
   if (phase === "review") {
     const allComplete = allReviewsComplete()
     if (allComplete) {
-      if (reviewTransition) {
-        return <review status="pending" />
-      }
       const combined = combineReviews()
       writeReview(combined)
       if (combined.status === "approved") {
         writeHumanGate("Human review required before next spec run.")
-        setState("review.transition", "done", "review_transition")
         setState("phase", "done", "review_done")
         setState("task.done", 1, "review_done")
         return <review status="pending" />
       }
       if (reviewRetry >= reviewMax) {
         writeHumanGate("Reviewers requested changes. Max retries reached; human decision required.")
-        setState("review.transition", "done", "review_transition")
         setState("phase", "done", "review_done")
         setState("task.done", 1, "review_done")
         return <review status="pending" />
@@ -625,7 +620,6 @@ function TaskRunner() {
       writeReviewTodo(reviewTasks)
       setState("review.retry", reviewRetry + 1, "review_retry")
       setState("review.task.index", 0, "review_task_start")
-      setState("review.transition", "review-tasks", "review_transition")
       setState("phase", "review-tasks", "review_task_start")
       return <review status="pending" />
     }
@@ -711,11 +705,7 @@ function TaskRunner() {
   if (phase === "review-tasks") {
     const reviewTasks = readReviewTodo()
     if (reviewTasks.length === 0) {
-      if (reviewTasksTransition) {
-        return <review status="review-tasks-empty" />
-      }
       writeHumanGate("Reviewer changes requested but no tasks were generated. Human decision required.")
-      setState("review.tasks.transition", "done", "review_tasks_transition")
       setState("phase", "done", "review_done")
       setState("task.done", 1, "review_done")
       return <review status="review-tasks-empty" />
@@ -723,10 +713,6 @@ function TaskRunner() {
 
     const task = reviewTasks[reviewTaskIndex]
     if (!task) {
-      if (reviewTasksTransition) {
-        return <review status="review-restart" />
-      }
-      setState("review.tasks.transition", "restart", "review_tasks_transition")
       setState("phase", "review", "review_restart")
       setState("review.index", 0, "review_restart")
       return <review status="review-restart" />
