@@ -489,6 +489,9 @@ const readReports = (): string => {
 function TaskRunner() {
   const { db, reactiveDb } = useSmithers()
   const ralph = useRalphIteration()
+  const setState = (key: string, value: string | number, reason: string) => {
+    queueMicrotask(() => db.state.set(key, value, reason))
+  }
   const decodeStateString = (value?: string) => {
     if (!value) return value
     const trimmed = value.trim()
@@ -594,27 +597,27 @@ function TaskRunner() {
     if (combined.status === "approved") {
       writeReview(combined)
       writeHumanGate("Human review required before next spec run.")
-      db.state.set("phase", "done", "review_done")
-      db.state.set("task.done", 1, "review_done")
-      db.state.set("review.transition", "done", "review_transition")
+      setState("phase", "done", "review_done")
+      setState("task.done", 1, "review_done")
+      setState("review.transition", "done", "review_transition")
       return
     }
 
     if (reviewRetry >= reviewMax) {
       writeReview(combined)
       writeHumanGate("Reviewers requested changes. Max retries reached; human decision required.")
-      db.state.set("phase", "done", "review_done")
-      db.state.set("task.done", 1, "review_done")
-      db.state.set("review.transition", "done", "review_transition")
+      setState("phase", "done", "review_done")
+      setState("task.done", 1, "review_done")
+      setState("review.transition", "done", "review_transition")
       return
     }
 
     const reviewTasks = buildReviewTasks()
     writeReviewTodo(reviewTasks)
-    db.state.set("review.retry", reviewRetry + 1, "review_retry")
-    db.state.set("review.task.index", 0, "review_task_start")
-    db.state.set("phase", "review-tasks", "review_task_start")
-    db.state.set("review.transition", "review-tasks", "review_transition")
+    setState("review.retry", reviewRetry + 1, "review_retry")
+    setState("review.task.index", 0, "review_task_start")
+    setState("phase", "review-tasks", "review_task_start")
+    setState("review.transition", "review-tasks", "review_transition")
   }, [phase, reviewRetry, reviewTransition, reviewTick])
 
   useEffect(() => {
@@ -623,16 +626,16 @@ function TaskRunner() {
     const reviewTasks = readReviewTodo()
     if (reviewTasks.length === 0) {
       writeHumanGate("Reviewer changes requested but no tasks were generated. Human decision required.")
-      db.state.set("phase", "done", "review_done")
-      db.state.set("task.done", 1, "review_done")
-      db.state.set("review.tasks.transition", "done", "review_tasks_transition")
+      setState("phase", "done", "review_done")
+      setState("task.done", 1, "review_done")
+      setState("review.tasks.transition", "done", "review_tasks_transition")
       return
     }
     const task = reviewTasks[reviewTaskIndex]
     if (!task) {
-      db.state.set("phase", "review", "review_restart")
-      db.state.set("review.index", 0, "review_restart")
-      db.state.set("review.tasks.transition", "restart", "review_tasks_transition")
+      setState("phase", "review", "review_restart")
+      setState("review.index", 0, "review_restart")
+      setState("review.tasks.transition", "restart", "review_tasks_transition")
     }
   }, [phase, reviewTaskIndex, reviewTasksTransition])
 
@@ -640,9 +643,9 @@ function TaskRunner() {
     if (!workflowShaExpected || !workflowShaActual) return
     if (workflowShaExpected !== workflowShaActual) {
       writeHumanGate("Workflow SHA mismatch; re-copy smithers-spec-runner.tsx and resume.")
-      db.state.set("task.blocked", 1, "workflow_sha_mismatch")
-      db.state.set("task.done", 1, "workflow_sha_mismatch")
-      db.state.set("phase", "done", "workflow_sha_mismatch")
+      setState("task.blocked", 1, "workflow_sha_mismatch")
+      setState("task.done", 1, "workflow_sha_mismatch")
+      setState("phase", "done", "workflow_sha_mismatch")
     }
   }, [workflowShaExpected, workflowShaActual])
 
@@ -657,15 +660,15 @@ function TaskRunner() {
   useEffect(() => {
     if (phase !== "review") return
     if (!reviewStarted) {
-      db.state.set("review.started_at", new Date().toISOString(), "review_started")
+      setState("review.started_at", new Date().toISOString(), "review_started")
       return
     }
     const elapsed = Date.now() - Date.parse(reviewStarted)
     if (Number.isFinite(reviewTimeoutMs) && elapsed > reviewTimeoutMs) {
       writeHumanGate("Review timeout exceeded; no review outputs produced.")
-      db.state.set("task.blocked", 1, "review_timeout")
-      db.state.set("task.done", 1, "review_timeout")
-      db.state.set("phase", "done", "review_timeout")
+      setState("task.blocked", 1, "review_timeout")
+      setState("task.done", 1, "review_timeout")
+      setState("phase", "done", "review_timeout")
     }
   }, [phase, reviewStarted])
 
@@ -717,19 +720,19 @@ function TaskRunner() {
                 const until = new Date(Date.now() + delayMs).toISOString()
                 const label = formatBackoffLabel(rateLimitCount)
                 writeHumanGate(`Rate limit hit during review. Backoff: ${label}. Resume after ${until}.`)
-                db.state.set("rate.limit.count", rateLimitCount + 1, "rate_limit")
+                setState("rate.limit.count", rateLimitCount + 1, "rate_limit")
                 if (delayMs > 0) {
-                  db.state.set("rate.limit.until", until, "rate_limit")
+                  setState("rate.limit.until", until, "rate_limit")
                 }
-                db.state.set("task.blocked", 1, "rate_limit")
-                db.state.set("task.done", 1, "rate_limit")
-                db.state.set("phase", "done", "rate_limit")
+                setState("task.blocked", 1, "rate_limit")
+                setState("task.done", 1, "rate_limit")
+                setState("phase", "done", "rate_limit")
                 return
               }
               const review = parseReview(result.output)
               writeReviewerResult(reviewer.id, review)
               bumpUsage("review", result)
-              db.state.set("review.tick", new Date().toISOString(), "review_tick")
+              setState("review.tick", new Date().toISOString(), "review_tick")
               ralph?.signalComplete()
             }
             const defaultProps = { onFinished: handleReviewFinished } as const
@@ -824,8 +827,8 @@ const prompt = [
       writeReport(report)
 
       if (report.status !== "done") {
-        db.state.set("task.done", 1, "review_task_failed")
-        db.state.set("phase", "done", "review_task_failed")
+        setState("task.done", 1, "review_task_failed")
+        setState("phase", "done", "review_task_failed")
         ralph?.signalComplete()
         return
       }
@@ -834,7 +837,7 @@ const prompt = [
         report.commit = "no-op"
         report.work = [...report.work, "No working copy changes detected; skipped describe/push."]
         writeReport(report)
-        db.state.set("review.task.index", reviewTaskIndex + 1, "review_task_advance")
+        setState("review.task.index", reviewTaskIndex + 1, "review_task_advance")
         ralph?.signalComplete()
         return
       }
@@ -849,15 +852,15 @@ const prompt = [
         report.reasoning = "JJ describe must succeed before push."
         report.fix = "Resolve JJ error and retry."
         writeReport(report)
-        db.state.set("task.blocked", 1, "commit_describe_failed")
-        db.state.set("task.done", 1, "commit_describe_failed")
-        db.state.set("phase", "done", "commit_describe_failed")
+        setState("task.blocked", 1, "commit_describe_failed")
+        setState("task.done", 1, "commit_describe_failed")
+        setState("phase", "done", "commit_describe_failed")
         ralph?.signalComplete()
         return
       }
 
       pushBookmark(branchName)
-      db.state.set("review.task.index", reviewTaskIndex + 1, "review_task_advance")
+      setState("review.task.index", reviewTaskIndex + 1, "review_task_advance")
       ralph?.signalComplete()
     }
 
@@ -884,13 +887,13 @@ const prompt = [
   useEffect(() => {
     if (done) return
     if (index < todo.tasks.length) return
-    db.state.set("task.done", 1, "complete")
+    setState("task.done", 1, "complete")
     if (runReview && phase !== "review") {
-      db.state.set("phase", "review", "review_start")
+      setState("phase", "review", "review_start")
       return
     }
     if (!runReview && phase !== "done") {
-      db.state.set("phase", "done", "complete")
+      setState("phase", "done", "complete")
     }
   }, [done, index, phase])
 
@@ -970,13 +973,13 @@ const prompt = [
       report.fix = "Wait for quota reset then resume the run."
       writeReport(report)
       writeHumanGate(`Rate limit hit. Backoff: ${label}. Resume after ${until}.`)
-      db.state.set("rate.limit.count", rateLimitCount + 1, "rate_limit")
+      setState("rate.limit.count", rateLimitCount + 1, "rate_limit")
       if (delayMs > 0) {
-        db.state.set("rate.limit.until", until, "rate_limit")
+        setState("rate.limit.until", until, "rate_limit")
       }
-      db.state.set("task.blocked", 1, "rate_limit")
-      db.state.set("task.done", 1, "rate_limit")
-      db.state.set("phase", "done", "rate_limit")
+      setState("task.blocked", 1, "rate_limit")
+      setState("task.done", 1, "rate_limit")
+      setState("phase", "done", "rate_limit")
       ralph?.signalComplete()
       return
     }
@@ -985,17 +988,17 @@ const prompt = [
     bumpUsage("task", result)
 
     if (report.status === "blocked") {
-      db.state.set("task.blocked", 1, "blocked")
-      db.state.set("task.done", 1, "blocked")
-      db.state.set("phase", "done", "blocked")
+      setState("task.blocked", 1, "blocked")
+      setState("task.done", 1, "blocked")
+      setState("phase", "done", "blocked")
       ralph?.signalComplete()
       return
     }
 
     if (report.status === "failed") {
-      db.state.set("task.failed", 1, "failed")
-      db.state.set("task.done", 1, "failed")
-      db.state.set("phase", "done", "failed")
+      setState("task.failed", 1, "failed")
+      setState("task.done", 1, "failed")
+      setState("phase", "done", "failed")
       ralph?.signalComplete()
       return
     }
@@ -1004,9 +1007,9 @@ const prompt = [
       report.commit = "no-op"
       report.work = [...report.work, "No working copy changes detected; skipped describe/push."]
       writeReport(report)
-      db.state.set("task.index", index + 1, "advance")
+      setState("task.index", index + 1, "advance")
       if (index + 1 >= todo.tasks.length) {
-        db.state.set("task.done", 1, "complete")
+        setState("task.done", 1, "complete")
       }
       ralph?.signalComplete()
       return
@@ -1022,17 +1025,17 @@ const prompt = [
       report.reasoning = "JJ describe must succeed before push."
       report.fix = "Resolve JJ error and retry."
       writeReport(report)
-      db.state.set("task.blocked", 1, "commit_describe_failed")
-      db.state.set("task.done", 1, "commit_describe_failed")
-      db.state.set("phase", "done", "commit_describe_failed")
+      setState("task.blocked", 1, "commit_describe_failed")
+      setState("task.done", 1, "commit_describe_failed")
+      setState("phase", "done", "commit_describe_failed")
       ralph?.signalComplete()
       return
     }
 
     pushBookmark(branchName)
-    db.state.set("task.index", index + 1, "advance")
+    setState("task.index", index + 1, "advance")
     if (index + 1 >= todo.tasks.length) {
-      db.state.set("task.done", 1, "complete")
+      setState("task.done", 1, "complete")
     }
     ralph?.signalComplete()
   }
