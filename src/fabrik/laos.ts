@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto"
 import { execFileSync } from "node:child_process"
 
 const defaultRepo = "https://github.com/dtechvision/laos"
-const defaultBranch = "main"
+const defaultBranch = "master"
 
 export type LaosConfig = {
   repoUrl?: string | unknown
@@ -119,7 +119,7 @@ export const laosUp = (config: LaosConfig) => {
   }
   const dir = ensureRepo(config)
   ensureEnv(dir)
-  run("docker", ["compose", "up", "-d"], dir)
+  run("bash", ["./scripts/laos-up.sh"], dir)
 }
 
 export const laosDown = (config: LaosConfig) => {
