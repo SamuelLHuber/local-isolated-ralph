@@ -1,0 +1,14 @@
+- Game engine
+- Chess engine
+- Browser engine
+- Game NPCs with their own routine and daily cycle, where it's personalized and based on their own back stories
+- for research, verify sources as if you were a strict top-class university professor at the best university of the world, optimize for the most high quality sources
+- write hardware drivers for a specific embedded system. we would need bluetooth, network, usb and all other port drivers.
+- for cli tooling make sure to optimize for maximum speed and UX
+- 3D MMORPGs
+- Programming language thoroughly optimized for a very specic problem statement and hardware
+- SW perfomance optimization to get the best performance possible, for which we can use concurrency, parallelization (but make sure to not have any race conditions)
+- based on Figma/screenshots build a functional and matching UI with the best possible UX imaginable for that interface
+- 3D Assassins Creed Black Flag ship battles
+- refactor code into TS/Effect/Rust/C, convert web app into Expo/React Native using iOS/Android native parts
+- 3D world with your own 3D avatar where you can customize your PoV and add multiplayer
