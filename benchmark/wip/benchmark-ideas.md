@@ -12,3 +12,6 @@
 - 3D Assassins Creed Black Flag ship battles
 - refactor code into TS/Effect/Rust/C, convert web app into Expo/React Native using iOS/Android native parts
 - 3D world with your own 3D avatar where you can customize your PoV and add multiplayer
+- Algorithm design, implementation and verification. Give a very hard problem and let the solution algorithm it's implementation and benchmarking / verification be part of the eval. the ouput benchmark and report is compared for eval of this test
+- ADA Spark formally verified correct application
+- Architecture of software that scales & works e.g. results verified via set of load and performance tests + functional compliance like hidden unit tests. e.g. clone stripe + an app that integrates it, docs = coding page + do the BD outreach, marketing copy, templates, playbooks for BD/marketing/outreach, KPIs and more. Basically give the prompt for a full company and get it.
