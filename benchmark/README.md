@@ -71,6 +71,20 @@ prompt:
 3. The smithers‑tribune will automatically load the prompt and run the
    review agent.
 
+## Benchmarking itself, data collection
+
+Hardware / Inference Benchmark to compare which underlying provider or own infrastructure setup can support how many parallel executions and drive what level of greatness.
+The goal being to measure the pipeline it enables and can support.
+
+to measure:
+- tok/second returned for one api call response
+- tok/second average over a run with (1, 2, 4, 8, 12, 16, 20, 25, 50, 75, 100, 200, 300, 400, 500, 1000, 100000) concurrent calls
+- per-run token usage total tokens, input tokens, tokens hitting cache if available, output tokens, reasoning tokens
+- context used (min, max, avg)
+- total amount of tokens
+- num iterations
+- time to complection of spec
+
 ## Future Work
 
 * Integration with Grafana dashboards for real‑time OTEL metrics.
