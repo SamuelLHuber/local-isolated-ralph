@@ -5,6 +5,7 @@ import ts from "typescript"
 import { runCommand, runCommandOutput } from "./exec.js"
 import { ensureAnyCommand, ensureCommands, hasCommand } from "./prereqs.js"
 import { insertRun, openRunDb } from "./runDb.js"
+import { getVmIp } from "./vm-utils.js"
 import { CLI_VERSION } from "./version.js"
 
 type DispatchOptions = {
@@ -416,12 +417,6 @@ const maybeInstallDeps = (vm: string, workdir: string) => {
 }
 
 const sshOpts = ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"]
-
-const getVmIp = (vm: string) => {
-  const raw = runCommandOutput("virsh", ["domifaddr", vm], { context: "find VM IP" }).split("\n")
-  const line = raw.map((l) => l.trim()).find((l) => l.includes("ipv4"))
-  return line?.split(/\s+/)[3]?.split("/")[0]
-}
 
 const ssh = (ip: string, args: string[], input?: string) =>
   run("ssh", [...sshOpts, `ralph@${ip}`, ...args], input)

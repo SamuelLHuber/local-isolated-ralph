@@ -16,6 +16,7 @@ import { orchestrateRuns } from "./orchestrate.js"
 import { minifySpecs, validateSpecs } from "./specs.js"
 import { runCommand, runCommandOutput } from "./exec.js"
 import { cleanupWorkdirs } from "./cleanup.js"
+import { getVmIp } from "./vm-utils.js"
 import { dispatchFleet } from "./fleet.js"
 import { recordFeedback, recordFeedbackForRun } from "./feedback.js"
 import { findLatestRunForVm, findRunById, listRuns, openRunDb } from "./runDb.js"
@@ -146,15 +147,6 @@ const notifyDesktop = (title: string, message: string) => {
       // fall through to console only
     }
   }
-}
-
-const getVmIp = (vm: string) => {
-  const output = runCommandOutput("virsh", ["domifaddr", vm], { context: "find VM IP" })
-  const line = output
-    .split("\n")
-    .map((entry) => entry.trim())
-    .find((entry) => entry.includes("ipv4"))
-  return line?.split(/\s+/)[3]?.split("/")[0]
 }
 
 const runRemote = (vm: string, command: string) => {

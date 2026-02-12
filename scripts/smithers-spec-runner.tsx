@@ -170,7 +170,7 @@ const reviewDefaultModel =
 const reviewModelFor = (id: string) =>
   reviewModels[id.toLowerCase()] ?? reviewDefaultModel
 
-const codexTimeout = Number(env.SMITHERS_AGENT_TIMEOUT_MS ?? env.SMITERS_AGENT_TIMEOUT_MS ?? 1800000)
+const codexTimeout = Number(env.SMITHERS_AGENT_TIMEOUT_MS ?? 1800000)
 const codexDefaults = {
   reasoningEffort: "medium",
   sandboxMode: "danger-full-access",

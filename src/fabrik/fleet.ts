@@ -12,10 +12,17 @@ type FleetOptions = {
 const listSpecs = (specsDir: string) => {
   if (!existsSync(specsDir)) return []
   const entries = readdirSync(specsDir)
-  return entries
+  const specFiles = entries
     .filter((entry) => entry.endsWith(".min.json") && !entry.endsWith(".todo.min.json"))
     .map((entry) => resolve(specsDir, entry))
-    .filter((specPath) => existsSync(specPath.replace(/\.min\.json$/i, ".todo.min.json")))
+  return specFiles.filter((specPath) => {
+    const todoPath = specPath.replace(/\.min\.json$/i, ".todo.min.json")
+    if (!existsSync(todoPath)) {
+      console.log(`Warning: skipping ${basename(specPath)} (no matching .todo.min.json)`)
+      return false
+    }
+    return true
+  })
 }
 
 const listVms = (prefix: string) => {

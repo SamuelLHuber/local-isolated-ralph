@@ -1,6 +1,7 @@
 import { basename, dirname, join, resolve } from "node:path"
-import { runCommand, runCommandOutput } from "./exec.js"
+import { runCommand } from "./exec.js"
 import { ensureCommands } from "./prereqs.js"
+import { getVmIp } from "./vm-utils.js"
 import { findLatestRunForVmSpec, findRunById, insertFeedback, openRunDb } from "./runDb.js"
 
 type FeedbackOptions = {
@@ -12,15 +13,6 @@ type FeedbackOptions = {
 }
 
 const sshOpts = ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"]
-
-const getVmIp = (vm: string) => {
-  const output = runCommandOutput("virsh", ["domifaddr", vm], { context: "find VM IP" })
-  const line = output
-    .split("\n")
-    .map((entry) => entry.trim())
-    .find((entry) => entry.includes("ipv4"))
-  return line?.split(/\s+/)[3]?.split("/")[0]
-}
 
 const writeJsonRemote = (vm: string, path: string, json: string) => {
   if (process.platform === "darwin") {
