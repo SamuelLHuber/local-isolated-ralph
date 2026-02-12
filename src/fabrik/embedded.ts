@@ -36,7 +36,7 @@ export const ensureEmbeddedHome = (): string => {
 }
 
 export const resolveRalphHome = (candidate: string): string => {
-  const dispatchPath = join(candidate, "scripts", "dispatch.sh")
-  if (existsSync(dispatchPath)) return candidate
+  const sentinel = join(candidate, "scripts", "smithers-spec-runner.tsx")
+  if (existsSync(sentinel)) return candidate
   return ensureEmbeddedHome()
 }

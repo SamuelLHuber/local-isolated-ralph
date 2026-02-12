@@ -1,12 +1,20 @@
-import { execFileSync } from "node:child_process"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, accessSync, constants } from "node:fs"
+import { createHash } from "node:crypto"
 import { basename, join, resolve, relative, isAbsolute } from "node:path"
+import ts from "typescript"
+import { runCommand, runCommandOutput } from "./exec.js"
+import { ensureAnyCommand, ensureCommands, hasCommand } from "./prereqs.js"
+import { insertRun, openRunDb } from "./runDb.js"
+import { CLI_VERSION } from "./version.js"
 
 type DispatchOptions = {
   vm: string
   spec: string
   todo: string
   project?: string
+  repoUrl?: string
+  repoRef?: string
+  repoBranch?: string
   includeGit: boolean
   workflow?: string
   reportDir?: string
@@ -16,10 +24,23 @@ type DispatchOptions = {
   reviewPrompt?: string
   reviewModels?: string
   reviewMax?: number
+  branch?: string
+  requireAgents?: string[]
+  follow?: boolean
 }
 
-const run = (cmd: string, args: string[], input?: string) => {
-  execFileSync(cmd, args, { stdio: input ? ["pipe", "inherit", "inherit"] : "inherit", input })
+export type DispatchResult = {
+  runId: number
+  vm: string
+  workdir: string
+  controlDir: string
+  reportDir: string
+  branch: string
+  specId: string
+}
+
+const run = (cmd: string, args: string[], input?: string, context?: string) => {
+  runCommand(cmd, args, { input, context })
 }
 
 const readText = (path?: string) => {
@@ -28,13 +49,151 @@ const readText = (path?: string) => {
   return readFileSync(path, "utf8")
 }
 
+const buildRunContext = (options: {
+  runId: number
+  vm: string
+  specPath: string
+  todoPath: string
+  promptPath?: string
+  reviewPromptPath?: string
+  reviewModelsPath?: string
+  repoUrl?: string
+  repoRef?: string
+  cliVersion: string
+  osInfo: string
+  binaryHash: string
+  gitSha: string
+}) => {
+  return JSON.stringify(
+    {
+      v: 1,
+      run_id: options.runId,
+      vm: options.vm,
+      created_at: new Date().toISOString(),
+      spec_path: options.specPath,
+      todo_path: options.todoPath,
+      prompt_path: options.promptPath ?? null,
+      review_prompt_path: options.reviewPromptPath ?? null,
+      review_models_path: options.reviewModelsPath ?? null,
+      spec_sha256: sha256(options.specPath),
+      todo_sha256: sha256(options.todoPath),
+      prompt_sha256: sha256(options.promptPath ?? ""),
+      review_prompt_sha256: sha256(options.reviewPromptPath ?? ""),
+      review_models_sha256: sha256(options.reviewModelsPath ?? ""),
+      prompt_text: readText(options.promptPath).trim(),
+      review_prompt_text: readText(options.reviewPromptPath).trim(),
+      review_models_text: readText(options.reviewModelsPath).trim(),
+      repo_url: options.repoUrl ?? null,
+      repo_ref: options.repoRef ?? null,
+      cli_version: options.cliVersion,
+      os: options.osInfo,
+      binary_hash: options.binaryHash,
+      git_sha: options.gitSha
+    },
+    null,
+    2
+  ) + "\n"
+}
+
+const workflowAgentNeeds = (workflowPath: string) => {
+  const text = readText(workflowPath)
+  if (!text) return { needsCodex: false, needsClaude: false, needsOpencode: false }
+  const source = ts.createSourceFile(workflowPath, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  let needsCodex = false
+  let needsClaude = false
+  let needsOpencode = false
+  const checkTag = (tagName: string) => {
+    if (tagName === "Codex") needsCodex = true
+    if (tagName === "Claude") needsClaude = true
+    if (tagName === "OpenCode") needsOpencode = true
+  }
+  const visit = (node: ts.Node) => {
+    if (ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) {
+      const tag = node.tagName
+      if (ts.isIdentifier(tag)) {
+        checkTag(tag.text)
+      } else if (ts.isPropertyAccessExpression(tag)) {
+        const base = tag.expression
+        if (ts.isIdentifier(base) && base.text === "Orchestrator") {
+          checkTag(tag.name.text)
+        }
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return { needsCodex, needsClaude, needsOpencode }
+}
+
+const requireFile = (label: string, path: string, hint: string) => {
+  if (existsSync(path)) return
+  const message = [
+    `Missing ${label}: ${path}`,
+    hint
+  ]
+  throw new Error(message.join("\n"))
+}
+
+const readSpecId = (path: string) => {
+  try {
+    const raw = readFileSync(path, "utf8")
+    const parsed = JSON.parse(raw) as { id?: string }
+    return typeof parsed.id === "string" ? parsed.id : ""
+  } catch {
+    return ""
+  }
+}
+
+const sha256 = (path: string) => {
+  try {
+    const data = readFileSync(path)
+    return createHash("sha256").update(data).digest("hex")
+  } catch {
+    return ""
+  }
+}
+
+const isWritable = (path: string) => {
+  try {
+    accessSync(path, constants.W_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const getBinaryHash = () => {
+  const binary = process.argv[0]
+  if (!binary || !existsSync(binary)) return ""
+  return sha256(binary)
+}
+
+const getGitSha = () => {
+  if (!hasCommand("git")) return ""
+  try {
+    return runCommandOutput("git", ["rev-parse", "HEAD"], { context: "read git SHA" }).trim()
+  } catch {
+    return ""
+  }
+}
+
+const sanitizeBranch = (name: string) =>
+  name
+    .trim()
+    .replace(/[^a-zA-Z0-9._/-]+/g, "-")
+    .replace(/--+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120)
+
 const safeRealpath = (path?: string) => {
   if (!path) return undefined
   return resolve(path)
 }
 
 const ensureVmRunning = (vm: string) => {
-  const list = execFileSync("limactl", ["list", "--format", "{{.Name}} {{.Status}}"]).toString()
+  const list = runCommandOutput("limactl", ["list", "--format", "{{.Name}} {{.Status}}"], {
+    context: "check limactl status"
+  })
   if (!list.split("\n").some((line) => line.startsWith(`${vm} Running`))) {
     console.log(`[${vm}] Starting VM...`)
     run("limactl", ["start", vm])
@@ -46,6 +205,41 @@ const limactlShell = (vm: string, args: string[], input?: string) =>
 
 const writeFileInVm = (vm: string, dest: string, content: string) => {
   limactlShell(vm, ["bash", "-lc", `sudo -u ralph tee "${dest}" >/dev/null`], content)
+}
+
+const writeFileRemote = (vm: string, dest: string, content: string) => {
+  if (process.platform === "darwin") {
+    writeFileInVm(vm, dest, content)
+    return
+  }
+  if (process.platform === "linux") {
+    const ip = getVmIp(vm)
+    if (!ip) throw new Error(`Could not determine IP for VM '${vm}'. Is it running?`)
+    ssh(ip, ["bash", "-lc", `cat > \"${dest}\"`], content)
+    return
+  }
+  throw new Error(`Unsupported OS: ${process.platform}`)
+}
+
+const ensureBunReady = (vm: string) => {
+  const script = [
+    "export PATH=\"$HOME/.bun/bin:$PATH\"",
+    "BUN_CHECK_OUTPUT=$(bun --version 2>&1 || true)",
+    "if echo \"$BUN_CHECK_OUTPUT\" | grep -q 'postinstall script was not run'; then",
+    `  echo "[${vm}] Fixing bun postinstall..."`,
+    "  if command -v node >/dev/null 2>&1 && [ -f \"$HOME/.bun/install/global/node_modules/bun/install.js\" ]; then",
+    "    node \"$HOME/.bun/install/global/node_modules/bun/install.js\"",
+    "  fi",
+    "fi"
+  ].join("\n")
+
+  if (process.platform === "darwin") {
+    limactlShell(vm, ["bash", "-lc", script])
+  } else if (process.platform === "linux") {
+    const ip = getVmIp(vm)
+    if (!ip) throw new Error(`Could not determine IP for VM '${vm}'. Is it running?`)
+    ssh(ip, ["bash", "-lc", script])
+  }
 }
 
 const syncProject = (vm: string, projectDir: string, workdir: string, includeGit: boolean) => {
@@ -94,7 +288,10 @@ const verifyGitAndInitJj = (vm: string, workdir: string) => {
       `cd "${workdir}"`,
       "if [ -f ~/.config/ralph/ralph.env ]; then set -a; source ~/.config/ralph/ralph.env; set +a; fi",
       "if [ -n \"${GITHUB_TOKEN:-}\" ]; then",
+      "  export GH_TOKEN=\"${GITHUB_TOKEN}\"",
       "  git config --global url.\"https://oauth:${GITHUB_TOKEN}@github.com/\".insteadOf \"https://github.com/\"",
+      "else",
+      `  echo "[${vm}] WARNING: GITHUB_TOKEN not set in ~/.config/ralph/ralph.env. GitHub auth will fail."`,
       "fi",
       "REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo 'none')",
       "REMOTE_URL_SAFE=$(echo \"$REMOTE_URL\" | sed -E 's|://[^:]+:[^@]+@|://***@|')",
@@ -131,6 +328,36 @@ const verifyGitAndInitJj = (vm: string, workdir: string) => {
   ])
 }
 
+const cloneRepoInVm = (vm: string, workdir: string, repoUrl: string, repoRef?: string) => {
+  const ref = repoRef ? repoRef.replace(/"/g, "") : ""
+  const cloneScript = [
+    `cd "${workdir}"`,
+    "if [ -f ~/.config/ralph/ralph.env ]; then set -a; source ~/.config/ralph/ralph.env; set +a; fi",
+    "if [ -n \"${GITHUB_TOKEN:-}\" ]; then",
+    "  export GH_TOKEN=\"${GITHUB_TOKEN}\"",
+    "  git config --global url.\"https://oauth:${GITHUB_TOKEN}@github.com/\".insteadOf \"https://github.com/\"",
+    "fi",
+    "if command -v jj >/dev/null 2>&1; then",
+    "  if [ ! -d repo/.jj ]; then jj git clone \"" + repoUrl + "\" repo; fi",
+    "  if [ -n \"" + ref + "\" ]; then",
+    "    jj -R repo git fetch >/dev/null 2>&1 || true",
+    "    jj -R repo checkout \"" + ref + "\" >/dev/null 2>&1 || true",
+    "  fi",
+    "else",
+    "  if [ ! -d repo/.git ]; then git clone --depth 1 \"" + repoUrl + "\" repo; fi",
+    "  if [ -n \"" + ref + "\" ]; then git -C repo fetch --depth 1 origin \"" + ref + "\" >/dev/null 2>&1 || true; fi",
+    "  if [ -n \"" + ref + "\" ]; then git -C repo checkout \"" + ref + "\" || true; fi",
+    "fi"
+  ].join("\n")
+  if (process.platform === "darwin") {
+    limactlShell(vm, ["bash", "-lc", cloneScript])
+  } else if (process.platform === "linux") {
+    const ip = getVmIp(vm)
+    if (!ip) throw new Error(`Could not determine IP for VM '${vm}'. Is it running?`)
+    ssh(ip, ["bash", "-lc", cloneScript])
+  }
+}
+
 const maybeInstallDeps = (vm: string, workdir: string) => {
   limactlShell(vm, [
     "bash",
@@ -142,6 +369,13 @@ const maybeInstallDeps = (vm: string, workdir: string) => {
       "  export PATH=\"$HOME/.bun/bin:$PATH\"",
       "  export BUN_INSTALL_IGNORE_SCRIPTS=0",
       "  export npm_config_ignore_scripts=false",
+      "  BUN_CHECK_OUTPUT=$(bun --version 2>&1 || true)",
+      "  if echo \"$BUN_CHECK_OUTPUT\" | grep -q 'postinstall script was not run'; then",
+      `    echo "[${vm}] Fixing bun postinstall..."`,
+      "    if command -v node >/dev/null 2>&1 && [ -f \"$HOME/.bun/install/global/node_modules/bun/install.js\" ]; then",
+      "      node \"$HOME/.bun/install/global/node_modules/bun/install.js\"",
+      "    fi",
+      "  fi",
       "  bun install",
       "fi"
     ].join("\n")
@@ -151,12 +385,13 @@ const maybeInstallDeps = (vm: string, workdir: string) => {
 const sshOpts = ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"]
 
 const getVmIp = (vm: string) => {
-  const raw = execFileSync("virsh", ["domifaddr", vm]).toString().split("\n")
+  const raw = runCommandOutput("virsh", ["domifaddr", vm], { context: "find VM IP" }).split("\n")
   const line = raw.map((l) => l.trim()).find((l) => l.includes("ipv4"))
   return line?.split(/\s+/)[3]?.split("/")[0]
 }
 
-const ssh = (ip: string, args: string[]) => run("ssh", [...sshOpts, `ralph@${ip}`, ...args])
+const ssh = (ip: string, args: string[], input?: string) =>
+  run("ssh", [...sshOpts, `ralph@${ip}`, ...args], input)
 
 const scp = (args: string[]) => run("scp", [...sshOpts, ...args])
 
@@ -165,28 +400,147 @@ const pathWithin = (root: string, target: string) => {
   return rel && !rel.startsWith("..") && !isAbsolute(rel)
 }
 
-export const dispatchRun = (options: DispatchOptions) => {
+export const dispatchRun = (options: DispatchOptions): DispatchResult => {
   const specPath = safeRealpath(options.spec)!
   const todoPath = safeRealpath(options.todo)!
   const workflowPath = safeRealpath(options.workflow ?? "scripts/smithers-spec-runner.tsx")!
+  const workflowSha = sha256(workflowPath)
+  const workflowNeeds = workflowAgentNeeds(workflowPath)
+  const requiredAgents = options.requireAgents?.map((a) => a.trim().toLowerCase()).filter(Boolean) ?? []
   const promptPath = safeRealpath(options.prompt)
   const reviewPromptPath = safeRealpath(options.reviewPrompt)
   const reviewModelsPath = safeRealpath(options.reviewModels)
   const projectDir = options.project ? safeRealpath(options.project)! : undefined
-  const timestamp = new Date()
-    .toISOString()
-    .replace(/[-:]/g, "")
-    .replace(/\..+/, "")
-  const projectBase = projectDir ? basename(projectDir) : "task"
+  const repoUrl = options.repoUrl?.trim()
+  const repoRef = options.repoRef?.trim() ?? options.repoBranch?.trim()
+  const agentKind = (process.env.SMITHERS_AGENT ?? process.env.RALPH_AGENT ?? "codex").toLowerCase()
+  const specId = readSpecId(specPath)
+  const runStamp = `${new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "")}`
+  const branch = sanitizeBranch(options.branch ?? (specId ? `spec-${specId}` : `spec-run-${runStamp}`))
+  const timestamp = runStamp
+
+  if (process.platform === "darwin") {
+    ensureCommands(
+      [{ cmd: "limactl" }, { cmd: "tar" }, { cmd: "bash" }],
+      "dispatch requires limactl on macOS"
+    )
+  } else if (process.platform === "linux") {
+    ensureCommands(
+      [{ cmd: "virsh" }, { cmd: "ssh" }, { cmd: "scp" }, { cmd: "tar" }, { cmd: "bash" }],
+      "dispatch requires virsh/ssh/scp on Linux"
+    )
+  } else {
+    throw new Error(`Unsupported OS: ${process.platform}`)
+  }
+
+  ensureAnyCommand([{ cmd: "jj" }, { cmd: "git" }], "dispatch requires jj or git")
+
+  if (projectDir && repoUrl) {
+    throw new Error("Provide either --project or --repo, not both.")
+  }
+  if (!projectDir && !repoUrl) {
+    throw new Error(
+      [
+        "Missing project repository.",
+        "Dispatch requires a repo to apply tasks.",
+        "Provide --project /path/to/repo or --repo <git-url> (optional --repo-ref)."
+      ].join("\n")
+    )
+  }
+
+  if (!options.includeGit) {
+    console.log(`[${options.vm}] WARNING: --include-git not set; push will be disabled in the VM.`)
+  }
+  if (projectDir && !isWritable(projectDir)) {
+    console.log(`[${options.vm}] WARNING: project dir is not writable: ${projectDir}`)
+  }
+
+  const projectBase = projectDir ? basename(projectDir) : "repo"
   const workSubdir = `${projectBase}-${timestamp}`
   const vmWorkdir = `/home/ralph/work/${options.vm}/${workSubdir}`
   const controlDir = `/home/ralph/work/${options.vm}/.runs/${workSubdir}`
   const reportDir = options.reportDir ?? `${controlDir}/reports`
   const projectRelative = projectDir ? (path: string) => relative(projectDir, path) : undefined
+  const projectRootInVm = repoUrl ? `${vmWorkdir}/repo` : vmWorkdir
+  if (repoUrl && repoRef && !repoRef.length) {
+    throw new Error("repo ref provided but empty.")
+  }
+
+  const osInfo = `${process.platform}-${process.arch}`
+  const binaryHash = getBinaryHash()
+  const gitSha = getGitSha()
+  const { db } = openRunDb()
+  const runId = insertRun(db, {
+    vm_name: options.vm,
+    workdir: vmWorkdir,
+    spec_path: specPath,
+    todo_path: todoPath,
+    repo_url: repoUrl ?? null,
+    repo_ref: repoRef ?? null,
+    started_at: new Date().toISOString(),
+    status: "running",
+    exit_code: null,
+    cli_version: CLI_VERSION,
+    os: osInfo,
+    binary_hash: binaryHash || null,
+    git_sha: gitSha || null
+  })
+  db.close()
 
   console.log(`[${options.vm}] Dispatching spec: ${specPath}`)
   console.log(`[${options.vm}] Include .git: ${options.includeGit}`)
   console.log(`[${options.vm}] Work dir: ${vmWorkdir}`)
+  console.log(`[${options.vm}] Branch: ${branch}`)
+  const detectedAgents = [
+    workflowNeeds.needsCodex ? "codex" : null,
+    workflowNeeds.needsClaude ? "claude" : null,
+    workflowNeeds.needsOpencode ? "opencode" : null
+  ].filter(Boolean)
+  console.log(`[${options.vm}] Workflow agents detected: ${detectedAgents.length ? detectedAgents.join(", ") : "none"}`)
+  if (!detectedAgents.length && !requiredAgents.length) {
+    throw new Error(
+      [
+        "No agent components detected in workflow.",
+        "Provide explicit requirements with --require-agents codex,opencode (comma-separated)."
+      ].join("\n")
+    )
+  }
+
+  const needsCodex =
+    workflowNeeds.needsCodex || requiredAgents.includes("codex") || agentKind === "codex"
+  const needsOpencode =
+    workflowNeeds.needsOpencode || requiredAgents.includes("opencode") || agentKind === "opencode"
+  const needsClaude =
+    workflowNeeds.needsClaude || requiredAgents.includes("claude") || agentKind === "claude"
+
+  if (needsCodex) {
+    requireFile(
+      "Codex auth",
+      join(process.env.HOME ?? "", ".codex/auth.json"),
+      "Run `codex login` or copy ~/.codex/auth.json before dispatch."
+    )
+  }
+
+  if (needsOpencode) {
+    requireFile(
+      "OpenCode auth",
+      join(process.env.HOME ?? "", ".local/share/opencode/auth.json"),
+      "Run `opencode auth login` or copy ~/.local/share/opencode/auth.json before dispatch."
+    )
+  }
+
+  if (needsClaude) {
+    const claudeJson = join(process.env.HOME ?? "", ".claude.json")
+    const claudeDir = join(process.env.HOME ?? "", ".claude")
+    if (!existsSync(claudeJson) && !existsSync(claudeDir)) {
+      throw new Error(
+        [
+          "Missing Claude auth (~/.claude.json or ~/.claude).",
+          "Run `claude login` or set ANTHROPIC_API_KEY in ~/.config/ralph/ralph.env before dispatch."
+        ].join("\n")
+      )
+    }
+  }
 
   if (process.platform === "darwin") {
     ensureVmRunning(options.vm)
@@ -241,7 +595,10 @@ export const dispatchRun = (options: DispatchOptions) => {
             `cd "${vmWorkdir}"`,
             "if [ -f ~/.config/ralph/ralph.env ]; then set -a; source ~/.config/ralph/ralph.env; set +a; fi",
             "if [ -n \"${GITHUB_TOKEN:-}\" ]; then",
+            "  export GH_TOKEN=\"${GITHUB_TOKEN}\"",
             "  git config --global url.\"https://oauth:${GITHUB_TOKEN}@github.com/\".insteadOf \"https://github.com/\"",
+            "else",
+            `  echo "[${options.vm}] WARNING: GITHUB_TOKEN not set in ~/.config/ralph/ralph.env. GitHub auth will fail."`,
             "fi",
             "REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo 'none')",
             "REMOTE_URL_SAFE=$(echo \"$REMOTE_URL\" | sed -E 's|://[^:]+:[^@]+@|://***@|')",
@@ -318,12 +675,36 @@ export const dispatchRun = (options: DispatchOptions) => {
       scp([workflowPath, `ralph@${ip}:${workflowInVm}`])
     }
   }
-  if (promptPath) writeFileInVm(options.vm, `${vmWorkdir}/PROMPT.md`, readText(promptPath))
-  if (reviewPromptPath) writeFileInVm(options.vm, `${vmWorkdir}/REVIEW_PROMPT.md`, readText(reviewPromptPath))
-  if (reviewModelsPath) writeFileInVm(options.vm, `${vmWorkdir}/reviewer-models.json`, readText(reviewModelsPath))
+  if (promptPath) writeFileRemote(options.vm, `${vmWorkdir}/PROMPT.md`, readText(promptPath))
+  if (reviewPromptPath) writeFileRemote(options.vm, `${vmWorkdir}/REVIEW_PROMPT.md`, readText(reviewPromptPath))
+  if (reviewModelsPath) writeFileRemote(options.vm, `${vmWorkdir}/reviewer-models.json`, readText(reviewModelsPath))
+
+  const runContext = buildRunContext({
+    runId,
+    vm: options.vm,
+    specPath,
+    todoPath,
+    promptPath,
+    reviewPromptPath,
+    reviewModelsPath,
+    repoUrl: repoUrl ?? undefined,
+    repoRef: repoRef ?? undefined,
+    cliVersion: CLI_VERSION,
+    osInfo,
+    binaryHash,
+    gitSha
+  })
+  writeFileRemote(options.vm, `${reportDir}/run-context.json`, runContext)
+
+  if (repoUrl) {
+    cloneRepoInVm(options.vm, vmWorkdir, repoUrl, repoRef)
+    verifyGitAndInitJj(options.vm, projectRootInVm)
+  }
+
+  ensureBunReady(options.vm)
 
   if (process.platform === "darwin") {
-    maybeInstallDeps(options.vm, vmWorkdir)
+    maybeInstallDeps(options.vm, projectRootInVm)
   } else if (process.platform === "linux") {
     const ip = getVmIp(options.vm)
     if (!ip) throw new Error(`Could not determine IP for VM '${options.vm}'. Is it running?`)
@@ -331,12 +712,19 @@ export const dispatchRun = (options: DispatchOptions) => {
       "bash",
       "-lc",
       [
-        `cd "${vmWorkdir}"`,
+        `cd "${projectRootInVm}"`,
         "if [ -f package.json ]; then",
         `  echo "[${options.vm}] Installing dependencies (bun install)..."`,
         "  export PATH=\"$HOME/.bun/bin:$PATH\"",
         "  export BUN_INSTALL_IGNORE_SCRIPTS=0",
         "  export npm_config_ignore_scripts=false",
+        "  BUN_CHECK_OUTPUT=$(bun --version 2>&1 || true)",
+        "  if echo \"$BUN_CHECK_OUTPUT\" | grep -q 'postinstall script was not run'; then",
+        `    echo "[${options.vm}] Fixing bun postinstall..."`,
+        "    if command -v node >/dev/null 2>&1 && [ -f \"$HOME/.bun/install/global/node_modules/bun/install.js\" ]; then",
+        "      node \"$HOME/.bun/install/global/node_modules/bun/install.js\"",
+        "    fi",
+        "  fi",
         "  bun install",
         "fi"
       ].join("\n")
@@ -344,32 +732,98 @@ export const dispatchRun = (options: DispatchOptions) => {
   }
 
   console.log(`[${options.vm}] Starting Smithers workflow...`)
+  const follow = options.follow === true
   const smithersScript = [
     `cd "${controlDir}"`,
     `echo "[${options.vm}] Control dir: $(pwd)"`,
+    `LOG_FILE="${reportDir}/smithers.log"`,
+    "mkdir -p \"$(dirname \"$LOG_FILE\")\"",
+    "touch \"$LOG_FILE\"",
+    "exec > >(tee -a \"$LOG_FILE\") 2>&1",
     "export PATH=\"$HOME/.bun/bin:$PATH\"",
+    "if [ -f ~/.config/ralph/ralph.env ]; then set -a; source ~/.config/ralph/ralph.env; set +a; fi",
+    "if [ -n \"${GITHUB_TOKEN:-}\" ]; then export GH_TOKEN=\"${GITHUB_TOKEN}\"; fi",
     `export MAX_ITERATIONS=${options.iterations ?? 100}`,
-    `export RALPH_AGENT=codex`,
+    `export RALPH_AGENT="${agentKind}"`,
     `export SMITHERS_SPEC_PATH="${specInVm}"`,
     `export SMITHERS_TODO_PATH="${todoInVm}"`,
     `export SMITHERS_REPORT_DIR="${reportDir}"`,
-    `export SMITHERS_AGENT=codex`,
-    `export SMITHERS_CWD="${vmWorkdir}"`,
+    `export SMITHERS_AGENT="${agentKind}"`,
+    `export SMITHERS_CWD="${projectRootInVm}"`,
+    `export SMITHERS_BRANCH="${branch}"`,
+    `export SMITHERS_RUN_ID="${runId}"`,
+    workflowSha ? `export SMITHERS_WORKFLOW_SHA="${workflowSha}"` : "",
     options.model ? `export SMITHERS_MODEL="${options.model}"` : "",
     options.reviewMax ? `export SMITHERS_REVIEW_MAX="${options.reviewMax}"` : "",
     `[ -f "${vmWorkdir}/PROMPT.md" ] && export SMITHERS_PROMPT_PATH="${vmWorkdir}/PROMPT.md" || true`,
     `[ -f "${vmWorkdir}/REVIEW_PROMPT.md" ] && export SMITHERS_REVIEW_PROMPT_PATH="${vmWorkdir}/REVIEW_PROMPT.md" || true`,
     `[ -f "${vmWorkdir}/reviewer-models.json" ] && export SMITHERS_REVIEW_MODELS_FILE="${vmWorkdir}/reviewer-models.json" || true`,
-    `smithers "${workflowInVm}"`
+    "SMITHERS_VERSION=$(smithers --version 2>&1 || true)",
+    "if [ -z \"$SMITHERS_VERSION\" ]; then echo \"Smithers missing or not executable.\"; exit 1; fi",
+    `printf '{"v":1,"version":"%s"}\n' "$SMITHERS_VERSION" > "${reportDir}/smithers-version.json"`,
+    `CONTROL_DIR="${controlDir}"`,
+    "PID_FILE=\"${CONTROL_DIR}/smithers.pid\"",
+    "HEARTBEAT_FILE=\"${CONTROL_DIR}/heartbeat.json\"",
+    "DB_GLOB=\"${CONTROL_DIR}/.smithers/*.db\"",
+    "HEARTBEAT_SECONDS=30",
+    "export CONTROL_DIR PID_FILE HEARTBEAT_FILE DB_GLOB HEARTBEAT_SECONDS",
+    "if [ -f \"$PID_FILE\" ]; then",
+    "  OLD_PID=$(cat \"$PID_FILE\" || true)",
+    "  if [ -n \"$OLD_PID\" ] && ! kill -0 \"$OLD_PID\" 2>/dev/null; then",
+    "    python3 - <<'PY'",
+    "import glob, os, sqlite3",
+    "dbs = glob.glob(os.path.expanduser(os.environ.get('DB_GLOB','')))",
+    "for db_path in dbs:",
+    "    try:",
+    "        conn = sqlite3.connect(db_path)",
+    "        conn.execute(\"UPDATE executions SET status='failed', end_reason='stale_process', completed_at=datetime('now') WHERE status='running'\")",
+    "        conn.commit()",
+    "        conn.close()",
+    "    except Exception:",
+    "        pass",
+    "PY",
+    "    rm -f \"$PID_FILE\"",
+    "  fi",
+    "fi",
+    `smithers "${workflowInVm}" &`,
+    "SMITHERS_PID=$!",
+    "export SMITHERS_PID",
+    "echo \"$SMITHERS_PID\" > \"$PID_FILE\"",
+    "(\nwhile kill -0 \"$SMITHERS_PID\" 2>/dev/null; do\n  python3 - <<'PY'\nimport glob, json, os, sqlite3\nfrom datetime import datetime, timezone\ncontrol = os.environ.get('CONTROL_DIR','')\nheartbeat = os.environ.get('HEARTBEAT_FILE','')\nrun_id = os.environ.get('SMITHERS_RUN_ID','')\nspec_path = os.environ.get('SMITHERS_SPEC_PATH','')\nphase = ''\ntry:\n    dbs = glob.glob(os.path.join(control, '.smithers', '*.db'))\n    if dbs:\n        conn = sqlite3.connect(dbs[0])\n        cur = conn.execute(\"SELECT value FROM state WHERE key='phase'\")\n        row = cur.fetchone()\n        if row and row[0]:\n            phase = str(row[0])\n        conn.close()\nexcept Exception:\n    pass\npayload = {\n  'v': 1,\n  'ts': datetime.now(timezone.utc).isoformat(),\n  'pid': int(os.environ.get('SMITHERS_PID','0') or 0),\n  'run_id': run_id,\n  'spec_path': spec_path,\n  'phase': phase\n}\ntry:\n    with open(heartbeat, 'w', encoding='utf-8') as f:\n        json.dump(payload, f)\nexcept Exception:\n    pass\nPY\n  sleep \"$HEARTBEAT_SECONDS\"\ndone\n) &",
+    "wait \"$SMITHERS_PID\"",
+    "EXIT_CODE=$?",
+    "echo \"$EXIT_CODE\" > \"${CONTROL_DIR}/exit_code\"",
+    "rm -f \"$PID_FILE\""
   ]
     .filter(Boolean)
     .join("\n")
 
   if (process.platform === "darwin") {
-    limactlShell(options.vm, ["bash", "-lc", smithersScript])
+    const runScriptPath = `${controlDir}/run.sh`
+    writeFileInVm(options.vm, runScriptPath, `${smithersScript}\n`)
+    const runCmd = follow
+      ? `bash "${runScriptPath}"`
+      : `nohup bash "${runScriptPath}" >/dev/null 2>&1 &`
+    limactlShell(options.vm, ["bash", "-lc", runCmd])
   } else if (process.platform === "linux") {
     const ip = getVmIp(options.vm)
     if (!ip) throw new Error(`Could not determine IP for VM '${options.vm}'. Is it running?`)
-    ssh(ip, ["bash", "-lc", smithersScript])
+    const runScriptPath = `${controlDir}/run.sh`
+    const script = `cat <<'EOF' > "${runScriptPath}"\n${smithersScript}\nEOF\nchmod +x "${runScriptPath}"`
+    ssh(ip, ["bash", "-lc", script])
+    const runCmd = follow
+      ? `bash "${runScriptPath}"`
+      : `nohup bash "${runScriptPath}" >/dev/null 2>&1 &`
+    ssh(ip, ["bash", "-lc", runCmd])
+  }
+
+  return {
+    runId,
+    vm: options.vm,
+    workdir: vmWorkdir,
+    controlDir,
+    reportDir,
+    branch,
+    specId
   }
 }

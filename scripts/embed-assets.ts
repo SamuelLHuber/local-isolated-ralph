@@ -4,10 +4,6 @@ import { join, resolve } from "node:path"
 type Asset = { path: string; mode?: number }
 
 const assets: Asset[] = [
-  { path: "scripts/dispatch.sh", mode: 0o755 },
-  { path: "scripts/cleanup-workdirs.sh", mode: 0o755 },
-  { path: "scripts/record-human-feedback.sh", mode: 0o755 },
-  { path: "scripts/smithers-fleet.sh", mode: 0o755 },
   { path: "scripts/smithers-spec-runner.tsx" },
   { path: "scripts/smithers-reviewer.tsx" },
   { path: "scripts/validate-specs.ts" },
