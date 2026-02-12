@@ -1,8 +1,8 @@
-#!/usr/bin/env smithers
 /** @jsxImportSource smithers-orchestrator */
-import { readFileSync, mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs"
-import { join, resolve, basename } from "node:path"
-import * as Orchestrator from "smithers-orchestrator"
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
+import { join, resolve } from "node:path"
+import { createSmithers, CodexAgent, ClaudeCodeAgent, Sequence, Task } from "smithers-orchestrator"
+import { z } from "zod"
 
 type Spec = {
   id: string
@@ -14,84 +14,18 @@ type Spec = {
   assume: string[]
 }
 
-type Review = {
-  v: number
-  status: "approved" | "changes_requested"
-  issues: string[]
-  next: string[]
-}
-
-const {
-  createSmithersRoot,
-  createSmithersDB,
-  SmithersProvider,
-  Ralph,
-  Claude,
-  Codex,
-  If,
-  useSmithers,
-  useQueryValue
-} = Orchestrator
-
-const OpenCodeComponent = Orchestrator.OpenCode ?? Codex
-
 const env = process.env
 const specPath = resolve(env.SMITHERS_SPEC_PATH ?? env.SPEC_PATH ?? "specs/000-base.min.json")
-const todoPath = resolve(env.SMITHERS_TODO_PATH ?? env.TODO_PATH ?? "specs/000-base.todo.min.json")
 const reportDir = resolve(env.SMITHERS_REPORT_DIR ?? env.REPORT_DIR ?? "reports")
 const reviewPromptPath = env.SMITHERS_REVIEW_PROMPT_PATH
+
 const agentKind = (env.SMITHERS_AGENT ?? env.RALPH_AGENT ?? "codex").toLowerCase()
-const execCwd = env.SMITHERS_CWD ? resolve(env.SMITHERS_CWD) : process.cwd()
 const model =
   env.SMITHERS_MODEL ??
   env.MODEL ??
   (agentKind === "codex" ? "gpt-5.2-codex" : "opus")
-const maxIterations = Number(env.SMITHERS_MAX_ITERATIONS ?? env.MAX_ITERATIONS ?? 3)
 
-if (!Orchestrator.OpenCode && agentKind === "opencode") {
-  console.log("[WARN] OpenCode export missing; falling back to Codex for opencode.")
-}
-
-const spec = JSON.parse(readFileSync(specPath, "utf8")) as Spec
-
-const smithersDir = resolve(".smithers")
-if (!existsSync(smithersDir)) {
-  mkdirSync(smithersDir, { recursive: true })
-}
-const db = createSmithersDB({ path: join(smithersDir, `${spec.id}.review.db`) })
-const executionId = db.execution.start(`${spec.id}: review`, basename(specPath))
-
-if (!existsSync(reportDir)) {
-  mkdirSync(reportDir, { recursive: true })
-}
-
-const systemPrompt = [
-  `Spec ID: ${spec.id}`,
-  `Title: ${spec.title}`,
-  "",
-  "Goals:",
-  ...spec.goals.map((g) => `- ${g}`),
-  "",
-  "Non-goals:",
-  ...spec.nonGoals.map((g) => `- ${g}`),
-  "",
-  "API requirements:",
-  ...spec.req.api.map((r) => `- ${r}`),
-  "",
-  "Behavior requirements:",
-  ...spec.req.behavior.map((r) => `- ${r}`),
-  "",
-  "Observability requirements:",
-  ...spec.req.obs.map((r) => `- ${r}`),
-  "",
-  "Acceptance criteria:",
-  ...spec.accept.map((a) => `- ${a}`),
-  "",
-  "Assumptions:",
-  ...spec.assume.map((a) => `- ${a}`)
-].join("\n")
-
-const loadPrompt = (path?: string): string => {
+const loadPrompt = (path?: string) => {
   if (!path) return ""
   try {
     if (!existsSync(path)) return ""
@@ -101,153 +35,93 @@ const loadPrompt = (path?: string): string => {
   }
 }
 
+const spec = JSON.parse(readFileSync(specPath, "utf8")) as Spec
 const reviewerPrompt = loadPrompt(reviewPromptPath)
 
-const codexTimeout = Number(env.SMITHERS_AGENT_TIMEOUT_MS ?? env.SMITERS_AGENT_TIMEOUT_MS ?? 1800000)
-const codexDefaults = {
-  reasoningEffort: "medium",
-  sandboxMode: "danger-full-access",
-  skipGitRepoCheck: true,
-  timeout: Number.isFinite(codexTimeout) ? codexTimeout : 1800000
-} as const
+const reviewSchema = z.object({
+  v: z.literal(1),
+  status: z.enum(["approved", "changes_requested"]),
+  issues: z.array(z.string()),
+  next: z.array(z.string())
+})
 
-const readReports = (): string => {
+const { Workflow, smithers } = createSmithers({
+  reviewResult: reviewSchema
+})
+
+const timeoutMs = Number(env.SMITHERS_AGENT_TIMEOUT_MS ?? env.SMITERS_AGENT_TIMEOUT_MS ?? 1800000)
+
+const reviewerAgent =
+  agentKind === "claude"
+    ? new ClaudeCodeAgent({
+        model,
+        dangerouslySkipPermissions: true,
+        outputFormat: "json",
+        timeoutMs: Number.isFinite(timeoutMs) ? timeoutMs : 1800000
+      })
+    : new CodexAgent({
+        model,
+        dangerouslyBypassApprovalsAndSandbox: true,
+        skipGitRepoCheck: true,
+        json: true,
+        timeoutMs: Number.isFinite(timeoutMs) ? timeoutMs : 1800000
+      })
+
+const reportsText = () => {
   try {
-    const files = readdirSync(reportDir)
-    const reportFiles = files.filter((f) => f.endsWith(".report.json"))
-    const summaries = reportFiles.slice(0, 30).map((f) => {
-      const raw = readFileSync(join(reportDir, f), "utf8")
-      return `${f}:\n${raw}`
-    })
-    return summaries.length > 0 ? summaries.join("\n\n") : "No reports found."
+    const files = readdirSync(reportDir).filter((name) => name.endsWith(".report.json")).sort()
+    if (!files.length) return "No reports found."
+    return files
+      .slice(0, 30)
+      .map((name) => `${name}:\n${readFileSync(join(reportDir, name), "utf8")}`)
+      .join("\n\n")
   } catch {
     return "No reports found."
   }
 }
 
-const defaultReview = (status: Review["status"]): Review => ({
-  v: 1,
-  status,
-  issues: [],
-  next: []
+const prompt = [
+  reviewerPrompt,
+  `Spec ID: ${spec.id}`,
+  `Title: ${spec.title}`,
+  "",
+  "Review the implementation against the spec and task reports.",
+  "Focus on correctness, tests, security, and strict spec compliance.",
+  "",
+  "Reports:",
+  reportsText(),
+  "",
+  "Output:",
+  "Return only JSON matching this schema exactly:",
+  JSON.stringify(
+    {
+      v: 1,
+      status: "approved | changes_requested",
+      issues: ["..."],
+      next: ["..."]
+    },
+    null,
+    2
+  )
+]
+  .filter((line) => line !== "")
+  .join("\n")
+
+export default smithers((ctx) => {
+  const review = ctx.latest("reviewResult", "review")
+
+  if (review) {
+    mkdirSync(reportDir, { recursive: true })
+    writeFileSync(join(reportDir, "review.json"), `${JSON.stringify(review, null, 2)}\n`, "utf8")
+  }
+
+  return (
+    <Workflow name={`${spec.id}: reviewer`}>
+      <Sequence>
+        <Task id="review" output="reviewResult" agent={reviewerAgent} retries={1} skipIf={Boolean(review)}>
+          {prompt}
+        </Task>
+      </Sequence>
+    </Workflow>
+  )
 })
-
-const parseReview = (output?: string): Review => {
-  if (!output) return defaultReview("changes_requested")
-  const match = output.match(/\{[\s\S]*\}/)
-  if (!match) return defaultReview("changes_requested")
-  try {
-    const parsed = JSON.parse(match[0]) as Review
-    if (!parsed.status) parsed.status = "changes_requested"
-    if (!parsed.issues) parsed.issues = []
-    if (!parsed.next) parsed.next = []
-    if (parsed.v !== 1) parsed.v = 1
-    return parsed
-  } catch {
-    return defaultReview("changes_requested")
-  }
-}
-
-const writeReview = (review: Review) => {
-  const path = join(reportDir, "review.json")
-  writeFileSync(path, `${JSON.stringify(review, null, 2)}\n`, "utf8")
-}
-
-function ReviewRunner() {
-  const { db, reactiveDb } = useSmithers()
-  const { data: doneRaw } = useQueryValue<number>(
-    reactiveDb,
-    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'review.done'"
-  )
-  const done = Boolean(doneRaw ?? 0)
-
-  if (done) {
-    return <done status="reviewed" />
-  }
-
-  const prompt = [
-    reviewerPrompt,
-    systemPrompt,
-    "",
-    "Review the implementation against the spec, todo, and task reports.",
-    "Focus on correctness, tests, security, and strict spec compliance.",
-    "Verify changes were pushed (jj git push --change @) if applicable.",
-    "",
-    "Reports:",
-    readReports(),
-    "",
-    "Output:",
-    "Return a single JSON object that matches this schema:",
-    JSON.stringify(
-      {
-        v: 1,
-        status: "approved | changes_requested",
-        issues: ["..."],
-        next: ["..."]
-      },
-      null,
-      2
-    )
-  ]
-    .filter((line) => line !== "")
-    .join("\n")
-
-  const handleFinished = (result: { output?: string }) => {
-    const review = parseReview(result.output)
-    writeReview(review)
-    db.state.set("review.done", 1, "review_done")
-  }
-
-  const defaultProps = { onFinished: handleFinished } as const
-  const claudeProps = { ...defaultProps, model } as const
-  const codexProps = { ...defaultProps, model, ...codexDefaults, cwd: execCwd } as const
-  const openCodeProps = { ...defaultProps, model } as const
-
-  return (
-    <review status="running">
-      <If condition={agentKind === "claude"}>
-        <Claude {...claudeProps}>{prompt}</Claude>
-      </If>
-      <If condition={agentKind === "codex"}>
-        <Codex {...codexProps}>{prompt}</Codex>
-      </If>
-        <If condition={agentKind === "opencode"}>
-          <OpenCodeComponent {...openCodeProps}>{prompt}</OpenCodeComponent>
-        </If>
-    </review>
-  )
-}
-
-function ReviewWorkflowInner() {
-  const { reactiveDb } = useSmithers()
-  const { data: doneRaw } = useQueryValue<number>(
-    reactiveDb,
-    "SELECT CAST(value AS INTEGER) FROM state WHERE key = 'review.done'"
-  )
-  const done = Boolean(doneRaw ?? 0)
-
-  return (
-    <Ralph id="review" condition={() => !done} maxIterations={maxIterations}>
-      <ReviewRunner />
-    </Ralph>
-  )
-}
-
-function ReviewWorkflow() {
-  return (
-    <SmithersProvider db={db} executionId={executionId}>
-      <ReviewWorkflowInner />
-    </SmithersProvider>
-  )
-}
-
-const root = createSmithersRoot()
-try {
-  await root.mount(ReviewWorkflow)
-  db.execution.complete(executionId, { summary: "Review complete" })
-} catch (error) {
-  db.execution.fail(executionId, String(error))
-  throw error
-} finally {
-  db.close()
-}
