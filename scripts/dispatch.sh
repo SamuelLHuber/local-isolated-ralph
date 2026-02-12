@@ -236,17 +236,70 @@ elif [[ -z "$DB_PATH" ]]; then
   DB_PATH="$DB_DIR/ralph.db"
 fi
 
-echo "[$VM_NAME] Dispatching spec: $SMITHERS_SPEC_PATH"
-echo "[$VM_NAME] Agent: $RALPH_AGENT ($AGENT_CMD)"
-echo "[$VM_NAME] Include .git: $INCLUDE_GIT"
-echo "[$VM_NAME] Work dir: /home/ralph/work/${VM_NAME}/${WORK_SUBDIR}"
-echo "[$VM_NAME] Orchestrator: Smithers"
-echo "[$VM_NAME] Spec: $SMITHERS_SPEC_PATH"
-echo "[$VM_NAME] TODO: $SMITHERS_TODO_PATH"
-echo "[$VM_NAME] Workflow: $SMITHERS_WORKFLOW"
+VM_WORK_DIR="/home/ralph/work/${VM_NAME}/${WORK_SUBDIR}"
+CONTROL_DIR="/home/ralph/work/${VM_NAME}/.runs/${WORK_SUBDIR}"
 
-RUN_ID=$(
-  python3 - "$DB_PATH" "$VM_NAME" "/home/ralph/work/${VM_NAME}/${WORK_SUBDIR}" "$SMITHERS_SPEC_PATH" "$SMITHERS_TODO_PATH" <<'PY'
+if [[ "${RESUME}" == "true" ]]; then
+  RESUME_INFO=$(python3 - "$DB_PATH" "$VM_NAME" "$SMITHERS_SPEC_PATH" <<'PY'
+import sqlite3
+import sys
+
+db_path, vm, spec = sys.argv[1:4]
+conn = sqlite3.connect(db_path)
+conn.execute("""
+CREATE TABLE IF NOT EXISTS runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  vm_name TEXT NOT NULL,
+  workdir TEXT NOT NULL,
+  spec_path TEXT NOT NULL,
+  todo_path TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  status TEXT NOT NULL,
+  exit_code INTEGER,
+  end_reason TEXT
+)
+""")
+try:
+  conn.execute("ALTER TABLE runs ADD COLUMN end_reason TEXT")
+except Exception:
+  pass
+cur = conn.execute(
+  "SELECT id, workdir, spec_path, todo_path FROM runs WHERE vm_name = ? AND spec_path = ? ORDER BY started_at DESC LIMIT 1",
+  (vm, spec)
+)
+row = cur.fetchone()
+if not row:
+  print("")
+else:
+  print("|".join(str(x) for x in row))
+conn.close()
+PY
+)
+
+  if [[ -z "$RESUME_INFO" ]]; then
+    echo "Error: No prior run found to resume for ${VM_NAME} and ${SMITHERS_SPEC_PATH}"
+    exit 1
+  fi
+  IFS='|' read -r RUN_ID VM_WORK_DIR SMITHERS_SPEC_PATH SMITHERS_TODO_PATH <<< "$RESUME_INFO"
+  WORK_SUBDIR="$(basename "$VM_WORK_DIR")"
+  CONTROL_DIR="/home/ralph/work/${VM_NAME}/.runs/${WORK_SUBDIR}"
+  python3 - "$DB_PATH" "$RUN_ID" <<'PY'
+import sqlite3
+import sys
+
+db_path, run_id = sys.argv[1:3]
+conn = sqlite3.connect(db_path)
+try:
+  conn.execute("ALTER TABLE runs ADD COLUMN end_reason TEXT")
+except Exception:
+  pass
+conn.execute("UPDATE runs SET status = 'running', exit_code = NULL, end_reason = NULL WHERE id = ?", (int(run_id),))
+conn.commit()
+conn.close()
+PY
+else
+  RUN_ID=$(
+    python3 - "$DB_PATH" "$VM_NAME" "${VM_WORK_DIR}" "$SMITHERS_SPEC_PATH" "$SMITHERS_TODO_PATH" <<'PY'
 import sqlite3
 import sys
 from datetime import datetime, timezone
@@ -280,7 +333,17 @@ conn.commit()
 print(cur.lastrowid)
 conn.close()
 PY
-)
+  )
+fi
+
+echo "[$VM_NAME] Dispatching spec: $SMITHERS_SPEC_PATH"
+echo "[$VM_NAME] Agent: $RALPH_AGENT ($AGENT_CMD)"
+echo "[$VM_NAME] Include .git: $INCLUDE_GIT"
+echo "[$VM_NAME] Work dir: ${VM_WORK_DIR}"
+echo "[$VM_NAME] Orchestrator: Smithers"
+echo "[$VM_NAME] Spec: $SMITHERS_SPEC_PATH"
+echo "[$VM_NAME] TODO: $SMITHERS_TODO_PATH"
+echo "[$VM_NAME] Workflow: $SMITHERS_WORKFLOW"
 
 if [[ "$OS" == "macos" ]]; then
   if ! limactl list --format '{{.Name}} {{.Status}}' 2>/dev/null | grep -q "^$VM_NAME Running"; then
@@ -288,8 +351,7 @@ if [[ "$OS" == "macos" ]]; then
     limactl start "$VM_NAME"
   fi
 
-  VM_WORK_DIR="/home/ralph/work/${VM_NAME}/${WORK_SUBDIR}"
-  limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph mkdir -p "$VM_WORK_DIR"
+  limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph mkdir -p "$VM_WORK_DIR" "$CONTROL_DIR"
 
   cat "$PROMPT_FILE" | limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph tee "${VM_WORK_DIR}/SPEC.md" > /dev/null
   limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph mkdir -p "${VM_WORK_DIR}/specs" "${VM_WORK_DIR}/reports"
@@ -307,7 +369,8 @@ if [[ "$OS" == "macos" ]]; then
   fi
   if [[ -n "$SMITHERS_REVIEWERS_DIR_SRC" ]]; then
     limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph mkdir -p "${VM_WORK_DIR}/reviewers"
-    tar -C "$SMITHERS_REVIEWERS_DIR_SRC" -cf - . | limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph tar -C "${VM_WORK_DIR}/reviewers" -xf -
+    COPYFILE_DISABLE=1 tar -C "$SMITHERS_REVIEWERS_DIR_SRC" --no-xattrs --exclude='._*' -cf - . | \
+      limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph tar -C "${VM_WORK_DIR}/reviewers" -xf -
   fi
 
   # Record run context (prompts + hashes) for audit
@@ -449,6 +512,7 @@ PY
   fi
 
   echo "[$VM_NAME] Starting Smithers workflow (max iterations: $MAX_ITERATIONS)..."
+  set +e
   limactl shell --workdir /home/ralph "$VM_NAME" sudo -u ralph bash <<EOF
     cd "${VM_PROJECT_DIR}"
     echo "[$VM_NAME] Working in: \$(pwd)"
@@ -481,14 +545,72 @@ PY
       export SMITHERS_REVIEW_MODELS_FILE="${VM_WORK_DIR}/reviewer-models.json"
     fi
     export SMITHERS_MAX_ITERATIONS="${MAX_ITERATIONS}"
-    if [[ "${RESUME}" == "true" ]]; then
-      smithers resume "${VM_WORK_DIR}/smithers-workflow.tsx" --run-id "${RUN_ID}"
-    else
-      smithers run "${VM_WORK_DIR}/smithers-workflow.tsx" --run-id "${RUN_ID}" --input "{}"
+    export CONTROL_DIR="${CONTROL_DIR}"
+    PID_FILE="${CONTROL_DIR}/smithers.pid"
+    HEARTBEAT_FILE="${CONTROL_DIR}/heartbeat.json"
+    HEARTBEAT_SECONDS=30
+    export CONTROL_DIR PID_FILE HEARTBEAT_FILE HEARTBEAT_SECONDS
+
+    if [[ -f "\$PID_FILE" ]]; then
+      OLD_PID=\$(cat "\$PID_FILE" || true)
+      if [[ -n "\$OLD_PID" ]] && ! kill -0 "\$OLD_PID" 2>/dev/null; then
+        rm -f "\$PID_FILE"
+      fi
     fi
-    exit \$?
+
+    if [[ "${RESUME}" == "true" ]]; then
+      smithers resume "${VM_WORK_DIR}/smithers-workflow.tsx" --run-id "${RUN_ID}" &
+    else
+      smithers run "${VM_WORK_DIR}/smithers-workflow.tsx" --run-id "${RUN_ID}" --input "{}" &
+    fi
+    SMITHERS_PID=\$!
+    export SMITHERS_PID
+    echo "\$SMITHERS_PID" > "\$PID_FILE"
+
+    (
+      while kill -0 "\$SMITHERS_PID" 2>/dev/null; do
+        python3 - <<'PY'
+import json, os
+from datetime import datetime, timezone
+control = os.environ.get('CONTROL_DIR','')
+heartbeat = os.environ.get('HEARTBEAT_FILE','')
+run_id = os.environ.get('SMITHERS_RUN_ID','')
+spec_path = os.environ.get('SMITHERS_SPEC_PATH','')
+phase = ''
+phase_file = os.path.join(control, 'phase.json')
+try:
+    if os.path.exists(phase_file):
+        with open(phase_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        phase = str(data.get('phase','') or '')
+except Exception:
+    pass
+payload = {
+  'v': 1,
+  'ts': datetime.now(timezone.utc).isoformat(),
+  'pid': int(os.environ.get('SMITHERS_PID','0') or 0),
+  'run_id': run_id,
+  'spec_path': spec_path,
+  'phase': phase
+}
+try:
+    with open(heartbeat, 'w', encoding='utf-8') as f:
+        json.dump(payload, f)
+except Exception:
+    pass
+PY
+        sleep "\$HEARTBEAT_SECONDS"
+      done
+    ) &
+
+    wait "\$SMITHERS_PID"
+    EXIT_CODE=\$?
+    echo "\$EXIT_CODE" > "${CONTROL_DIR}/exit_code"
+    rm -f "\$PID_FILE"
+    exit "\$EXIT_CODE"
 EOF
   EXIT_CODE=$?
+  set -e
   python3 - "$DB_PATH" "$RUN_ID" "$EXIT_CODE" <<'PY'
 import sqlite3
 import sys
@@ -518,8 +640,7 @@ else
 
   echo "[$VM_NAME] VM IP: $VM_IP"
 
-  VM_WORK_DIR="/home/ralph/work/${VM_NAME}/${WORK_SUBDIR}"
-  ssh "ralph@${VM_IP}" "mkdir -p '$VM_WORK_DIR'"
+  ssh "ralph@${VM_IP}" "mkdir -p '$VM_WORK_DIR' '$CONTROL_DIR'"
   scp "$PROMPT_FILE" "ralph@${VM_IP}:${VM_WORK_DIR}/SPEC.md"
   ssh "ralph@${VM_IP}" "mkdir -p '${VM_WORK_DIR}/specs' '${VM_WORK_DIR}/reports'"
   scp "$SMITHERS_SPEC_PATH" "ralph@${VM_IP}:${VM_WORK_DIR}/specs/spec.min.json"
@@ -536,7 +657,8 @@ else
   fi
   if [[ -n "$SMITHERS_REVIEWERS_DIR_SRC" ]]; then
     ssh "ralph@${VM_IP}" "mkdir -p '${VM_WORK_DIR}/reviewers'"
-    scp -r "$SMITHERS_REVIEWERS_DIR_SRC/." "ralph@${VM_IP}:${VM_WORK_DIR}/reviewers/"
+    COPYFILE_DISABLE=1 tar -C "$SMITHERS_REVIEWERS_DIR_SRC" --no-xattrs --exclude='._*' -cf - . | \
+      ssh "ralph@${VM_IP}" "tar -C '${VM_WORK_DIR}/reviewers' -xf -"
   fi
   python3 - "$SMITHERS_SPEC_PATH" "$SMITHERS_TODO_PATH" "$SMITHERS_PROMPT_PATH" "$SMITHERS_REVIEW_PROMPT_PATH" "$SMITHERS_REVIEWERS_DIR_SRC" "$SMITHERS_REVIEW_MODELS_FILE" "$VM_NAME" "$RUN_ID" <<'PY' > /tmp/ralph-run-context.json
 import hashlib
@@ -677,6 +799,7 @@ PY
   fi
 
   echo "[$VM_NAME] Starting Smithers workflow (max iterations: $MAX_ITERATIONS)..."
+  set +e
   ssh "ralph@${VM_IP}" bash -c "'
     cd \"$VM_PROJECT_DIR\"
     echo \"[$VM_NAME] Working in: \$(pwd)\"
@@ -709,14 +832,72 @@ PY
       export SMITHERS_REVIEW_MODELS_FILE=\"${VM_WORK_DIR}/reviewer-models.json\"
     fi
     export SMITHERS_MAX_ITERATIONS=\"${MAX_ITERATIONS}\"
-    if [[ \"${RESUME}\" == \"true\" ]]; then
-      smithers resume \"${VM_WORK_DIR}/smithers-workflow.tsx\" --run-id \"${RUN_ID}\"
-    else
-      smithers run \"${VM_WORK_DIR}/smithers-workflow.tsx\" --run-id \"${RUN_ID}\" --input \"{}\"
+    export CONTROL_DIR=\"${CONTROL_DIR}\"
+    PID_FILE=\"${CONTROL_DIR}/smithers.pid\"
+    HEARTBEAT_FILE=\"${CONTROL_DIR}/heartbeat.json\"
+    HEARTBEAT_SECONDS=30
+    export CONTROL_DIR PID_FILE HEARTBEAT_FILE HEARTBEAT_SECONDS
+
+    if [[ -f \"\$PID_FILE\" ]]; then
+      OLD_PID=\$(cat \"\$PID_FILE\" || true)
+      if [[ -n \"\$OLD_PID\" ]] && ! kill -0 \"\$OLD_PID\" 2>/dev/null; then
+        rm -f \"\$PID_FILE\"
+      fi
     fi
-    exit \$?
+
+    if [[ \"${RESUME}\" == \"true\" ]]; then
+      smithers resume \"${VM_WORK_DIR}/smithers-workflow.tsx\" --run-id \"${RUN_ID}\" &
+    else
+      smithers run \"${VM_WORK_DIR}/smithers-workflow.tsx\" --run-id \"${RUN_ID}\" --input \"{}\" &
+    fi
+    SMITHERS_PID=\$!
+    export SMITHERS_PID
+    echo \"\$SMITHERS_PID\" > \"\$PID_FILE\"
+
+    (
+      while kill -0 "\$SMITHERS_PID" 2>/dev/null; do
+        python3 - <<'PY'
+import json, os
+from datetime import datetime, timezone
+control = os.environ.get('CONTROL_DIR','')
+heartbeat = os.environ.get('HEARTBEAT_FILE','')
+run_id = os.environ.get('SMITHERS_RUN_ID','')
+spec_path = os.environ.get('SMITHERS_SPEC_PATH','')
+phase = ''
+phase_file = os.path.join(control, 'phase.json')
+try:
+    if os.path.exists(phase_file):
+        with open(phase_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        phase = str(data.get('phase','') or '')
+except Exception:
+    pass
+payload = {
+  'v': 1,
+  'ts': datetime.now(timezone.utc).isoformat(),
+  'pid': int(os.environ.get('SMITHERS_PID','0') or 0),
+  'run_id': run_id,
+  'spec_path': spec_path,
+  'phase': phase
+}
+try:
+    with open(heartbeat, 'w', encoding='utf-8') as f:
+        json.dump(payload, f)
+except Exception:
+    pass
+PY
+        sleep "\$HEARTBEAT_SECONDS"
+      done
+    ) &
+
+    wait \"\$SMITHERS_PID\"
+    EXIT_CODE=\$?
+    echo \"\$EXIT_CODE\" > \"${CONTROL_DIR}/exit_code\"
+    rm -f \"\$PID_FILE\"
+    exit \"\$EXIT_CODE\"
   '"
   EXIT_CODE=$?
+  set -e
   python3 - "$DB_PATH" "$RUN_ID" "$EXIT_CODE" <<'PY'
 import sqlite3
 import sys
