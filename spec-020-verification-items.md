@@ -127,6 +127,26 @@ Each item includes the goal, suggested steps, and expected evidence.
 
 ---
 
+## Verified on host/valpha (limited)
+- **release-readiness (partial)**: `bun run build`, `fabrik flow`, `fabrik known-issues`, `fabrik spec validate/minify`, `fabrik runs list`.
+- **embedded-assets (partial)**: `LOCAL_RALPH_HOME=/tmp/ralph-missing ./dist/fabrik docs --topic workflow`.
+- **laos-command (partial)**: `fabrik laos status` (host Docker required).
+- **credentials-sync (partial)**: `fabrik credentials sync --vm valpha` (warnings about missing Claude token/SSH keys observed).
+- **cleanup (partial)**: `fabrik cleanup --vm valpha --keep 5 --dry-run`.
+- **feedback (partial)**: `fabrik runs feedback --id <run> ...` writes `human-feedback.json` to control dir.
+- **run-auditability (partial)**: `runs show` includes binary_hash/os/git_sha after fix.
+
+## Deferred (requires fresh VM/Linux)
+- test-vm-scripts (macOS + Linux)
+- claude-auth-flow
+- git-credentials-vm
+- jj-shared-workflow
+- vm-template-cloning
+- ci-cd-integration
+- reproducible-standalone (full, fresh machine)
+- idempotency
+- orchestrator-script (verification)
+
 Notes:
 - Items above are verification-heavy and require real VM interactions.
 - For Linux validation, use libvirt + virsh/ssh paths.
