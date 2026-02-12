@@ -39,6 +39,9 @@ Each item includes the goal, suggested steps, and expected evidence.
 
 **Evidence:** VMs created and fleet dispatch runs; reports appear in VM workdirs.
 
+**Status (macOS):** Verified create + setup on `ralph-1`. Fleet dispatch ran with 1 VM; extra specs skipped due to VM shortage.
+**Status (Linux):** Not run.
+
 ## 3) claude-auth-flow
 **Goal:** Verify Claude auth persistence across VM snapshots.
 
@@ -50,6 +53,8 @@ Each item includes the goal, suggested steps, and expected evidence.
 - Restore snapshot and repeat Claude command.
 
 **Evidence:** Claude works before/after snapshot restore.
+
+**Status:** Blocked in `ralph-1` (no Claude credentials detected; `setup-base-vm.sh` warns). Snapshot testing also blocked because `limactl snapshot` is unimplemented.
 
 ## 4) git-credentials-vm
 **Goal:** Verify PR creation from VM with GH auth.
@@ -65,6 +70,8 @@ Each item includes the goal, suggested steps, and expected evidence.
 
 **Evidence:** PR created successfully from VM.
 
+**Status:** Blocked in `ralph-1` (gh auth token invalid after credential sync: `gh auth status` failed).
+
 ## 5) jj-shared-workflow
 **Goal:** Validate shared spec workflow using JJ inside VM.
 
@@ -77,6 +84,8 @@ Each item includes the goal, suggested steps, and expected evidence.
 
 **Evidence:** JJ changes exist with expected content; push succeeds.
 
+**Status:** Partial on `ralph-1` (created `task-1` and `task-2` using `jj new master`; did not run multi-task spec or push).
+
 ## 6) vm-template-cloning
 **Goal:** Document Lima snapshot cloning + libvirt virt-clone; measure time savings.
 
@@ -86,6 +95,8 @@ Each item includes the goal, suggested steps, and expected evidence.
 - Record timings in docs.
 
 **Evidence:** Documentation with measured times and commands.
+
+**Status:** Blocked on macOS: `limactl snapshot create` is unimplemented (limactl 2.0.3). Linux/libvirt not run.
 
 ## 7) ci-cd-integration
 **Goal:** Add CI docs + GitHub Actions example for Ralphs.
@@ -125,6 +136,8 @@ Each item includes the goal, suggested steps, and expected evidence.
 
 **Evidence:** runs complete; output summarises DONE/BLOCKED appropriately.
 
+**Status:** Blocked. Orchestrate run on `ralph-1` started, but Smithers failed with OpenAI usage limit (see `/home/ralph/work/ralph-1/.runs/local-isolated-ralph-20260212T204556/reports/smithers.log`).
+
 ---
 
 ## Verified on host/valpha (limited)
@@ -141,13 +154,13 @@ Each item includes the goal, suggested steps, and expected evidence.
 - **dispatch on valpha (blocked)**: `limactl` returned I/O error during workdir creation; VM likely unstable.
 
 ## Deferred (requires fresh VM/Linux)
-- test-vm-scripts (macOS + Linux)
-- claude-auth-flow
-- git-credentials-vm
-- jj-shared-workflow
-- vm-template-cloning
+- test-vm-scripts (Linux)
+- claude-auth-flow (needs Claude creds + snapshot support)
+- git-credentials-vm (needs valid GH token)
+- jj-shared-workflow (run multi-task spec + push)
+- vm-template-cloning (needs Lima snapshot support or Linux virt-clone)
 - idempotency
-- orchestrator-script (verification)
+- orchestrator-script (verification) (blocked by OpenAI usage limit)
 
 Notes:
 - Items above are verification-heavy and require real VM interactions.
