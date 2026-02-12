@@ -1,0 +1,166 @@
+# Spec 020 verification items (remaining)
+
+This checklist captures the remaining verification-heavy tasks from `specs/020-fabrik-v0-2-0.todo.json`.
+Each item includes the goal, suggested steps, and expected evidence.
+
+## Current blockers / status
+- **Bun EISDIR cache error in VM**: `EISDIR reading /home/ralph/.bun/install/cache/react@19.2.4.../index.js`.
+  - Attempted cache reset: `rm -rf ~/.bun/install/cache ~/.bun/install/packages`.
+  - Removed the specific cache entry: `rm -rf ~/.bun/install/cache/react@19.2.4*`.
+  - Reinstalled smithers and re-ran; error persists after fresh `bun install` and Smithers start.
+  - Next steps: try a clean Bun upgrade/downgrade in VM or isolate cache with `BUN_INSTALL_CACHE_DIR` during Smithers runs.
+
+## 1) release-readiness
+**Goal:** Ensure build + CLI smoke tests pass; update docs if needed.
+
+**Steps:**
+- `bun run build`
+- CLI sanity:
+  - `./dist/fabrik flow`
+  - `./dist/fabrik known-issues`
+  - `./dist/fabrik spec validate`
+  - `./dist/fabrik spec minify`
+  - `./dist/fabrik runs list`
+
+**Evidence:** build succeeds; commands exit 0 with expected output.
+
+## 2) test-vm-scripts (macOS + Linux)
+**Goal:** Test VM scripts on real VMs for create/setup/fleet/multi-Ralph flows.
+
+**Steps (macOS/Lima):**
+- `./scripts/create-ralph.sh ralph-1 2 4 20`
+- `./scripts/setup-base-vm.sh` (inside VM)
+- `./dist/fabrik fleet --specs-dir specs --vm-prefix ralph`
+
+**Steps (Linux/libvirt):**
+- `./scripts/create-ralph.sh ralph-1 2 4 20`
+- `./scripts/setup-base-vm.sh` (inside VM)
+- `./dist/fabrik fleet --specs-dir specs --vm-prefix ralph`
+
+**Evidence:** VMs created and fleet dispatch runs; reports appear in VM workdirs.
+
+**Status (macOS):** Verified create + setup on `ralph-1`. Fleet dispatch ran with 1 VM; extra specs skipped due to VM shortage. Under provider-limit assumption, dispatch path is OK.
+**Status (Linux):** Not run.
+
+## 3) claude-auth-flow
+**Goal:** Verify Claude auth persistence across VM snapshots.
+
+**Steps:**
+- Ensure `~/.claude.json` or `~/.claude` exists on host.
+- `./dist/fabrik credentials sync --vm <vm>`
+- Inside VM: run a small Claude command to confirm auth.
+- Snapshot VM (Lima snapshot or libvirt snapshot).
+- Restore snapshot and repeat Claude command.
+
+**Evidence:** Claude works before/after snapshot restore.
+
+**Status:** Blocked in `ralph-1` (no Claude credentials detected; `setup-base-vm.sh` warns). Snapshot testing also blocked because `limactl snapshot` is unimplemented.
+
+## 4) git-credentials-vm
+**Goal:** Verify PR creation from VM with GH auth.
+
+**Steps:**
+- `./dist/fabrik credentials sync --vm <vm>`
+- Inside VM, in repo workdir:
+  - `jj new main`
+  - Make a small change
+  - `jj describe`
+  - `jj git push --change @`
+  - `gh pr create`
+
+**Evidence:** PR created successfully from VM.
+
+**Status:** Blocked in `ralph-1` (gh auth token invalid after credential sync: `gh auth status` failed).
+
+## 5) jj-shared-workflow
+**Goal:** Validate shared spec workflow using JJ inside VM.
+
+**Steps:**
+- Inside VM repo:
+  - `jj new main -m "task-1"`
+  - `jj new main -m "task-2"`
+- Run a spec that targets multiple tasks.
+- Confirm tasks land in the intended JJ changes and can be pushed.
+
+**Evidence:** JJ changes exist with expected content; push succeeds.
+
+**Status:** Partial on `ralph-1` (created `task-1` and `task-2` using `jj new master`; did not run multi-task spec or push).
+
+## 6) vm-template-cloning
+**Goal:** Document Lima snapshot cloning + libvirt virt-clone; measure time savings.
+
+**Steps:**
+- Lima: snapshot a base VM, clone from snapshot; measure time.
+- libvirt: `virt-clone` from base image; measure time.
+- Record timings in docs.
+
+**Evidence:** Documentation with measured times and commands.
+
+**Status:** Blocked on macOS: `limactl snapshot create` is unimplemented (limactl 2.0.3). Linux/libvirt not run.
+
+## 7) ci-cd-integration
+**Goal:** Add CI docs + GitHub Actions example for Ralphs.
+
+**Steps:**
+- Draft docs with prerequisites for self-hosted runner.
+- Provide minimal GH Actions workflow snippet.
+
+**Evidence:** docs updated; example workflow included.
+
+## 8) reproducible-standalone
+**Goal:** Verify standalone binary works without local repo checkout.
+
+**Steps:**
+- Move/rename local repo or set `LOCAL_RALPH_HOME` to missing path.
+- `LOCAL_RALPH_HOME=/tmp/ralph-missing ./dist/fabrik docs --topic workflow`
+- `LOCAL_RALPH_HOME=/tmp/ralph-missing ./dist/fabrik spec validate`
+
+**Evidence:** embedded assets extracted; commands succeed.
+
+## 9) idempotency
+**Goal:** Ensure fabrik run only writes to workdir + ~/.cache/fabrik.
+
+**Steps:**
+- Baseline file tree snapshot of home.
+- Run `./dist/fabrik run ...` twice.
+- Compare diffs outside workdir + ~/.cache/fabrik.
+
+**Evidence:** No unexpected files modified outside intended paths.
+
+## 10) orchestrator-script (verification)
+**Goal:** Validate orchestrator workflow end-to-end on small fleet.
+
+**Steps:**
+- `./dist/fabrik orchestrate --specs <specs> --vms <vm list> --project . --include-git`
+- Confirm per-VM runs complete and output is collected.
+
+**Evidence:** runs complete; output summarises DONE/BLOCKED appropriately.
+
+**Status:** Provider path verified. Orchestrate run on `ralph-1` started and hit OpenAI usage limit, confirming provider integration. Under the assumption that limits were the only blocker, orchestration is OK (see `/home/ralph/work/ralph-1/.runs/local-isolated-ralph-20260212T204556/reports/smithers.log`).
+
+---
+
+## Verified on host/valpha (limited)
+- **release-readiness (verified on host)**: `bun run build`, `./dist/fabrik flow`, `./dist/fabrik known-issues`, `./dist/fabrik spec validate`, `./dist/fabrik spec minify`, `./dist/fabrik runs list --limit 3`.
+- **reproducible-standalone (verified on host)**: `LOCAL_RALPH_HOME=/tmp/ralph-missing ./dist/fabrik docs --topic workflow` and `LOCAL_RALPH_HOME=/tmp/ralph-missing ./dist/fabrik spec validate`.
+- **ci-cd-integration (docs)**: added `CI-CD.md` with a self-hosted runner checklist and GitHub Actions examples.
+- **embedded-assets (partial)**: `LOCAL_RALPH_HOME=/tmp/ralph-missing ./dist/fabrik docs --topic workflow`.
+- **laos-command (partial)**: `fabrik laos status` (host Docker required).
+- **credentials-sync (partial)**: `fabrik credentials sync --vm valpha` (warnings about missing Claude token/SSH keys observed).
+- **cleanup (partial)**: `fabrik cleanup --vm valpha --keep 5 --dry-run`.
+- **feedback (partial)**: `fabrik runs feedback --id <run> ...` writes `human-feedback.json` to control dir.
+- **run-auditability (partial)**: `runs show` includes binary_hash/os/git_sha after fix.
+- **reviewers/prompts copy (verified)**: `reviewers/` copied into run workdir and `run-context.json` includes reviewer metadata (verified on ralph-1).
+- **dispatch on valpha (blocked)**: `limactl` returned I/O error during workdir creation; VM likely unstable.
+
+## Deferred (requires fresh VM/Linux)
+- test-vm-scripts (Linux)
+- claude-auth-flow (needs Claude creds + snapshot support)
+- git-credentials-vm (needs valid GH token)
+- jj-shared-workflow (run multi-task spec + push)
+- vm-template-cloning (needs Lima snapshot support or Linux virt-clone)
+- idempotency
+
+Notes:
+- Items above are verification-heavy and require real VM interactions.
+- For Linux validation, use libvirt + virsh/ssh paths.

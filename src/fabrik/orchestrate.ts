@@ -1,7 +1,9 @@
-import { execFileSync } from "node:child_process"
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
 import { dispatchRun, type DispatchResult } from "./dispatch.js"
+import { runCommand, runCommandOutput } from "./exec.js"
+import { ensureCommands } from "./prereqs.js"
+import { openRunDb, updateRunStatus as updateRunStatusDb } from "./runDb.js"
 
 type OrchestrateOptions = {
   specs: string[]
@@ -9,6 +11,7 @@ type OrchestrateOptions = {
   todo?: string[]
   project?: string
   repoUrl?: string
+  repoRef?: string
   repoBranch?: string
   includeGit?: boolean
   workflow?: string
@@ -24,7 +27,7 @@ type OrchestrateOptions = {
 
 type RunStatus = {
   vm: string
-  runId: string
+  runId: number
   reportDir: string
   workdir: string
   specId: string
@@ -32,46 +35,35 @@ type RunStatus = {
   blockedTask?: string
 }
 
-const updateRunStatus = (runId: string, status: "running" | "blocked" | "done", exitCode: number | null) => {
+const updateRunStatus = (runId: number, status: "running" | "blocked" | "done", exitCode: number | null) => {
   const dbPath = resolve(process.env.HOME ?? "", ".cache", "ralph", "ralph.db")
   if (!existsSync(dbPath)) return
-  const script = `
-import sqlite3, sys
-db_path = sys.argv[1]
-rid = int(sys.argv[2])
-status = sys.argv[3]
-exit_code = sys.argv[4]
-conn = sqlite3.connect(db_path)
-try:
-  conn.execute('ALTER TABLE runs ADD COLUMN end_reason TEXT')
-except Exception:
-  pass
-conn.execute(
-  'UPDATE runs SET status = ?, exit_code = ?, end_reason = NULL WHERE id = ?',
-  (status, None if exit_code == 'null' else int(exit_code), rid)
-)
-conn.commit()
-conn.close()
-`
-  execFileSync("python3", ["-", dbPath, runId, status, exitCode === null ? "null" : String(exitCode)], {
-    input: script
-  })
+  const { db } = openRunDb(dbPath)
+  updateRunStatusDb(db, runId, status, exitCode)
+  db.close()
 }
 
 const sleep = (ms: number) => new Promise((resolveFn) => setTimeout(resolveFn, ms))
 
 const runRemote = (vm: string, command: string) => {
   if (process.platform === "darwin") {
-    return execFileSync("limactl", ["shell", "--workdir", "/home/ralph", vm, "bash", "-lc", command]).toString()
+    return runCommandOutput("limactl", ["shell", "--workdir", "/home/ralph", vm, "bash", "-lc", command], {
+      context: `run ${command} on ${vm}`
+    })
   }
   if (process.platform === "linux") {
-    const ip = execFileSync("virsh", ["domifaddr", vm]).toString().split("\n")
+    const ip = runCommandOutput("virsh", ["domifaddr", vm], { context: "find VM IP" })
+      .split("\n")
       .map((line) => line.trim())
       .find((line) => line.includes("ipv4"))
       ?.split(/\s+/)[3]
       ?.split("/")[0]
     if (!ip) throw new Error(`Could not determine IP for VM '${vm}'. Is it running?`)
-    return execFileSync("ssh", ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", `ralph@${ip}`, command]).toString()
+    return runCommandOutput(
+      "ssh",
+      ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", `ralph@${ip}`, command],
+      { context: `run ${command} on ${vm}` }
+    )
   }
   throw new Error(`Unsupported OS: ${process.platform}`)
 }
@@ -129,6 +121,13 @@ export const orchestrateRuns = async (options: OrchestrateOptions) => {
   if (options.specs.length !== options.vms.length) {
     throw new Error("orchestrate: specs and vms must have the same length")
   }
+  if (process.platform === "darwin") {
+    ensureCommands([{ cmd: "limactl" }], "orchestrate requires limactl")
+  } else if (process.platform === "linux") {
+    ensureCommands([{ cmd: "virsh" }, { cmd: "ssh" }], "orchestrate requires virsh + ssh")
+  } else {
+    throw new Error(`Unsupported OS: ${process.platform}`)
+  }
   const runs: DispatchResult[] = []
   const interval = options.intervalSeconds ?? 30
   const branchPrefix = options.branchPrefix?.trim() || "spec"
@@ -146,7 +145,7 @@ export const orchestrateRuns = async (options: OrchestrateOptions) => {
       todo: todo ?? spec.replace(/\.min\.json$/i, ".todo.min.json"),
       project: options.project,
       repoUrl: options.repoUrl,
-      repoBranch: options.repoBranch,
+      repoRef: options.repoRef ?? options.repoBranch,
       includeGit: Boolean(options.includeGit),
       workflow: options.workflow,
       prompt: options.prompt,

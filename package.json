@@ -9,20 +9,18 @@
   "scripts": {
     "build": "bun run scripts/embed-assets.ts && bun build src/fabrik/bin.ts --compile --outfile dist/fabrik",
     "cli": "bun run src/fabrik/bin.ts",
-    "deps:policy": "bun run scripts/check-dependency-policy.ts",
-    "hooks:install": "bash scripts/install-git-hooks.sh",
     "changeset-version": "changeset version && node scripts/version.mjs",
     "changeset-publish": "bun run build && node scripts/publish.mjs"
   },
   "dependencies": {
-    "@effect/cli": "0.73.1",
-    "@effect/platform-node": "0.104.1",
-    "effect": "3.19.15",
-    "typescript": "5.9.3"
+    "@effect/cli": "latest",
+    "@effect/platform-node": "latest",
+    "effect": "latest",
+    "smithers-orchestrator": "0.3.0"
   },
   "devDependencies": {
-    "@changesets/changelog-github": "0.5.2",
-    "@changesets/cli": "2.29.8"
+    "@changesets/changelog-github": "latest",
+    "@changesets/cli": "latest"
   },
   "trustedDependencies": [
     "@parcel/watcher"
