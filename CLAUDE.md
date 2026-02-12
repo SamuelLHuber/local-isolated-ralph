@@ -70,6 +70,27 @@ useEffect(() => {
 - VM can run standalone and resume independently
 - Host may become remote controller later, but per-VM runs remain self-sufficient
 
+## CRITICAL: Dependency Updates
+
+### Always check before updating
+- Run `fabrik deps check` before dependency bumps.
+- This must include Bun dependency status plus Smithers pin drift vs `main`.
+
+### Updates are explicit and opt-in
+- For repo packages: run `fabrik deps update --bun`.
+- For Smithers GitHub pin: run `fabrik deps update --smithers` (or `--smithers-ref <ref>`).
+- Do not change Smithers install source back to npm package coordinates; keep GitHub pinning.
+
+### Default policy: do not add dependencies
+- Do not add new direct `dependencies` or `devDependencies` unless explicitly approved by a human.
+- Keep dependency versions pinned (no `latest`, `^`, `~`, or `*` ranges) in `package.json`.
+- CI enforces this via `bun run deps:policy`.
+- Install local git hooks with `bun run hooks:install` so pre-commit runs the same check.
+
+### Keep docs and embedded assets in sync
+- When Smithers pin changes, ensure `nix/modules/ralph.nix`, `README.md`, and `QUICKSTART.md` are updated together.
+- Regenerate embedded assets so `src/fabrik/embeddedAssets.ts` reflects doc changes.
+
 ## Summary
 
 | Never Do | Always Do |

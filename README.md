@@ -227,7 +227,19 @@ fabrik laos down
 
 # Credentials sync
 fabrik credentials sync --vm ralph-1
+
+# Dependency maintenance
+fabrik deps check
+fabrik deps update --bun
+fabrik deps update --smithers
+fabrik deps update --bun --smithers
 ```
+
+Dependency policy:
+- Direct deps are pinned (no `latest`/range drift).
+- New direct deps require explicit approval.
+- CI enforces policy with `bun run deps:policy`.
+- Install the local pre-commit hook once: `bun run hooks:install`.
 
 `fabrik laos` clones/pulls `https://github.com/dtechvision/laos` with **jj** (or `git` if jj is missing)
 into `~/.cache/fabrik/laos` and runs `docker compose`.
@@ -318,7 +330,7 @@ Run context audit:
 
 ```bash
 # Install in VM if missing
-# bun add -g smithers-orchestrator
+# bun add -g smithers-orchestrator@0.6.0
 
 # Local workflow (uses scripts/smithers-spec-runner.tsx by default)
 ./scripts/dispatch.sh --spec specs/000-base.min.json ralph-1 specs/000-base.min.json

@@ -15,11 +15,11 @@ let
 
   # Agent CLI packages to install globally via bun (conditional)
   agentPackages =
-    (optional cfg.agents.claude "@anthropic-ai/claude-code") ++
-    (optional cfg.agents.codex "@openai/codex") ++
-    (optional cfg.agents.opencode "opencode-ai@latest") ++
-    (optional cfg.agents.smithers "smithers-orchestrator@latest") ++
-    (optional cfg.browser.mcp "@playwright/mcp@latest");
+    (optional cfg.agents.claude "@anthropic-ai/claude-code@2.1.39") ++
+    (optional cfg.agents.codex "@openai/codex@0.99.0") ++
+    (optional cfg.agents.opencode "opencode-ai@1.1.59") ++
+    (optional cfg.agents.smithers "smithers-orchestrator@0.6.0") ++
+    (optional cfg.browser.mcp "@playwright/mcp@0.0.64");
 
   # Script to install agent CLIs via bun
   installAgentCLIs = pkgs.writeShellScriptBin "install-agent-clis" ''
@@ -232,7 +232,7 @@ in {
 
         [mcp_servers.playwright]
         command = "npx"
-        args = ["@playwright/mcp@latest"]
+        args = ["@playwright/mcp@0.0.64"]
       '';
       mode = "0644";
     };
@@ -245,7 +245,7 @@ in {
         mcpServers = {
           playwright = {
             command = "npx";
-            args = [ "@playwright/mcp@latest" ];
+            args = [ "@playwright/mcp@0.0.64" ];
           };
         };
       };
@@ -274,7 +274,7 @@ in {
         mcp = {
           playwright = {
             type = "local";
-            command = [ "npx" "-y" "@playwright/mcp@latest" ];
+            command = [ "npx" "-y" "@playwright/mcp@0.0.64" ];
             enabled = true;
           };
         };

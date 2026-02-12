@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect"
 import * as Console from "effect/Console"
 import * as Option from "effect/Option"
 import { execFileSync } from "node:child_process"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { resolve, join } from "node:path"
 import { homedir } from "node:os"
 import { listSpecs } from "./specs.js"
@@ -110,6 +110,19 @@ const laosFollowOption = Options.boolean("follow").pipe(
   Options.withDescription("Follow logs")
 )
 
+const smithersRefOption = Options.text("smithers-ref").pipe(
+  Options.optional,
+  Options.withDescription("Smithers version to pin (semver or 'latest'; default: latest)")
+)
+const updateBunOption = Options.boolean("bun").pipe(
+  Options.withDefault(false),
+  Options.withDescription("Run bun update in the local-ralph repo")
+)
+const updateSmithersOption = Options.boolean("smithers").pipe(
+  Options.withDefault(false),
+  Options.withDescription("Update pinned Smithers version in nix/docs and regenerate embedded assets")
+)
+
 const runScript = (scriptPath: string, args: string[]) =>
   Effect.sync(() => {
     if (!existsSync(scriptPath)) {
@@ -156,6 +169,65 @@ const runRemote = (vm: string, command: string) => {
 }
 
 const unwrapOptional = <A>(value: Option.Option<A>) => Option.getOrUndefined(value)
+
+const SMITHERS_PACKAGE = "smithers-orchestrator"
+const SMITHERS_VERSION_PATTERN = /smithers-orchestrator@([0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?)/
+
+const readSmithersVersion = (home: string): string | null => {
+  const nixPath = resolve(home, "nix", "modules", "ralph.nix")
+  if (!existsSync(nixPath)) return null
+  const source = readFileSync(nixPath, "utf8")
+  const match = source.match(SMITHERS_VERSION_PATTERN)
+  return match ? match[1] : null
+}
+
+const fetchLatestSmithersVersion = (): string => {
+  try {
+    const version = execFileSync("npm", ["view", SMITHERS_PACKAGE, "version"], { encoding: "utf8" }).trim()
+    if (!version) throw new Error("empty version")
+    return version
+  } catch (error) {
+    throw new Error(`Failed to resolve latest ${SMITHERS_PACKAGE} version via npm: ${String(error)}`)
+  }
+}
+
+const resolveSmithersVersion = (requested?: string): string => {
+  if (!requested || requested === "latest" || requested === "main") {
+    return fetchLatestSmithersVersion()
+  }
+  const normalized = requested.startsWith("v") ? requested.slice(1) : requested
+  if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$/.test(normalized)) {
+    throw new Error(`Invalid Smithers version '${requested}'. Use a semver like 0.6.0 or 'latest'.`)
+  }
+  return normalized
+}
+
+const replaceSmithersRefInFile = (path: string, nextVersion: string) => {
+  if (!existsSync(path)) return false
+  const source = readFileSync(path, "utf8")
+  const updated = source.replace(/smithers-orchestrator@[A-Za-z0-9._-]+/g, `smithers-orchestrator@${nextVersion}`)
+  if (updated === source) return false
+  writeFileSync(path, updated, "utf8")
+  return true
+}
+
+const updateSmithersRef = (home: string, nextVersion: string) => {
+  const targets = [
+    resolve(home, "nix/modules/ralph.nix"),
+    resolve(home, "README.md"),
+    resolve(home, "QUICKSTART.md")
+  ]
+  let changed = 0
+  for (const path of targets) {
+    if (replaceSmithersRefInFile(path, nextVersion)) changed += 1
+  }
+  if (changed === 0) {
+    console.log("No Smithers references were updated.")
+    return
+  }
+  execFileSync("bun", ["run", "scripts/embed-assets.ts"], { cwd: home, stdio: "inherit" })
+  console.log(`Updated Smithers pin to ${nextVersion} in ${changed} files and regenerated embedded assets.`)
+}
 
 const promptOption = Options.text("prompt").pipe(
   Options.optional,
@@ -417,7 +489,7 @@ const runsReconcileCommand = Command.make(
     limit: Options.integer("limit").pipe(Options.optional, Options.withDescription("Max rows (default 50)")),
     heartbeatSeconds: Options.integer("heartbeat-seconds").pipe(
       Options.optional,
-      Options.withDescription("Seconds before heartbeat is stale (default: 180)")
+      Options.withDescription("Seconds before heartbeat is stale (default: 60)")
     )
   },
   ({ db, limit, heartbeatSeconds }) =>
@@ -431,7 +503,7 @@ const runsReconcileCommand = Command.make(
       reconcileRuns({
         dbPath,
         limit: unwrapOptional(limit) ?? 50,
-        heartbeatSeconds: unwrapOptional(heartbeatSeconds) ?? 180
+        heartbeatSeconds: unwrapOptional(heartbeatSeconds) ?? 60
       })
     }).pipe(Effect.withSpan("runs.reconcile"))
 ).pipe(Command.withDescription("Reconcile run status against VM processes"))
@@ -458,7 +530,7 @@ const runsCommand = Command.make("runs").pipe(
             return
           }
           try {
-            reconcileRuns({ dbPath, limit: limitValue ?? 10, heartbeatSeconds: 180 })
+            reconcileRuns({ dbPath, limit: limitValue ?? 10, heartbeatSeconds: 60 })
           } catch {
             // best-effort
           }
@@ -469,8 +541,11 @@ import sys
 db_path = sys.argv[1]
 limit = int(sys.argv[2])
 conn = sqlite3.connect(db_path)
+cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
+if "end_reason" not in cols:
+  conn.execute("ALTER TABLE runs ADD COLUMN end_reason TEXT")
 cur = conn.execute(
-  "SELECT id, vm_name, spec_path, started_at, status, exit_code FROM runs ORDER BY started_at DESC LIMIT ?",
+  "SELECT id, vm_name, spec_path, started_at, status, exit_code, end_reason FROM runs ORDER BY started_at DESC LIMIT ?",
   (limit,)
 )
 rows = cur.fetchall()
@@ -479,8 +554,9 @@ if not rows:
   print("No runs found.")
 else:
   for row in rows:
-    rid, vm, spec, started, status, code = row
-    print(f"{rid} | {vm} | {status} | {code} | {started} | {spec}")
+    rid, vm, spec, started, status, code, end_reason = row
+    reason = end_reason or "-"
+    print(f"{rid} | {vm} | {status} | {code} | {reason} | {started} | {spec}")
 `
           const rows = execFileSync("python3", ["-", dbPath, String(limitValue ?? 10)], {
             input: script
@@ -506,7 +582,7 @@ else:
             return
           }
           try {
-            reconcileRuns({ dbPath, limit: 50, heartbeatSeconds: 180 })
+            reconcileRuns({ dbPath, limit: 50, heartbeatSeconds: 60 })
           } catch {
             // best-effort
           }
@@ -517,8 +593,11 @@ import sys
 db_path = sys.argv[1]
 rid = int(sys.argv[2])
 conn = sqlite3.connect(db_path)
+cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
+if "end_reason" not in cols:
+  conn.execute("ALTER TABLE runs ADD COLUMN end_reason TEXT")
 cur = conn.execute(
-  "SELECT id, vm_name, workdir, spec_path, todo_path, started_at, status, exit_code FROM runs WHERE id = ?",
+  "SELECT id, vm_name, workdir, spec_path, todo_path, started_at, status, exit_code, end_reason FROM runs WHERE id = ?",
   (rid,)
 )
 row = cur.fetchone()
@@ -526,7 +605,7 @@ conn.close()
 if not row:
   print("Run not found.")
 else:
-  rid, vm, workdir, spec, todo, started, status, code = row
+  rid, vm, workdir, spec, todo, started, status, code, end_reason = row
   print(f"id: {rid}")
   print(f"vm: {vm}")
   print(f"workdir: {workdir}")
@@ -535,6 +614,7 @@ else:
   print(f"started_at: {started}")
   print(f"status: {status}")
   print(f"exit_code: {code}")
+  print(f"end_reason: {end_reason}")
 `
           const output = execFileSync("python3", ["-", dbPath, String(id)], { input: script }).toString()
           console.log(output.trim())
@@ -617,7 +697,7 @@ else:
             return
           }
           try {
-            reconcileRuns({ dbPath, limit: 50, heartbeatSeconds: 180 })
+            reconcileRuns({ dbPath, limit: 50, heartbeatSeconds: 60 })
           } catch {
             // best-effort
           }
@@ -814,6 +894,68 @@ const orchestrateCommand = Command.make(
     })
 ).pipe(Command.withDescription("Dispatch multiple runs and watch for completion"))
 
+const depsCommand = Command.make("deps").pipe(
+  Command.withSubcommands([
+    Command.make(
+      "check",
+      { ralphHome: ralphHomeOption },
+      ({ ralphHome }) =>
+        Effect.sync(() => {
+          const home = resolveRalphHome(ralphHome)
+          console.log(`[deps] Checking Bun dependencies in ${home}`)
+          try {
+            execFileSync("bun", ["outdated"], { cwd: home, stdio: "inherit" })
+          } catch (error) {
+            // bun outdated exits non-zero when outdated packages exist; output already shown.
+            if (!(error instanceof Error)) throw error
+          }
+
+          const pinnedVersion = readSmithersVersion(home)
+          if (!pinnedVersion) {
+            console.log("[deps] Smithers version not found in nix/modules/ralph.nix")
+            return
+          }
+          let latestVersion = ""
+          try {
+            latestVersion = fetchLatestSmithersVersion()
+          } catch (error) {
+            console.log(`[deps] Failed to resolve latest Smithers version: ${String(error)}`)
+            return
+          }
+          const upToDate = pinnedVersion === latestVersion
+          console.log(`[deps] Smithers pinned version: ${pinnedVersion}`)
+          console.log(`[deps] Smithers latest version: ${latestVersion}`)
+          console.log(`[deps] Smithers status: ${upToDate ? "up-to-date" : "update available"}`)
+        })
+    ).pipe(Command.withDescription("Check outdated Bun deps and Smithers pin drift")),
+    Command.make(
+      "update",
+      {
+        ralphHome: ralphHomeOption,
+        bun: updateBunOption,
+        smithers: updateSmithersOption,
+        smithersRef: smithersRefOption
+      },
+      ({ ralphHome, bun, smithers, smithersRef }) =>
+        Effect.sync(() => {
+          if (!bun && !smithers) {
+            throw new Error("Nothing to update. Pass --bun and/or --smithers.")
+          }
+          const home = resolveRalphHome(ralphHome)
+          if (bun) {
+            console.log(`[deps] Running bun update in ${home}`)
+            execFileSync("bun", ["update"], { cwd: home, stdio: "inherit" })
+          }
+          if (smithers) {
+            const refValue = unwrapOptional(smithersRef) ?? "latest"
+            const nextVersion = resolveSmithersVersion(refValue)
+            updateSmithersRef(home, nextVersion)
+          }
+        })
+    ).pipe(Command.withDescription("Update Bun deps and/or Smithers pin"))
+  ])
+)
+
 const cli = Command.make("fabrik").pipe(
   Command.withSubcommands([
     runCommand,
@@ -826,7 +968,8 @@ const cli = Command.make("fabrik").pipe(
     runsCommand,
     laosCommand,
     credentialsCommand,
-    orchestrateCommand
+    orchestrateCommand,
+    depsCommand
   ])
 )
 
