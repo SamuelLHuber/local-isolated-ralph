@@ -1,6 +1,6 @@
-import { existsSync, readFileSync, accessSync, constants } from "node:fs"
+import { existsSync, readFileSync, accessSync, constants, readdirSync } from "node:fs"
 import { createHash } from "node:crypto"
-import { basename, join, resolve, relative, isAbsolute } from "node:path"
+import { basename, dirname, join, resolve, relative, isAbsolute } from "node:path"
 import ts from "typescript"
 import { runCommand, runCommandOutput } from "./exec.js"
 import { ensureAnyCommand, ensureCommands, hasCommand } from "./prereqs.js"
@@ -57,6 +57,7 @@ const buildRunContext = (options: {
   promptPath?: string
   reviewPromptPath?: string
   reviewModelsPath?: string
+  reviewersDir?: string
   repoUrl?: string
   repoRef?: string
   cliVersion: string
@@ -64,6 +65,15 @@ const buildRunContext = (options: {
   binaryHash: string
   gitSha: string
 }) => {
+  const reviewers = options.reviewersDir && existsSync(options.reviewersDir)
+    ? readdirSync(options.reviewersDir)
+        .filter((entry) => entry.toLowerCase().endsWith(".md"))
+        .map((entry) => {
+          const full = join(options.reviewersDir as string, entry)
+          return { file: entry, path: full, sha256: sha256(full) }
+        })
+    : []
+
   return JSON.stringify(
     {
       v: 1,
@@ -75,6 +85,8 @@ const buildRunContext = (options: {
       prompt_path: options.promptPath ?? null,
       review_prompt_path: options.reviewPromptPath ?? null,
       review_models_path: options.reviewModelsPath ?? null,
+      reviewers_dir: options.reviewersDir ?? null,
+      reviewers,
       spec_sha256: sha256(options.specPath),
       todo_sha256: sha256(options.todoPath),
       prompt_sha256: sha256(options.promptPath ?? ""),
@@ -220,6 +232,23 @@ const writeFileRemote = (vm: string, dest: string, content: string) => {
     const ip = getVmIp(vm)
     if (!ip) throw new Error(`Could not determine IP for VM '${vm}'. Is it running?`)
     ssh(ip, ["bash", "-lc", `cat > \"${dest}\"`], content)
+    return
+  }
+  throw new Error(`Unsupported OS: ${process.platform}`)
+}
+
+const copyDirRemote = (vm: string, srcDir: string, destDir: string) => {
+  if (!existsSync(srcDir)) return
+  if (process.platform === "darwin") {
+    const script = `COPYFILE_DISABLE=1 tar -C \"${srcDir}\" -cf - . | limactl shell --workdir /home/ralph \"${vm}\" sudo -u ralph tar --warning=no-unknown-keyword -C \"${destDir}\" -xf -`
+    run("bash", ["-lc", script])
+    return
+  }
+  if (process.platform === "linux") {
+    const ip = getVmIp(vm)
+    if (!ip) throw new Error(`Could not determine IP for VM '${vm}'. Is it running?`)
+    ssh(ip, ["bash", "-lc", `mkdir -p \"${destDir}\"`])
+    scp(["-r", `${srcDir}/.`, `ralph@${ip}:${destDir}/`])
     return
   }
   throw new Error(`Unsupported OS: ${process.platform}`)
@@ -411,8 +440,16 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
   const workflowSha = sha256(workflowPath)
   const workflowNeeds = workflowAgentNeeds(workflowPath)
   const requiredAgents = options.requireAgents?.map((a) => a.trim().toLowerCase()).filter(Boolean) ?? []
-  const promptPath = safeRealpath(options.prompt)
-  const reviewPromptPath = safeRealpath(options.reviewPrompt)
+  const ralphHome = resolve(dirname(workflowPath), "..")
+  const defaultPrompt = join(ralphHome, "prompts", "DEFAULT-IMPLEMENTER.md")
+  const defaultReviewPrompt = join(ralphHome, "prompts", "DEFAULT-REVIEWER.md")
+  const reviewersDir = existsSync(join(ralphHome, "prompts", "reviewers"))
+    ? join(ralphHome, "prompts", "reviewers")
+    : undefined
+  const promptCandidate = options.prompt ?? (existsSync(defaultPrompt) ? defaultPrompt : undefined)
+  const reviewPromptCandidate = options.reviewPrompt ?? (existsSync(defaultReviewPrompt) ? defaultReviewPrompt : undefined)
+  const promptPath = safeRealpath(promptCandidate)
+  const reviewPromptPath = safeRealpath(reviewPromptCandidate)
   const reviewModelsPath = safeRealpath(options.reviewModels)
   const projectDir = options.project ? safeRealpath(options.project)! : undefined
   const repoUrl = options.repoUrl?.trim()
@@ -682,6 +719,17 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
   if (promptPath) writeFileRemote(options.vm, `${vmWorkdir}/PROMPT.md`, readText(promptPath))
   if (reviewPromptPath) writeFileRemote(options.vm, `${vmWorkdir}/REVIEW_PROMPT.md`, readText(reviewPromptPath))
   if (reviewModelsPath) writeFileRemote(options.vm, `${vmWorkdir}/reviewer-models.json`, readText(reviewModelsPath))
+  if (reviewersDir) {
+    const reviewersVmDir = `${vmWorkdir}/reviewers`
+    if (process.platform === "darwin") {
+      limactlShell(options.vm, ["sudo", "-u", "ralph", "mkdir", "-p", reviewersVmDir])
+    } else if (process.platform === "linux") {
+      const ip = getVmIp(options.vm)
+      if (!ip) throw new Error(`Could not determine IP for VM '${options.vm}'. Is it running?`)
+      ssh(ip, ["bash", "-lc", `mkdir -p \"${reviewersVmDir}\"`])
+    }
+    copyDirRemote(options.vm, reviewersDir, reviewersVmDir)
+  }
 
   const runContext = buildRunContext({
     runId,
@@ -691,6 +739,7 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
     promptPath,
     reviewPromptPath,
     reviewModelsPath,
+    reviewersDir,
     repoUrl: repoUrl ?? undefined,
     repoRef: repoRef ?? undefined,
     cliVersion: CLI_VERSION,
@@ -762,6 +811,7 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
     `[ -f "${vmWorkdir}/PROMPT.md" ] && export SMITHERS_PROMPT_PATH="${vmWorkdir}/PROMPT.md" || true`,
     `[ -f "${vmWorkdir}/REVIEW_PROMPT.md" ] && export SMITHERS_REVIEW_PROMPT_PATH="${vmWorkdir}/REVIEW_PROMPT.md" || true`,
     `[ -f "${vmWorkdir}/reviewer-models.json" ] && export SMITHERS_REVIEW_MODELS_FILE="${vmWorkdir}/reviewer-models.json" || true`,
+    `[ -d "${vmWorkdir}/reviewers" ] && export SMITHERS_REVIEWERS_DIR="${vmWorkdir}/reviewers" || true`,
     "SMITHERS_VERSION=$(smithers --version 2>&1 || true)",
     "if [ -z \"$SMITHERS_VERSION\" ]; then echo \"Smithers missing or not executable.\"; exit 1; fi",
     `printf '{"v":1,"version":"%s"}\n' "$SMITHERS_VERSION" > "${reportDir}/smithers-version.json"`,
