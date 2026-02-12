@@ -128,7 +128,9 @@ Each item includes the goal, suggested steps, and expected evidence.
 ---
 
 ## Verified on host/valpha (limited)
-- **release-readiness (partial)**: `bun run build`, `fabrik flow`, `fabrik known-issues`, `fabrik spec validate/minify`, `fabrik runs list`.
+- **release-readiness (verified on host)**: `bun run build`, `./dist/fabrik flow`, `./dist/fabrik known-issues`, `./dist/fabrik spec validate`, `./dist/fabrik spec minify`, `./dist/fabrik runs list --limit 3`.
+- **reproducible-standalone (verified on host)**: `LOCAL_RALPH_HOME=/tmp/ralph-missing ./dist/fabrik docs --topic workflow` and `LOCAL_RALPH_HOME=/tmp/ralph-missing ./dist/fabrik spec validate`.
+- **ci-cd-integration (docs)**: added `CI-CD.md` with a self-hosted runner checklist and GitHub Actions examples.
 - **embedded-assets (partial)**: `LOCAL_RALPH_HOME=/tmp/ralph-missing ./dist/fabrik docs --topic workflow`.
 - **laos-command (partial)**: `fabrik laos status` (host Docker required).
 - **credentials-sync (partial)**: `fabrik credentials sync --vm valpha` (warnings about missing Claude token/SSH keys observed).
@@ -144,8 +146,6 @@ Each item includes the goal, suggested steps, and expected evidence.
 - git-credentials-vm
 - jj-shared-workflow
 - vm-template-cloning
-- ci-cd-integration
-- reproducible-standalone (full, fresh machine)
 - idempotency
 - orchestrator-script (verification)
 

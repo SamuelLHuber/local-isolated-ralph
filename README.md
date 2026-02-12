@@ -135,6 +135,7 @@ See **[WORKFLOW.md](./WORKFLOW.md)** for detailed patterns.
 | [WORKFLOW.md](./WORKFLOW.md) | Workflow patterns, multi-agent coordination |
 | [SETUP-MACOS.md](./SETUP-MACOS.md) | macOS setup with Colima |
 | [SETUP-LINUX.md](./SETUP-LINUX.md) | Linux setup with libvirt/QEMU |
+| [CI-CD.md](./CI-CD.md) | CI/CD setup with self-hosted runners |
 | [dtechvision/laos](https://github.com/dtechvision/laos) | Shared observability stack |
 | [specs/templates/](./specs/templates/) | Spec/TODO JSON templates |
 
