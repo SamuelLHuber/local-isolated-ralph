@@ -92,16 +92,16 @@ bun run scripts/minify-specs.ts
 
 ```bash
 # Run a Smithers workflow (spec/todo minified JSON)
-./scripts/dispatch.sh --spec specs/010-weekly-summary.min.json ralph-1 specs/010-weekly-summary.min.json
+./dist/fabrik run --spec specs/010-weekly-summary.min.json --vm ralph-1
 
 # With local project directory synced to VM
-./scripts/dispatch.sh --spec specs/010-weekly-summary.min.json ralph-1 specs/010-weekly-summary.min.json ~/projects/my-app
+./dist/fabrik run --spec specs/010-weekly-summary.min.json --vm ralph-1 --project ~/projects/my-app
 
 # With iteration limit (stops after 20 Smithers iterations)
-./scripts/dispatch.sh --spec specs/010-weekly-summary.min.json ralph-1 specs/010-weekly-summary.min.json ~/projects/my-app 20
+./dist/fabrik run --spec specs/010-weekly-summary.min.json --vm ralph-1 --project ~/projects/my-app --iterations 20
 
 # Or start multiple Ralphs on different specs (fleet)
-./scripts/smithers-fleet.sh specs ralph
+./dist/fabrik fleet --specs-dir specs --vm-prefix ralph
 ```
 
 ### 4. Watch and wait
@@ -142,7 +142,6 @@ See **[WORKFLOW.md](./WORKFLOW.md)** for detailed patterns.
 
 | Script | Purpose |
 |--------|---------|
-| `dispatch.sh` | Send spec/todo to VM and run Smithers workflow (see options below) |
 | `create-ralph.sh` | Create a new Ralph VM |
 | `setup-base-vm.sh` | Install tools inside VM (run once, snapshot) |
 | `smithers-fleet.sh` | Dispatch multiple Smithers workflows |
@@ -310,16 +309,16 @@ Run context audit:
 # bun add -g smithers-orchestrator
 
 # Local workflow (uses scripts/smithers-spec-runner.tsx by default)
-./scripts/dispatch.sh --spec specs/000-base.min.json ralph-1 specs/000-base.min.json
+./dist/fabrik run --spec specs/000-base.min.json --vm ralph-1
 
 # With custom prompts
-./scripts/dispatch.sh --spec specs/000-base.min.json ralph-1 specs/000-base.min.json \
+./dist/fabrik run --spec specs/000-base.min.json --vm ralph-1 \
   --prompt ./prompts/PROMPT-implementer.md \
   --review-prompt ./prompts/PROMPT-reviewer.md
 
 # Custom TODO and workflow
-./scripts/dispatch.sh --spec specs/010-weekly-summary.min.json --todo specs/010-weekly-summary.todo.min.json \
-  --workflow scripts/smithers-spec-runner.tsx --model sonnet ralph-1 specs/010-weekly-summary.min.json
+./dist/fabrik run --spec specs/010-weekly-summary.min.json --todo specs/010-weekly-summary.todo.min.json \
+  --workflow scripts/smithers-spec-runner.tsx --model sonnet --vm ralph-1
 
 # Review runs automatically after tasks; Smithers writes reports/review.json and reports/human-gate.json.
 ```
@@ -346,8 +345,7 @@ spec.min.json + todo.min.json
 Use the built-in Smithers reviewer workflow:
 
 ```bash
-./scripts/dispatch.sh --spec specs/feature.min.json --workflow scripts/smithers-reviewer.tsx \
-  ralph-review specs/feature.min.json
+./dist/fabrik run --spec specs/feature.min.json --vm ralph-review --workflow scripts/smithers-reviewer.tsx
 ```
 
 ### JJ Primer (Required VCS)
@@ -392,16 +390,17 @@ jj describe
 jj git push --change @
 ```
 
-### dispatch.sh Options
+### fabrik run Options
 
 ```bash
-./scripts/dispatch.sh [--include-git] [--spec <path>] [--todo <path>] \
+./dist/fabrik run --spec <path> --vm <vm-name> [--todo <path>] \
+  [--project <dir>] [--repo <url>] [--ref <branch>] [--include-git] \
   [--workflow <path>] [--report-dir <path>] [--model <name>] \
-  [--prompt <path>] [--review-prompt <path>] \
-  <vm-name> <spec-file> [project-dir] [max-iterations]
+  [--prompt <path>] [--review-prompt <path>] [--review-models <path>] [--review-max <n>] \
+  [--iterations <n>] [--follow]
 
 # Example with .git included (enables push from synced project)
-RALPH_AGENT=codex ./scripts/dispatch.sh --include-git --spec specs/000-base.min.json ralph-1 specs/000-base.min.json ~/projects/app 20
+RALPH_AGENT=codex ./dist/fabrik run --include-git --spec specs/000-base.min.json --vm ralph-1 --project ~/projects/app --iterations 20
 ```
 
 - `--include-git` - Include `.git` in sync (otherwise agent must clone from repo URL)

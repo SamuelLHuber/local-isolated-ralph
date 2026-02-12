@@ -13,7 +13,7 @@ Smithers replaces the bash loop inside each VM. The host still handles VM lifecy
 Provide per-run instructions with `PROMPT.md` and reviewer instructions with `REVIEW_PROMPT.md`:
 
 ```bash
-./scripts/dispatch.sh --spec specs/feature.min.json ralph-1 specs/feature.min.json \
+./dist/fabrik run --spec specs/feature.min.json --vm ralph-1 \
   --prompt ./prompts/PROMPT-implementer.md \
   --review-prompt ./prompts/PROMPT-reviewer.md
 ```
@@ -31,7 +31,7 @@ Push change:        jj git push --change @
 ```
 
 ```
-Host dispatch.sh
+Host fabrik run
      │
      ▼
 VM workdir (spec.min.json + todo.min.json + workflow.tsx)
@@ -308,7 +308,7 @@ bun run scripts/validate-specs.ts
 bun run scripts/minify-specs.ts
 
 # Start Smithers workflow
-./scripts/dispatch.sh --spec specs/feature-x.min.json ralph-1 specs/feature-x.min.json
+./dist/fabrik run --spec specs/feature-x.min.json --vm ralph-1
 
 # Watch
 tmux attach -t ralph-1
@@ -420,7 +420,7 @@ Runs are immutable: every dispatch creates a new workdir. Track runs in `~/.cach
 ./scripts/create-ralph.sh ralph-review 2 4 20
 
 # Start reviewer workflow (Smithers)
-./scripts/dispatch.sh --spec specs/reviewer.min.json --workflow scripts/smithers-reviewer.tsx ralph-review specs/reviewer.min.json
+./dist/fabrik run --spec specs/reviewer.min.json --vm ralph-review --workflow scripts/smithers-reviewer.tsx
 
 # Review runs automatically after tasks in scripts/smithers-spec-runner.tsx.
 ```
@@ -502,14 +502,14 @@ Inside each VM:
 
 ```bash
 # Single Ralph
-./scripts/dispatch.sh --spec specs/feature.min.json ralph-1 specs/feature.min.json
+./dist/fabrik run --spec specs/feature.min.json --vm ralph-1
 
 # Multi-Ralph (fleet)
 ./scripts/smithers-fleet.sh specs ralph
 
 # Multi-Ralph in single VM (density mode)
-./scripts/dispatch.sh --spec specs/auth.min.json ralph-1 specs/auth.min.json
-./scripts/dispatch.sh --spec specs/dashboard.min.json ralph-1 specs/dashboard.min.json
+./dist/fabrik run --spec specs/auth.min.json --vm ralph-1
+./dist/fabrik run --spec specs/dashboard.min.json --vm ralph-1
 
 # List all Ralphs
 ./scripts/list-ralphs.sh

@@ -135,6 +135,8 @@ Each item includes the goal, suggested steps, and expected evidence.
 - **cleanup (partial)**: `fabrik cleanup --vm valpha --keep 5 --dry-run`.
 - **feedback (partial)**: `fabrik runs feedback --id <run> ...` writes `human-feedback.json` to control dir.
 - **run-auditability (partial)**: `runs show` includes binary_hash/os/git_sha after fix.
+- **reviewers/prompts copy (verified)**: `reviewers/` copied into run workdir and `run-context.json` includes reviewer metadata (verified on ralph-1).
+- **dispatch on valpha (blocked)**: `limactl` returned I/O error during workdir creation; VM likely unstable.
 
 ## Deferred (requires fresh VM/Linux)
 - test-vm-scripts (macOS + Linux)
