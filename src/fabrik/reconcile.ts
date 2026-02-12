@@ -81,19 +81,42 @@ const isHeartbeatStale = (ts: string, thresholdSeconds: number) => {
   return Date.now() - parsed > thresholdSeconds * 1000
 }
 
-const updateRunStatus = (dbPath: string, runId: number, status: string, exitCode: number | null) => {
+const updateRunStatus = (
+  dbPath: string,
+  runId: number,
+  status: string,
+  exitCode: number | null,
+  endReason: string | null = null
+) => {
   const script = `
 import sqlite3, sys
 db_path = sys.argv[1]
 run_id = int(sys.argv[2])
 status = sys.argv[3]
 exit_code = sys.argv[4]
+end_reason = sys.argv[5]
 conn = sqlite3.connect(db_path)
-conn.execute('UPDATE runs SET status = ?, exit_code = ? WHERE id = ?', (status, None if exit_code == 'null' else int(exit_code), run_id))
+try:
+  conn.execute('ALTER TABLE runs ADD COLUMN end_reason TEXT')
+except Exception:
+  pass
+conn.execute(
+  'UPDATE runs SET status = ?, exit_code = ?, end_reason = ? WHERE id = ?',
+  (
+    status,
+    None if exit_code == 'null' else int(exit_code),
+    None if end_reason == 'null' else end_reason,
+    run_id
+  )
+)
 conn.commit()
 conn.close()
 `
-  execFileSync("python3", ["-", dbPath, String(runId), status, exitCode === null ? "null" : String(exitCode)], { input: script })
+  execFileSync(
+    "python3",
+    ["-", dbPath, String(runId), status, exitCode === null ? "null" : String(exitCode), endReason ?? "null"],
+    { input: script }
+  )
 }
 
 export type ReconcileOptions = {
@@ -102,7 +125,7 @@ export type ReconcileOptions = {
   heartbeatSeconds?: number
 }
 
-export const reconcileRuns = ({ dbPath, limit = 50, heartbeatSeconds = 180 }: ReconcileOptions) => {
+export const reconcileRuns = ({ dbPath, limit = 50, heartbeatSeconds = 60 }: ReconcileOptions) => {
   const script = `
 import sqlite3, sys
 db_path = sys.argv[1]
@@ -130,12 +153,12 @@ for row in rows:
     const heartbeatTs = readHeartbeat(run.vm, controlDir)
     const staleHeartbeat = isHeartbeatStale(heartbeatTs, heartbeatSeconds)
     if (!pid && staleHeartbeat) {
-      updateRunStatus(dbPath, run.id, "failed", 1)
+      updateRunStatus(dbPath, run.id, "failed", 1, "stale_process")
       continue
     }
     if (pid && !isProcessAlive(run.vm, pid)) {
       if (staleHeartbeat) {
-        updateRunStatus(dbPath, run.id, "failed", 1)
+        updateRunStatus(dbPath, run.id, "failed", 1, "stale_process")
       }
       continue
     }

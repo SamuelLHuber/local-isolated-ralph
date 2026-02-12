@@ -262,9 +262,14 @@ CREATE TABLE IF NOT EXISTS runs (
   todo_path TEXT NOT NULL,
   started_at TEXT NOT NULL,
   status TEXT NOT NULL,
-  exit_code INTEGER
+  exit_code INTEGER,
+  end_reason TEXT
 )
 """)
+try:
+  conn.execute("ALTER TABLE runs ADD COLUMN end_reason TEXT")
+except Exception:
+  pass
 conn.execute("CREATE INDEX IF NOT EXISTS runs_vm_started ON runs(vm_name, started_at)")
 started_at = datetime.now(timezone.utc).isoformat()
 cur = conn.execute(
@@ -456,6 +461,7 @@ PY
     export SMITHERS_TODO_PATH="${VM_WORK_DIR}/specs/todo.min.json"
     export SMITHERS_REPORT_DIR="${SMITHERS_REPORT_DIR:-${VM_WORK_DIR}/reports}"
     export SMITHERS_AGENT="${RALPH_AGENT}"
+    export SMITHERS_RUN_ID="${RUN_ID}"
     if [[ -n "${SMITHERS_MODEL}" ]]; then
       export SMITHERS_MODEL="${SMITHERS_MODEL}"
     fi
@@ -475,7 +481,11 @@ PY
       export SMITHERS_REVIEW_MODELS_FILE="${VM_WORK_DIR}/reviewer-models.json"
     fi
     export SMITHERS_MAX_ITERATIONS="${MAX_ITERATIONS}"
-    smithers "${VM_WORK_DIR}/smithers-workflow.tsx"
+    if [[ "${RESUME}" == "true" ]]; then
+      smithers resume "${VM_WORK_DIR}/smithers-workflow.tsx" --run-id "${RUN_ID}"
+    else
+      smithers run "${VM_WORK_DIR}/smithers-workflow.tsx" --run-id "${RUN_ID}" --input "{}"
+    fi
     exit \$?
 EOF
   EXIT_CODE=$?
@@ -486,7 +496,7 @@ import sys
 db_path, run_id, exit_code = sys.argv[1:4]
 status = "success" if exit_code == "0" else "failed"
 conn = sqlite3.connect(db_path)
-conn.execute("UPDATE runs SET status = ?, exit_code = ? WHERE id = ?", (status, int(exit_code), int(run_id)))
+conn.execute("UPDATE runs SET status = ?, exit_code = ?, end_reason = NULL WHERE id = ?", (status, int(exit_code), int(run_id)))
 conn.commit()
 conn.close()
 PY
@@ -679,6 +689,7 @@ PY
     export SMITHERS_TODO_PATH=\"${VM_WORK_DIR}/specs/todo.min.json\"
     export SMITHERS_REPORT_DIR=\"${SMITHERS_REPORT_DIR:-${VM_WORK_DIR}/reports}\"
     export SMITHERS_AGENT=\"${RALPH_AGENT}\"
+    export SMITHERS_RUN_ID=\"${RUN_ID}\"
     if [[ -n \"${SMITHERS_MODEL}\" ]]; then
       export SMITHERS_MODEL=\"${SMITHERS_MODEL}\"
     fi
@@ -698,7 +709,11 @@ PY
       export SMITHERS_REVIEW_MODELS_FILE=\"${VM_WORK_DIR}/reviewer-models.json\"
     fi
     export SMITHERS_MAX_ITERATIONS=\"${MAX_ITERATIONS}\"
-    smithers \"${VM_WORK_DIR}/smithers-workflow.tsx\"
+    if [[ \"${RESUME}\" == \"true\" ]]; then
+      smithers resume \"${VM_WORK_DIR}/smithers-workflow.tsx\" --run-id \"${RUN_ID}\"
+    else
+      smithers run \"${VM_WORK_DIR}/smithers-workflow.tsx\" --run-id \"${RUN_ID}\" --input \"{}\"
+    fi
     exit \$?
   '"
   EXIT_CODE=$?
@@ -709,7 +724,7 @@ import sys
 db_path, run_id, exit_code = sys.argv[1:4]
 status = "success" if exit_code == "0" else "failed"
 conn = sqlite3.connect(db_path)
-conn.execute("UPDATE runs SET status = ?, exit_code = ? WHERE id = ?", (status, int(exit_code), int(run_id)))
+conn.execute("UPDATE runs SET status = ?, exit_code = ?, end_reason = NULL WHERE id = ?", (status, int(exit_code), int(run_id)))
 conn.commit()
 conn.close()
 PY

@@ -42,7 +42,14 @@ rid = int(sys.argv[2])
 status = sys.argv[3]
 exit_code = sys.argv[4]
 conn = sqlite3.connect(db_path)
-conn.execute('UPDATE runs SET status = ?, exit_code = ? WHERE id = ?', (status, None if exit_code == 'null' else int(exit_code), rid))
+try:
+  conn.execute('ALTER TABLE runs ADD COLUMN end_reason TEXT')
+except Exception:
+  pass
+conn.execute(
+  'UPDATE runs SET status = ?, exit_code = ?, end_reason = NULL WHERE id = ?',
+  (status, None if exit_code == 'null' else int(exit_code), rid)
+)
 conn.commit()
 conn.close()
 `

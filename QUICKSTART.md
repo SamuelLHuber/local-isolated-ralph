@@ -152,7 +152,7 @@ claude --version
 
 **Install Smithers (required):**
 ```bash
-bun add -g smithers-orchestrator
+bun add -g github:evmts/smithers#951d371cfe64c6e4d2d79047968351c387683a1d
 ```
 
 **Verify JJ is available (required):**

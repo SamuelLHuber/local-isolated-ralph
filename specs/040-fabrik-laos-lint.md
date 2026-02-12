@@ -24,11 +24,31 @@ This spec is designed to stand alone for readers unfamiliar with Ralph/Smithers:
 - Multiple agents running in parallel do not contaminate each other’s results.
 - A developer can query “did error X occur” without running a test and get a result in <5s.
 - Reviewers can block or request changes based on lint failures without re-running tests.
+- v0.1 works end‑to‑end with **k6 + Tempo + Loki + Sentry** (profiling presence check only).
 
 ## 3) Non‑Goals
 - We are not building a full UI; outputs are CLI + JSON.
 - We are not replacing app-side instrumentation; we only consume LAOS signals.
 - We are not guaranteeing Bun profiling support (Node only for Pyroscope).
+## 3.1 v0.1 Scope (Strict)
+- **Load testing:** k6 only.
+- **Latency source:** traces only (Tempo).
+- **Required signals:** Tempo + Loki + Sentry.
+- **Profiling:** presence check only (Pyroscope).
+- **Backpressure default:** lint failure blocks (CHANGES_REQUESTED).
+
+## 3.2 v0.2+ Scope (Extensions)
+- wrk2 and autocannon support.
+- Prometheus histogram percentiles.
+- PostHog query integration.
+- Profiling thresholds and regression budgets.
+
+## 3.3 Assumptions (Explicit)
+- Apps emit logs/traces/errors/profiles with the required labels/tags (see §4.3.1).
+- LAOS is reachable from the execution environment (VMs/host) and services are healthy.
+- Load tests are run against a known base URL and can attach `X-Run-Id`.
+- Traces are available for latency percentiles (Tempo is the source of truth in v0.1).
+- Pyroscope is available for Node runs only (Bun profiling unsupported).
 
 ## 4) Functional Requirements
 
@@ -43,6 +63,9 @@ Evaluates thresholds for a run or time window and emits a JSON report.
 
 3) `fabrik laos query`
 Ad‑hoc lookups for errors/logs/traces/profiles without a test run.
+
+### 4.1.1 Tooling Strategy (v0.1)
+We start with **k6** only because it is scriptable, reproducible, and integrates cleanly into CI and developer workflows. The lint system remains tool‑agnostic, but v0.1 supports only k6 for deterministic results.
 
 ### 4.2 Config File (Lint Policy)
 Configuration is repo-local and eslint/dprint‑style.
@@ -125,13 +148,11 @@ The lint output must include **query hints** (strings or URLs) for manual deep�
 - Sentry issue search hint for errors (scoped to `run_id`)
 This keeps output token‑light while still enabling “open the chart” debugging.
 
-### 4.4 Data Sources
-- **Tempo** for trace latencies and span durations.
-- **Prometheus** for CPU/memory (optional).
+### 4.4 Data Sources (v0.1)
+- **Tempo** for trace latencies and span durations (source of truth).
 - **Loki** for log error rates.
 - **Sentry** for error counts.
-- **Pyroscope** for profiling samples (presence check).
-- **PostHog** (optional).
+- **Pyroscope** for profiling samples (presence check only).
 
 ### 4.5 Output (Single JSON Report)
 Lint output must be a single JSON object with:
@@ -222,6 +243,13 @@ As an operator, I want reports to include run_id, agent, service, and tool versi
   - generate `review-todo.json` tasks from violations, or
   - block with `human-gate.json` (configurable).
 
+### 6.1 Integration Examples (Minimal, v0.1)
+- **k6**: set `X-Run-Id` header; set `RUN_ID` env for test metadata.
+
+### 6.2 Tool Choice Rationale (Short)
+- **k6** is the only v0.1 tool because it covers realistic flows and is CI‑friendly.
+- wrk2/autocannon are deferred to v0.2+.
+
 ## 7) Acceptance Criteria
 - `fabrik laos run` produces a report in <60s after test completion.
 - `fabrik laos lint` fails if a threshold is exceeded and lists the top offender(s).
@@ -231,6 +259,4 @@ As an operator, I want reports to include run_id, agent, service, and tool versi
 - Lint failures are surfaced in reviewer outputs without requiring log dumps.
 
 ## 8) Open Questions
-- Traces vs Prometheus as source of latency percentiles (default to traces).
-- Which load‑test tools are supported in v0.1 (k6 first?).
 - Should p100 be computed or omitted by default?
