@@ -200,20 +200,20 @@ bun run scripts/minify-specs.ts
 
 ## Step 7: Run Smithers
 
-**Use the dispatch script (runs from host)**
+**Use the Fabrik CLI (runs from host)**
 
 ```bash
 # Smithers mode (spec/todo minified JSON)
-./scripts/dispatch.sh --spec specs/001-hello-world.min.json ralph-1 specs/001-hello-world.min.json
+./dist/fabrik run --spec specs/001-hello-world.min.json --vm ralph-1
 
 # Sync a local project directory to the VM
-./scripts/dispatch.sh --spec specs/001-hello-world.min.json ralph-1 specs/001-hello-world.min.json ~/projects/my-app
+./dist/fabrik run --spec specs/001-hello-world.min.json --vm ralph-1 --project ~/projects/my-app
 
 # Limit iterations (stops after 20 Smithers iterations)
-./scripts/dispatch.sh --spec specs/001-hello-world.min.json ralph-1 specs/001-hello-world.min.json ~/projects/my-app 20
+./dist/fabrik run --spec specs/001-hello-world.min.json --vm ralph-1 --project ~/projects/my-app --iterations 20
 
 # Or use environment variable
-MAX_ITERATIONS=10 ./scripts/dispatch.sh --spec specs/001-hello-world.min.json ralph-1 specs/001-hello-world.min.json
+MAX_ITERATIONS=10 ./dist/fabrik run --spec specs/001-hello-world.min.json --vm ralph-1
 ```
 
 **Smithers loop at a glance:**
@@ -248,7 +248,7 @@ Human approves, then starts the next spec run.
 **Custom prompts:**
 
 ```bash
-./scripts/dispatch.sh --spec specs/001-hello-world.min.json ralph-1 specs/001-hello-world.min.json \
+./dist/fabrik run --spec specs/001-hello-world.min.json --vm ralph-1 \
   --prompt ./prompts/PROMPT-implementer.md \
   --review-prompt ./prompts/PROMPT-reviewer.md
 ```

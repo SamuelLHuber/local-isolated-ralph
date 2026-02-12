@@ -1,13 +1,44 @@
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { readdirSync, readFileSync, existsSync, writeFileSync } from "node:fs"
+import { resolve, join } from "node:path"
+
+type SpecStatus = {
+  id: string
+  title?: string
+  status?: string
+  path: string
+}
+
+const isSpecFile = (name: string) =>
+  name.endsWith(".json") && !name.endsWith(".todo.json") && !name.endsWith(".min.json")
+
+export const listSpecs = (dir: string): SpecStatus[] => {
+  const abs = resolve(dir)
+  if (!existsSync(abs)) return []
+  const files = readdirSync(abs).filter(isSpecFile)
+  return files.map((file) => {
+    const path = join(abs, file)
+    try {
+      const raw = readFileSync(path, "utf8")
+      const json = JSON.parse(raw) as { id?: string; title?: string; status?: string }
+      return {
+        id: json.id ?? file.replace(/\.json$/, ""),
+        title: json.title,
+        status: json.status,
+        path
+      }
+    } catch {
+      return { id: file.replace(/\.json$/, ""), path }
+    }
+  })
+}
 
 const isJson = (name: string) => name.endsWith(".json") && !name.endsWith(".min.json")
-const isSpecFile = (name: string) => isJson(name) && !name.endsWith(".todo.json")
 
 const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === "string")
 
-const onlyKeys = (obj: object, keys: string[]) => Object.keys(obj).every((key) => keys.includes(key))
+const onlyKeys = (obj: object, keys: string[]) =>
+  Object.keys(obj).every((key) => keys.includes(key))
 
 const validateSpec = (file: string, obj: Record<string, unknown>, errors: string[]) => {
   const keys = [
@@ -106,13 +137,13 @@ const validateTodo = (file: string, obj: Record<string, unknown>, errors: string
 }
 
 export const validateSpecs = (dir: string) => {
-  const entries = readdirSync(dir)
+  const abs = resolve(dir)
+  const entries = existsSync(abs) ? readdirSync(abs) : []
   const errors: string[] = []
 
   for (const entry of entries) {
-    const fullPath = join(dir, entry)
-    const info = statSync(fullPath)
-    if (!info.isFile()) continue
+    const fullPath = join(abs, entry)
+    if (!existsSync(fullPath)) continue
     if (!isJson(entry)) continue
 
     const raw = readFileSync(fullPath, "utf8")
@@ -127,45 +158,15 @@ export const validateSpecs = (dir: string) => {
 }
 
 export const minifySpecs = (dir: string) => {
-  const entries = readdirSync(dir)
+  const abs = resolve(dir)
+  const entries = existsSync(abs) ? readdirSync(abs) : []
   for (const entry of entries) {
-    const fullPath = join(dir, entry)
-    const info = statSync(fullPath)
-    if (!info.isFile()) continue
+    const fullPath = join(abs, entry)
+    if (!existsSync(fullPath)) continue
     if (!isJson(entry)) continue
     const raw = readFileSync(fullPath, "utf8")
     const json = JSON.parse(raw)
     const minPath = fullPath.replace(/\.json$/, ".min.json")
     writeFileSync(minPath, JSON.stringify(json), "utf8")
   }
-}
-
-export type SpecSummary = {
-  id: string
-  title?: string
-  status?: string
-}
-
-export const listSpecs = (dir: string): SpecSummary[] => {
-  const entries = readdirSync(dir)
-  const specs: SpecSummary[] = []
-
-  for (const entry of entries) {
-    if (!isSpecFile(entry)) continue
-    const fullPath = join(dir, entry)
-    const info = statSync(fullPath)
-    if (!info.isFile()) continue
-    try {
-      const raw = readFileSync(fullPath, "utf8")
-      const json = JSON.parse(raw) as Record<string, unknown>
-      if (typeof json.id !== "string") continue
-      const title = typeof json.title === "string" ? json.title : undefined
-      const status = typeof json.status === "string" ? json.status : undefined
-      specs.push({ id: json.id, title, status })
-    } catch {
-      continue
-    }
-  }
-
-  return specs.sort((a, b) => a.id.localeCompare(b.id))
 }

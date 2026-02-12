@@ -1,18 +1,19 @@
-import { execFileSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { runCommand, runCommandOutput } from "./exec.js"
+import { ensureCommands } from "./prereqs.js"
 
 type SyncConfig = {
   vm: string
 }
 
-const run = (cmd: string, args: string[], cwd?: string, input?: string) => {
-  execFileSync(cmd, args, { stdio: input ? ["pipe", "inherit", "inherit"] : "inherit", cwd, input })
+const run = (cmd: string, args: string[], cwd?: string, input?: string, context?: string) => {
+  runCommand(cmd, args, { cwd, input, context })
 }
 
-const runShell = (script: string, cwd?: string) => {
-  execFileSync("bash", ["-lc", script], { stdio: "inherit", cwd })
+const runShell = (script: string, cwd?: string, context?: string) => {
+  runCommand("bash", ["-lc", script], { cwd, context })
 }
 
 const sshOpts = ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"]
@@ -39,7 +40,7 @@ const hasClaudeToken = () => {
 }
 
 const copyFileLima = (vm: string, src: string, dest: string) => {
-  const data = existsSync(src) ? execFileSync("cat", [src]).toString() : ""
+  const data = existsSync(src) ? readFileSync(src, "utf8") : ""
   if (!data) return false
   run(
     "limactl",
@@ -128,7 +129,8 @@ const ssh = (host: string, args: string[]) => run("ssh", [...sshOpts, `ralph@${h
 const scp = (args: string[]) => run("scp", [...sshOpts, ...args])
 
 const copyCredentialsLinux = (vm: string) => {
-  const ip = execFileSync("virsh", ["domifaddr", vm]).toString().split("\n")
+  const output = runCommandOutput("virsh", ["domifaddr", vm], { context: "find VM IP" })
+  const ip = output.split("\n")
     .map((line) => line.trim())
     .find((line) => line.includes("ipv4"))
     ?.split(/\s+/)[3]
@@ -209,8 +211,10 @@ const copyCredentialsLinux = (vm: string) => {
 export const syncCredentials = ({ vm }: SyncConfig) => {
   console.log(`\n>>> Copying credentials to VM ${vm}...`)
   if (process.platform === "darwin") {
+    ensureCommands([{ cmd: "limactl" }, { cmd: "tar" }, { cmd: "bash" }], "credentials sync requires limactl")
     copyCredentialsLima(vm)
   } else if (process.platform === "linux") {
+    ensureCommands([{ cmd: "virsh" }, { cmd: "ssh" }, { cmd: "scp" }], "credentials sync requires virsh/ssh/scp")
     copyCredentialsLinux(vm)
   } else {
     throw new Error(`Unsupported OS: ${process.platform}`)

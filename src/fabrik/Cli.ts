@@ -3,8 +3,7 @@ import * as Options from "@effect/cli/Options"
 import * as Effect from "effect/Effect"
 import * as Console from "effect/Console"
 import * as Option from "effect/Option"
-import { execFileSync } from "node:child_process"
-import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { resolve, join } from "node:path"
 import { homedir } from "node:os"
 import { listSpecs } from "./specs.js"
@@ -15,6 +14,13 @@ import { dispatchRun } from "./dispatch.js"
 import { reconcileRuns } from "./reconcile.js"
 import { orchestrateRuns } from "./orchestrate.js"
 import { minifySpecs, validateSpecs } from "./specs.js"
+import { runCommand, runCommandOutput } from "./exec.js"
+import { cleanupWorkdirs } from "./cleanup.js"
+import { getVmIp } from "./vm-utils.js"
+import { dispatchFleet } from "./fleet.js"
+import { recordFeedback, recordFeedbackForRun } from "./feedback.js"
+import { findLatestRunForVm, findRunById, listRuns, openRunDb } from "./runDb.js"
+import { CLI_VERSION } from "./version.js"
 
 const defaultRalphHome = process.env.LOCAL_RALPH_HOME ?? join(homedir(), "git", "local-isolated-ralph")
 
@@ -26,6 +32,8 @@ const ralphHomeOption = Options.text("ralph-home").pipe(
 const specOption = Options.text("spec").pipe(Options.withDescription("Spec minified JSON path"))
 const todoOption = Options.text("todo").pipe(Options.optional, Options.withDescription("Todo minified JSON path (optional)"))
 const vmOption = Options.text("vm").pipe(Options.withDescription("VM name (e.g. ralph-1)"))
+const runSpecOption = specOption.pipe(Options.optional)
+const runVmOption = vmOption.pipe(Options.optional)
 const projectOption = Options.text("project").pipe(Options.optional, Options.withDescription("Project directory to sync"))
 const repoOption = Options.text("repo").pipe(
   Options.optional,
@@ -35,11 +43,19 @@ const repoBranchOption = Options.text("repo-branch").pipe(
   Options.optional,
   Options.withDescription("Git branch to checkout when cloning --repo (defaults to repo default branch)")
 )
+const repoRefOption = Options.text("ref").pipe(
+  Options.optional,
+  Options.withDescription("Git ref/branch to checkout when cloning --repo (alias for --repo-branch)")
+)
 const includeGitOption = Options.boolean("include-git").pipe(Options.withDefault(false), Options.withDescription("Include .git in sync"))
 const workflowOption = Options.text("workflow").pipe(Options.optional, Options.withDescription("Smithers workflow path"))
 const reportDirOption = Options.text("report-dir").pipe(Options.optional, Options.withDescription("Report directory inside VM"))
 const modelOption = Options.text("model").pipe(Options.optional, Options.withDescription("Model name"))
 const iterationsOption = Options.integer("iterations").pipe(Options.optional, Options.withDescription("Max iterations"))
+const followOption = Options.boolean("follow").pipe(
+  Options.withDefault(false),
+  Options.withDescription("Stream Smithers output (otherwise detach)")
+)
 const branchOption = Options.text("branch").pipe(
   Options.optional,
   Options.withDescription("Branch/bookmark name for this run (default: spec-<specId>)")
@@ -110,33 +126,14 @@ const laosFollowOption = Options.boolean("follow").pipe(
   Options.withDescription("Follow logs")
 )
 
-const smithersRefOption = Options.text("smithers-ref").pipe(
-  Options.optional,
-  Options.withDescription("Smithers version to pin (semver or 'latest'; default: latest)")
-)
-const updateBunOption = Options.boolean("bun").pipe(
-  Options.withDefault(false),
-  Options.withDescription("Run bun update in the local-ralph repo")
-)
-const updateSmithersOption = Options.boolean("smithers").pipe(
-  Options.withDefault(false),
-  Options.withDescription("Update pinned Smithers version in nix/docs and regenerate embedded assets")
-)
-
-const runScript = (scriptPath: string, args: string[]) =>
-  Effect.sync(() => {
-    if (!existsSync(scriptPath)) {
-      throw new Error(`Script not found: ${scriptPath}`)
-    }
-    execFileSync(scriptPath, args, { stdio: "inherit" })
-  })
-
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const notifyDesktop = (title: string, message: string) => {
   if (process.platform === "darwin") {
     try {
-      execFileSync("terminal-notifier", ["-title", title, "-message", message, "-group", "fabrik"], { stdio: "ignore" })
+      runCommand("terminal-notifier", ["-title", title, "-message", message, "-group", "fabrik"], {
+        context: "desktop notification"
+      })
       return
     } catch {
       // fall through to console only
@@ -144,7 +141,7 @@ const notifyDesktop = (title: string, message: string) => {
   }
   if (process.platform === "linux") {
     try {
-      execFileSync("notify-send", [title, message], { stdio: "ignore" })
+      runCommand("notify-send", [title, message], { context: "desktop notification" })
       return
     } catch {
       // fall through to console only
@@ -154,79 +151,50 @@ const notifyDesktop = (title: string, message: string) => {
 
 const runRemote = (vm: string, command: string) => {
   if (process.platform === "darwin") {
-    return execFileSync("limactl", ["shell", "--workdir", "/home/ralph", vm, "bash", "-lc", command]).toString()
+    return runCommandOutput("limactl", ["shell", "--workdir", "/home/ralph", vm, "bash", "-lc", command], {
+      context: `run ${command} on ${vm}`
+    })
   }
   if (process.platform === "linux") {
-    const ip = execFileSync("virsh", ["domifaddr", vm]).toString().split("\n")
-      .map((line) => line.trim())
-      .find((line) => line.includes("ipv4"))
-      ?.split(/\s+/)[3]
-      ?.split("/")[0]
+    const ip = getVmIp(vm)
     if (!ip) throw new Error(`Could not determine IP for VM '${vm}'. Is it running?`)
-    return execFileSync("ssh", ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", `ralph@${ip}`, command]).toString()
+    return runCommandOutput(
+      "ssh",
+      ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", `ralph@${ip}`, command],
+      { context: `run ${command} on ${vm}` }
+    )
+  }
+  throw new Error(`Unsupported OS: ${process.platform}`)
+}
+
+const runRemoteStream = (vm: string, command: string) => {
+  if (process.platform === "darwin") {
+    runCommand("limactl", ["shell", "--workdir", "/home/ralph", vm, "bash", "-lc", command], {
+      context: `stream ${command} on ${vm}`
+    })
+    return
+  }
+  if (process.platform === "linux") {
+    const ip = getVmIp(vm)
+    if (!ip) throw new Error(`Could not determine IP for VM '${vm}'. Is it running?`)
+    runCommand(
+      "ssh",
+      ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", `ralph@${ip}`, command],
+      { context: `stream ${command} on ${vm}` }
+    )
+    return
   }
   throw new Error(`Unsupported OS: ${process.platform}`)
 }
 
 const unwrapOptional = <A>(value: Option.Option<A>) => Option.getOrUndefined(value)
 
-const SMITHERS_PACKAGE = "smithers-orchestrator"
-const SMITHERS_VERSION_PATTERN = /smithers-orchestrator@([0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?)/
-
-const readSmithersVersion = (home: string): string | null => {
-  const nixPath = resolve(home, "nix", "modules", "ralph.nix")
-  if (!existsSync(nixPath)) return null
-  const source = readFileSync(nixPath, "utf8")
-  const match = source.match(SMITHERS_VERSION_PATTERN)
-  return match ? match[1] : null
-}
-
-const fetchLatestSmithersVersion = (): string => {
-  try {
-    const version = execFileSync("npm", ["view", SMITHERS_PACKAGE, "version"], { encoding: "utf8" }).trim()
-    if (!version) throw new Error("empty version")
-    return version
-  } catch (error) {
-    throw new Error(`Failed to resolve latest ${SMITHERS_PACKAGE} version via npm: ${String(error)}`)
-  }
-}
-
-const resolveSmithersVersion = (requested?: string): string => {
-  if (!requested || requested === "latest" || requested === "main") {
-    return fetchLatestSmithersVersion()
-  }
-  const normalized = requested.startsWith("v") ? requested.slice(1) : requested
-  if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$/.test(normalized)) {
-    throw new Error(`Invalid Smithers version '${requested}'. Use a semver like 0.6.0 or 'latest'.`)
-  }
-  return normalized
-}
-
-const replaceSmithersRefInFile = (path: string, nextVersion: string) => {
-  if (!existsSync(path)) return false
-  const source = readFileSync(path, "utf8")
-  const updated = source.replace(/smithers-orchestrator@[A-Za-z0-9._-]+/g, `smithers-orchestrator@${nextVersion}`)
-  if (updated === source) return false
-  writeFileSync(path, updated, "utf8")
-  return true
-}
-
-const updateSmithersRef = (home: string, nextVersion: string) => {
-  const targets = [
-    resolve(home, "nix/modules/ralph.nix"),
-    resolve(home, "README.md"),
-    resolve(home, "QUICKSTART.md")
-  ]
-  let changed = 0
-  for (const path of targets) {
-    if (replaceSmithersRefInFile(path, nextVersion)) changed += 1
-  }
-  if (changed === 0) {
-    console.log("No Smithers references were updated.")
-    return
-  }
-  execFileSync("bun", ["run", "scripts/embed-assets.ts"], { cwd: home, stdio: "inherit" })
-  console.log(`Updated Smithers pin to ${nextVersion} in ${changed} files and regenerated embedded assets.`)
+const resolveTodoPath = (specPath: string) => {
+  if (specPath.endsWith(".todo.min.json")) return specPath
+  if (specPath.endsWith(".min.json")) return specPath.replace(/\.min\.json$/i, ".todo.min.json")
+  if (specPath.endsWith(".todo.json")) return specPath
+  if (specPath.endsWith(".json")) return specPath.replace(/\.json$/i, ".todo.json")
+  return `${specPath}.todo.json`
 }
 
 const promptOption = Options.text("prompt").pipe(
@@ -238,21 +206,66 @@ const reviewPromptOption = Options.text("review-prompt").pipe(
   Options.withDescription("Path to reviewer PROMPT.md (prepended to review prompt)")
 )
 
-const runCommand = Command.make(
+const runAttachCommand = Command.make(
+  "attach",
+  {
+    id: Options.integer("id").pipe(Options.withDescription("Run id")),
+    db: Options.text("db").pipe(
+      Options.optional,
+      Options.withDescription("Path to ralph.db (default: ~/.cache/ralph/ralph.db)")
+    )
+  },
+  ({ id, db }) =>
+    Effect.sync(() => {
+      const dbValue = unwrapOptional(db)
+      const dbPath = dbValue ?? resolve(homedir(), ".cache", "ralph", "ralph.db")
+      if (!existsSync(dbPath)) {
+        console.log(`No DB found at ${dbPath}`)
+        return
+      }
+      const { db: dbHandle } = openRunDb(dbPath)
+      const run = findRunById(dbHandle, id)
+      dbHandle.close()
+      if (!run) {
+        console.log("Run not found.")
+        return
+      }
+      const workBase = run.workdir.split("/").pop() ?? ""
+      const reportsDir = `/home/ralph/work/${run.vm_name}/.runs/${workBase}/reports`
+      const logPath = `${reportsDir}/smithers.log`
+      const command = [
+        `if [ -f "${logPath}" ]; then`,
+        `  tail -n 200 -f "${logPath}"`,
+        "else",
+        `  echo "smithers.log not found; showing reports instead."`,
+        `  for file in "${reportsDir}"/*.report.json; do`,
+        "    [ -f \"$file\" ] || continue",
+        "    echo \"== $file ==\"",
+        "    cat \"$file\"",
+        "  done",
+        "fi"
+      ].join("\n")
+      runRemoteStream(run.vm_name, command)
+    })
+).pipe(Command.withDescription("Attach to an existing run and stream logs"))
+
+const runDispatchCommand = Command.make(
   "run",
   {
     ralphHome: ralphHomeOption,
-    spec: specOption,
-    vm: vmOption,
+    spec: runSpecOption,
+    vm: runVmOption,
     todo: todoOption,
     project: projectOption,
     repo: repoOption,
     repoBranch: repoBranchOption,
+    repoRef: repoRefOption,
     includeGit: includeGitOption,
     workflow: workflowOption,
     reportDir: reportDirOption,
     model: modelOption,
     iterations: iterationsOption,
+    follow: followOption,
     branch: branchOption,
     prompt: promptOption,
     reviewPrompt: reviewPromptOption,
@@ -268,11 +281,13 @@ const runCommand = Command.make(
     project,
     repo,
     repoBranch,
+    repoRef,
     includeGit,
     workflow,
     reportDir,
     model,
     iterations,
+    follow,
     branch,
     prompt,
     reviewPrompt,
@@ -281,15 +296,24 @@ const runCommand = Command.make(
     requireAgents
   }) => {
     const home = resolveRalphHome(ralphHome)
-    const args: string[] = []
+    const specValue = unwrapOptional(spec)
+    const vmValue = unwrapOptional(vm)
+    if (!specValue) {
+      throw new Error("Missing required option: --spec")
+    }
+    if (!vmValue) {
+      throw new Error("Missing required option: --vm")
+    }
     const todoValue = unwrapOptional(todo)
     let projectValue = unwrapOptional(project)
     const repoValue = unwrapOptional(repo)
     const repoBranchValue = unwrapOptional(repoBranch)
+    const repoRefValue = unwrapOptional(repoRef)
     const workflowValue = unwrapOptional(workflow)
     const reportDirValue = unwrapOptional(reportDir)
     const modelValue = unwrapOptional(model)
     const iterationsValue = unwrapOptional(iterations)
+    const followValue = follow
     const branchValue = unwrapOptional(branch)
     const promptValue = unwrapOptional(prompt)
     const reviewPromptValue = unwrapOptional(reviewPrompt)
@@ -303,20 +327,22 @@ const runCommand = Command.make(
         console.log(`[INFO] No --project provided; using current repo: ${cwd}`)
       }
     }
+    const resolvedTodo = todoValue ?? resolveTodoPath(specValue)
     if (process.platform === "darwin" || process.platform === "linux") {
       return Effect.sync(() =>
         dispatchRun({
-          vm,
-          spec,
-          todo: todoValue ?? spec.replace(/\.min\.json$/i, ".todo.min.json"),
+          vm: vmValue,
+          spec: specValue,
+          todo: resolvedTodo,
           project: projectValue,
           repoUrl: repoValue ?? undefined,
-          repoBranch: repoBranchValue ?? undefined,
+          repoRef: repoRefValue ?? repoBranchValue ?? undefined,
           includeGit,
           workflow: workflowValue ? resolve(workflowValue) : resolve(home, "scripts/smithers-spec-runner.tsx"),
           reportDir: reportDirValue,
           model: modelValue,
           iterations: iterationsValue ?? undefined,
+          follow: followValue,
           branch: branchValue ?? undefined,
           prompt: promptValue ? resolve(promptValue) : undefined,
           reviewPrompt: reviewPromptValue ? resolve(reviewPromptValue) : undefined,
@@ -326,29 +352,12 @@ const runCommand = Command.make(
         })
       )
     }
-    const script = resolve(home, "scripts", "dispatch.sh")
-    if (includeGit) args.push("--include-git")
-    args.push("--spec", spec)
-    if (todoValue) args.push("--todo", todoValue)
-    if (workflowValue) args.push("--workflow", workflowValue)
-    if (reportDirValue) args.push("--report-dir", reportDirValue)
-    if (modelValue) args.push("--model", modelValue)
-    if (branchValue) args.push("--branch", branchValue)
-    if (promptValue) args.push("--prompt", promptValue)
-    if (reviewPromptValue) args.push("--review-prompt", reviewPromptValue)
-    if (typeof reviewMaxValue === "number" && Number.isFinite(reviewMaxValue)) {
-      args.push("--review-max", String(reviewMaxValue))
-    }
-    if (reviewModelsValue) args.push("--review-models", reviewModelsValue)
-    if (requireAgentsValue) args.push("--require-agents", requireAgentsValue)
-    args.push(vm, spec)
-    if (projectValue) args.push(projectValue)
-    if (typeof iterationsValue === "number" && Number.isFinite(iterationsValue)) {
-      args.push(String(iterationsValue))
-    }
-    return runScript(script, args)
+    return Effect.fail(new Error(`Unsupported OS: ${process.platform}`))
   }
-).pipe(Command.withDescription("Dispatch a Smithers run (immutable workdir)"))
+).pipe(
+  Command.withDescription("Dispatch a Smithers run (immutable workdir)"),
+  Command.withSubcommands([runAttachCommand])
+)
 
 const validateCommand = Command.make(
   "validate",
@@ -377,38 +386,37 @@ const specCommand = Command.make("spec").pipe(Command.withSubcommands([validateC
 const feedbackCommand = Command.make(
   "feedback",
   {
-    ralphHome: ralphHomeOption,
     vm: vmOption,
     spec: specOption,
     decision: decisionOption,
     notes: notesOption
   },
-  ({ ralphHome, vm, spec, decision, notes }) => {
-    const home = resolveRalphHome(ralphHome)
-    const script = resolve(home, "scripts", "record-human-feedback.sh")
-    const args = ["--vm", vm, "--spec", spec, "--decision", decision, "--notes", notes]
-    return runScript(script, args)
-  }
+  ({ vm, spec, decision, notes }) =>
+    Effect.sync(() =>
+      recordFeedback({
+        vm,
+        spec,
+        decision,
+        notes
+      })
+    )
 ).pipe(Command.withDescription("Record human approval/rejection"))
 
 const cleanupCommand = Command.make(
   "cleanup",
   {
-    ralphHome: ralphHomeOption,
     vm: vmOption,
     keep: keepOption,
     dryRun: dryRunOption
   },
-  ({ ralphHome, vm, keep, dryRun }) => {
-    const home = resolveRalphHome(ralphHome)
-    const script = resolve(home, "scripts", "cleanup-workdirs.sh")
-    const args = [vm]
-    if (typeof keep === "number" && Number.isFinite(keep)) {
-      args.push("--keep", String(keep))
-    }
-    if (dryRun) args.push("--dry-run")
-    return runScript(script, args)
-  }
+  ({ vm, keep, dryRun }) =>
+    Effect.sync(() =>
+      cleanupWorkdirs({
+        vm,
+        keep: typeof keep === "number" && Number.isFinite(keep) ? keep : undefined,
+        dryRun
+      })
+    )
 ).pipe(Command.withDescription("Cleanup old immutable workdirs"))
 
 const fleetCommand = Command.make(
@@ -418,12 +426,13 @@ const fleetCommand = Command.make(
     specsDir: specsDirOption.pipe(Options.withDefault("specs")),
     vmPrefix: vmPrefixOption.pipe(Options.withDefault("ralph"))
   },
-  ({ ralphHome, specsDir, vmPrefix }) => {
-    const home = resolveRalphHome(ralphHome)
-    const script = resolve(home, "scripts", "smithers-fleet.sh")
-    const args = [specsDir, vmPrefix]
-    return runScript(script, args)
-  }
+  ({ specsDir, vmPrefix }) =>
+    Effect.sync(() =>
+      dispatchFleet({
+        specsDir,
+        vmPrefix
+      })
+    )
 ).pipe(Command.withDescription("Dispatch a fleet of Smithers runs"))
 
 const docsCommand = Command.make(
@@ -455,6 +464,28 @@ const flowCommand = Command.make("flow", {}, () =>
     "6) Approve -> next spec, Reject -> update and rerun"
   ].join("\n"))
 ).pipe(Command.withDescription("Print the short workflow"))
+
+const knownIssuesCommand = Command.make("known-issues", {}, () =>
+  Console.log([
+    "Known issues:",
+    "",
+    "1) Bun untrusted scripts after install:",
+    "   bun pm untrusted",
+    "   # review the package + script", 
+    "   bun pm trust <pkg>  # if acceptable; otherwise remove the dependency",
+    "",
+    "2) Smithers missing in VM:",
+    "   limactl shell <vm> -- bash -lc 'bun add -g smithers-orchestrator'",
+    "   # or on Linux: ssh ralph@<ip> 'bun add -g smithers-orchestrator'",
+    "",
+    "3) Missing GitHub/Codex auth in VM:",
+    "   fabrik credentials sync --vm <vm>",
+    "",
+    "4) VM not running:",
+    "   limactl start <vm>  # macOS", 
+    "   virsh start <vm>    # Linux"
+  ].join("\n"))
+).pipe(Command.withDescription("Print known issues and fixes"))
 
 const laosBase = {
   repo: laosRepoOption,
@@ -489,7 +520,7 @@ const runsReconcileCommand = Command.make(
     limit: Options.integer("limit").pipe(Options.optional, Options.withDescription("Max rows (default 50)")),
     heartbeatSeconds: Options.integer("heartbeat-seconds").pipe(
       Options.optional,
-      Options.withDescription("Seconds before heartbeat is stale (default: 60)")
+      Options.withDescription("Seconds before heartbeat is stale (default: 180)")
     )
   },
   ({ db, limit, heartbeatSeconds }) =>
@@ -503,7 +534,7 @@ const runsReconcileCommand = Command.make(
       reconcileRuns({
         dbPath,
         limit: unwrapOptional(limit) ?? 50,
-        heartbeatSeconds: unwrapOptional(heartbeatSeconds) ?? 60
+        heartbeatSeconds: unwrapOptional(heartbeatSeconds) ?? 180
       })
     }).pipe(Effect.withSpan("runs.reconcile"))
 ).pipe(Command.withDescription("Reconcile run status against VM processes"))
@@ -530,38 +561,22 @@ const runsCommand = Command.make("runs").pipe(
             return
           }
           try {
-            reconcileRuns({ dbPath, limit: limitValue ?? 10, heartbeatSeconds: 60 })
+            reconcileRuns({ dbPath, limit: limitValue ?? 10, heartbeatSeconds: 180 })
           } catch {
             // best-effort
           }
-          const script = `
-import sqlite3
-import sys
-
-db_path = sys.argv[1]
-limit = int(sys.argv[2])
-conn = sqlite3.connect(db_path)
-cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
-if "end_reason" not in cols:
-  conn.execute("ALTER TABLE runs ADD COLUMN end_reason TEXT")
-cur = conn.execute(
-  "SELECT id, vm_name, spec_path, started_at, status, exit_code, end_reason FROM runs ORDER BY started_at DESC LIMIT ?",
-  (limit,)
-)
-rows = cur.fetchall()
-conn.close()
-if not rows:
-  print("No runs found.")
-else:
-  for row in rows:
-    rid, vm, spec, started, status, code, end_reason = row
-    reason = end_reason or "-"
-    print(f"{rid} | {vm} | {status} | {code} | {reason} | {started} | {spec}")
-`
-          const rows = execFileSync("python3", ["-", dbPath, String(limitValue ?? 10)], {
-            input: script
-          }).toString()
-          console.log(rows.trim())
+          const { db: dbHandle } = openRunDb(dbPath)
+          const rows = listRuns(dbHandle, limitValue ?? 10)
+          dbHandle.close()
+          if (!rows.length) {
+            console.log("No runs found.")
+            return
+          }
+          for (const row of rows) {
+            console.log(
+              `${row.id} | ${row.vm_name} | ${row.status} | ${row.exit_code ?? ""} | ${row.started_at} | ${row.spec_path}`
+            )
+          }
         }).pipe(Effect.withSpan("runs.list"))
     ).pipe(Command.withDescription("List recent runs")),
     Command.make(
@@ -582,42 +597,31 @@ else:
             return
           }
           try {
-            reconcileRuns({ dbPath, limit: 50, heartbeatSeconds: 60 })
+            reconcileRuns({ dbPath, limit: 50, heartbeatSeconds: 180 })
           } catch {
             // best-effort
           }
-          const script = `
-import sqlite3
-import sys
-
-db_path = sys.argv[1]
-rid = int(sys.argv[2])
-conn = sqlite3.connect(db_path)
-cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
-if "end_reason" not in cols:
-  conn.execute("ALTER TABLE runs ADD COLUMN end_reason TEXT")
-cur = conn.execute(
-  "SELECT id, vm_name, workdir, spec_path, todo_path, started_at, status, exit_code, end_reason FROM runs WHERE id = ?",
-  (rid,)
-)
-row = cur.fetchone()
-conn.close()
-if not row:
-  print("Run not found.")
-else:
-  rid, vm, workdir, spec, todo, started, status, code, end_reason = row
-  print(f"id: {rid}")
-  print(f"vm: {vm}")
-  print(f"workdir: {workdir}")
-  print(f"spec: {spec}")
-  print(f"todo: {todo}")
-  print(f"started_at: {started}")
-  print(f"status: {status}")
-  print(f"exit_code: {code}")
-  print(f"end_reason: {end_reason}")
-`
-          const output = execFileSync("python3", ["-", dbPath, String(id)], { input: script }).toString()
-          console.log(output.trim())
+          const { db: dbHandle } = openRunDb(dbPath)
+          const run = findRunById(dbHandle, id)
+          dbHandle.close()
+          if (!run) {
+            console.log("Run not found.")
+            return
+          }
+          console.log(`id: ${run.id}`)
+          console.log(`vm: ${run.vm_name}`)
+          console.log(`workdir: ${run.workdir}`)
+          console.log(`spec: ${run.spec_path}`)
+          console.log(`todo: ${run.todo_path}`)
+          console.log(`repo_url: ${run.repo_url ?? ""}`)
+          console.log(`repo_ref: ${run.repo_ref ?? ""}`)
+          console.log(`started_at: ${run.started_at}`)
+          console.log(`status: ${run.status}`)
+          console.log(`exit_code: ${run.exit_code ?? ""}`)
+          console.log(`cli_version: ${run.cli_version ?? ""}`)
+          console.log(`os: ${run.os ?? ""}`)
+          console.log(`binary_hash: ${run.binary_hash ?? ""}`)
+          console.log(`git_sha: ${run.git_sha ?? ""}`)
         }).pipe(Effect.withSpan("runs.show"))
     ).pipe(Command.withDescription("Show run details")),
     Command.make(
@@ -626,13 +630,12 @@ else:
         id: Options.integer("id").pipe(Options.withDescription("Run id")),
         decision: decisionOption,
         notes: notesOption,
-        ralphHome: ralphHomeOption,
         db: Options.text("db").pipe(
           Options.optional,
           Options.withDescription("Path to ralph.db (default: ~/.cache/ralph/ralph.db)")
         )
       },
-      ({ id, decision, notes, ralphHome, db }) =>
+      ({ id, decision, notes, db }) =>
         Effect.sync(() => {
           const dbValue = unwrapOptional(db)
           const dbPath = dbValue ?? resolve(homedir(), ".cache", "ralph", "ralph.db")
@@ -640,38 +643,7 @@ else:
             console.log(`No DB found at ${dbPath}`)
             return
           }
-          const script = `
-import sqlite3
-import sys
-
-db_path = sys.argv[1]
-rid = int(sys.argv[2])
-conn = sqlite3.connect(db_path)
-cur = conn.execute(
-  "SELECT vm_name, spec_path FROM runs WHERE id = ?",
-  (rid,)
-)
-row = cur.fetchone()
-conn.close()
-if not row:
-  print("")
-else:
-  print(f"{row[0]}|{row[1]}")
-`
-          const result = execFileSync("python3", ["-", dbPath, String(id)], { input: script })
-            .toString()
-            .trim()
-          if (!result) {
-            console.log("Run not found.")
-            return
-          }
-          const [vm, spec] = result.split("|")
-          const scriptPath = resolve(ralphHome, "scripts", "record-human-feedback.sh")
-          execFileSync(
-            scriptPath,
-            ["--vm", vm, "--spec", spec, "--decision", decision, "--notes", notes],
-            { stdio: "inherit" }
-          )
+          recordFeedbackForRun({ runId: id, decision, notes, dbPath })
         }).pipe(Effect.withSpan("runs.feedback"))
     ).pipe(Command.withDescription("Record feedback for a run id"))
     ,
@@ -697,7 +669,7 @@ else:
             return
           }
           try {
-            reconcileRuns({ dbPath, limit: 50, heartbeatSeconds: 60 })
+            reconcileRuns({ dbPath, limit: 50, heartbeatSeconds: 180 })
           } catch {
             // best-effort
           }
@@ -707,40 +679,18 @@ else:
           const notifyEnabled = notify
           const onceValue = once
 
-          const lookupScript = `
-import sqlite3
-import sys
-
-db_path = sys.argv[1]
-rid = sys.argv[2]
-vm = sys.argv[3]
-conn = sqlite3.connect(db_path)
-if rid != "":
-  cur = conn.execute(
-    "SELECT id, vm_name, workdir FROM runs WHERE id = ?",
-    (int(rid),)
-  )
-else:
-  cur = conn.execute(
-    "SELECT id, vm_name, workdir FROM runs WHERE vm_name = ? ORDER BY started_at DESC LIMIT 1",
-    (vm,)
-  )
-row = cur.fetchone()
-conn.close()
-if not row:
-  print("")
-else:
-  rid, vm_name, workdir = row
-  print(f"{rid}|{vm_name}|{workdir}")
-`
-          const result = execFileSync("python3", ["-", dbPath, String(runIdValue ?? ""), vm], {
-            input: lookupScript
-          }).toString().trim()
-          if (!result) {
+          const { db: dbHandle } = openRunDb(dbPath)
+          const run = runIdValue
+            ? findRunById(dbHandle, runIdValue)
+            : findLatestRunForVm(dbHandle, vm)
+          dbHandle.close()
+          if (!run) {
             console.log("Run not found.")
             return
           }
-          const [rid, vmName, workdir] = result.split("|")
+          const rid = String(run.id)
+          const vmName = run.vm_name
+          const workdir = run.workdir
           const workBase = workdir.split("/").pop() ?? ""
           const reportsDir = `/home/ralph/work/${vmName}/.runs/${workBase}/reports`
           const seen = new Set<string>()
@@ -825,6 +775,7 @@ const orchestrateCommand = Command.make(
     project: projectOption,
     repo: repoOption,
     repoBranch: repoBranchOption,
+    repoRef: repoRefOption,
     includeGit: includeGitOption,
     workflow: workflowOption,
     prompt: promptOption,
@@ -842,6 +793,7 @@ const orchestrateCommand = Command.make(
     project,
     repo,
     repoBranch,
+    repoRef,
     includeGit,
     workflow,
     prompt,
@@ -867,12 +819,13 @@ const orchestrateCommand = Command.make(
       const intervalValue = unwrapOptional(interval)
       const repoValue = unwrapOptional(repo)
       const repoBranchValue = unwrapOptional(repoBranch)
+      const repoRefValue = unwrapOptional(repoRef)
       const results = await orchestrateRuns({
         specs: specList,
         vms: vmList,
         project: unwrapOptional(project),
         repoUrl: repoValue ?? undefined,
-        repoBranch: repoBranchValue ?? undefined,
+        repoRef: repoRefValue ?? repoBranchValue ?? undefined,
         includeGit,
         workflow: workflowValue ? resolve(workflowValue) : resolve(defaultRalphHome, "scripts/smithers-spec-runner.tsx"),
         prompt: promptValue ? resolve(promptValue) : undefined,
@@ -894,86 +847,24 @@ const orchestrateCommand = Command.make(
     })
 ).pipe(Command.withDescription("Dispatch multiple runs and watch for completion"))
 
-const depsCommand = Command.make("deps").pipe(
-  Command.withSubcommands([
-    Command.make(
-      "check",
-      { ralphHome: ralphHomeOption },
-      ({ ralphHome }) =>
-        Effect.sync(() => {
-          const home = resolveRalphHome(ralphHome)
-          console.log(`[deps] Checking Bun dependencies in ${home}`)
-          try {
-            execFileSync("bun", ["outdated"], { cwd: home, stdio: "inherit" })
-          } catch (error) {
-            // bun outdated exits non-zero when outdated packages exist; output already shown.
-            if (!(error instanceof Error)) throw error
-          }
-
-          const pinnedVersion = readSmithersVersion(home)
-          if (!pinnedVersion) {
-            console.log("[deps] Smithers version not found in nix/modules/ralph.nix")
-            return
-          }
-          let latestVersion = ""
-          try {
-            latestVersion = fetchLatestSmithersVersion()
-          } catch (error) {
-            console.log(`[deps] Failed to resolve latest Smithers version: ${String(error)}`)
-            return
-          }
-          const upToDate = pinnedVersion === latestVersion
-          console.log(`[deps] Smithers pinned version: ${pinnedVersion}`)
-          console.log(`[deps] Smithers latest version: ${latestVersion}`)
-          console.log(`[deps] Smithers status: ${upToDate ? "up-to-date" : "update available"}`)
-        })
-    ).pipe(Command.withDescription("Check outdated Bun deps and Smithers pin drift")),
-    Command.make(
-      "update",
-      {
-        ralphHome: ralphHomeOption,
-        bun: updateBunOption,
-        smithers: updateSmithersOption,
-        smithersRef: smithersRefOption
-      },
-      ({ ralphHome, bun, smithers, smithersRef }) =>
-        Effect.sync(() => {
-          if (!bun && !smithers) {
-            throw new Error("Nothing to update. Pass --bun and/or --smithers.")
-          }
-          const home = resolveRalphHome(ralphHome)
-          if (bun) {
-            console.log(`[deps] Running bun update in ${home}`)
-            execFileSync("bun", ["update"], { cwd: home, stdio: "inherit" })
-          }
-          if (smithers) {
-            const refValue = unwrapOptional(smithersRef) ?? "latest"
-            const nextVersion = resolveSmithersVersion(refValue)
-            updateSmithersRef(home, nextVersion)
-          }
-        })
-    ).pipe(Command.withDescription("Update Bun deps and/or Smithers pin"))
-  ])
-)
-
 const cli = Command.make("fabrik").pipe(
   Command.withSubcommands([
-    runCommand,
+    runDispatchCommand,
     specsCommand,
     feedbackCommand,
     cleanupCommand,
     fleetCommand,
     docsCommand,
     flowCommand,
+    knownIssuesCommand,
     runsCommand,
     laosCommand,
     credentialsCommand,
-    orchestrateCommand,
-    depsCommand
+    orchestrateCommand
   ])
 )
 
 export const run = Command.run(cli, {
   name: "Local Fabrik CLI",
-  version: "0.1.0"
+  version: CLI_VERSION
 })
