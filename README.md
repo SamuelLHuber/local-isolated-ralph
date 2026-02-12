@@ -330,7 +330,7 @@ Run context audit:
 
 ```bash
 # Install in VM if missing
-# bun add -g github:evmts/smithers#951d371cfe64c6e4d2d79047968351c387683a1d
+# bun add -g smithers-orchestrator@0.6.0
 
 # Local workflow (uses scripts/smithers-spec-runner.tsx by default)
 ./scripts/dispatch.sh --spec specs/000-base.min.json ralph-1 specs/000-base.min.json

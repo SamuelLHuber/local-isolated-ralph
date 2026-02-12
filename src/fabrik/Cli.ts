@@ -112,7 +112,7 @@ const laosFollowOption = Options.boolean("follow").pipe(
 
 const smithersRefOption = Options.text("smithers-ref").pipe(
   Options.optional,
-  Options.withDescription("Smithers ref to pin (branch, tag, or 40-char commit SHA; default: main)")
+  Options.withDescription("Smithers version to pin (semver or 'latest'; default: latest)")
 )
 const updateBunOption = Options.boolean("bun").pipe(
   Options.withDefault(false),
@@ -120,7 +120,7 @@ const updateBunOption = Options.boolean("bun").pipe(
 )
 const updateSmithersOption = Options.boolean("smithers").pipe(
   Options.withDefault(false),
-  Options.withDescription("Update pinned Smithers ref in nix/docs and regenerate embedded assets")
+  Options.withDescription("Update pinned Smithers version in nix/docs and regenerate embedded assets")
 )
 
 const runScript = (scriptPath: string, args: string[]) =>
@@ -170,49 +170,48 @@ const runRemote = (vm: string, command: string) => {
 
 const unwrapOptional = <A>(value: Option.Option<A>) => Option.getOrUndefined(value)
 
-const SMITHERS_REPO = "https://github.com/evmts/smithers.git"
-const SMITHERS_REF_PATTERN = /github:evmts\/smithers#([A-Za-z0-9._/-]+)/
+const SMITHERS_PACKAGE = "smithers-orchestrator"
+const SMITHERS_VERSION_PATTERN = /smithers-orchestrator@([0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?)/
 
-const readSmithersRef = (home: string): string | null => {
+const readSmithersVersion = (home: string): string | null => {
   const nixPath = resolve(home, "nix", "modules", "ralph.nix")
   if (!existsSync(nixPath)) return null
   const source = readFileSync(nixPath, "utf8")
-  const match = source.match(SMITHERS_REF_PATTERN)
+  const match = source.match(SMITHERS_VERSION_PATTERN)
   return match ? match[1] : null
 }
 
-const resolveSmithersRefToSha = (ref: string): string => {
-  const isSha = /^[a-f0-9]{40}$/.test(ref)
-  if (isSha) return ref
-  const branchRef = `refs/heads/${ref}`
-  const tagRef = `refs/tags/${ref}`
-  const resolveFrom = (remoteRef: string): string | null => {
-    try {
-      const output = execFileSync("git", ["ls-remote", SMITHERS_REPO, remoteRef], { encoding: "utf8" }).trim()
-      if (!output) return null
-      const sha = output.split(/\s+/)[0]
-      return /^[a-f0-9]{40}$/.test(sha) ? sha : null
-    } catch {
-      return null
-    }
+const fetchLatestSmithersVersion = (): string => {
+  try {
+    const version = execFileSync("npm", ["view", SMITHERS_PACKAGE, "version"], { encoding: "utf8" }).trim()
+    if (!version) throw new Error("empty version")
+    return version
+  } catch (error) {
+    throw new Error(`Failed to resolve latest ${SMITHERS_PACKAGE} version via npm: ${String(error)}`)
   }
-  const branchSha = resolveFrom(branchRef)
-  if (branchSha) return branchSha
-  const tagSha = resolveFrom(tagRef)
-  if (tagSha) return tagSha
-  throw new Error(`Could not resolve Smithers ref '${ref}' from ${SMITHERS_REPO}`)
 }
 
-const replaceSmithersRefInFile = (path: string, nextRef: string) => {
+const resolveSmithersVersion = (requested?: string): string => {
+  if (!requested || requested === "latest" || requested === "main") {
+    return fetchLatestSmithersVersion()
+  }
+  const normalized = requested.startsWith("v") ? requested.slice(1) : requested
+  if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$/.test(normalized)) {
+    throw new Error(`Invalid Smithers version '${requested}'. Use a semver like 0.6.0 or 'latest'.`)
+  }
+  return normalized
+}
+
+const replaceSmithersRefInFile = (path: string, nextVersion: string) => {
   if (!existsSync(path)) return false
   const source = readFileSync(path, "utf8")
-  const updated = source.replace(/github:evmts\/smithers#[A-Za-z0-9._/-]+/g, `github:evmts/smithers#${nextRef}`)
+  const updated = source.replace(/smithers-orchestrator@[A-Za-z0-9._-]+/g, `smithers-orchestrator@${nextVersion}`)
   if (updated === source) return false
   writeFileSync(path, updated, "utf8")
   return true
 }
 
-const updateSmithersRef = (home: string, nextRef: string) => {
+const updateSmithersRef = (home: string, nextVersion: string) => {
   const targets = [
     resolve(home, "nix/modules/ralph.nix"),
     resolve(home, "README.md"),
@@ -220,14 +219,14 @@ const updateSmithersRef = (home: string, nextRef: string) => {
   ]
   let changed = 0
   for (const path of targets) {
-    if (replaceSmithersRefInFile(path, nextRef)) changed += 1
+    if (replaceSmithersRefInFile(path, nextVersion)) changed += 1
   }
   if (changed === 0) {
     console.log("No Smithers references were updated.")
     return
   }
   execFileSync("bun", ["run", "scripts/embed-assets.ts"], { cwd: home, stdio: "inherit" })
-  console.log(`Updated Smithers pin to ${nextRef} in ${changed} files and regenerated embedded assets.`)
+  console.log(`Updated Smithers pin to ${nextVersion} in ${changed} files and regenerated embedded assets.`)
 }
 
 const promptOption = Options.text("prompt").pipe(
@@ -911,17 +910,21 @@ const depsCommand = Command.make("deps").pipe(
             if (!(error instanceof Error)) throw error
           }
 
-          const pinnedRef = readSmithersRef(home)
-          if (!pinnedRef) {
-            console.log("[deps] Smithers pin not found in nix/modules/ralph.nix")
+          const pinnedVersion = readSmithersVersion(home)
+          if (!pinnedVersion) {
+            console.log("[deps] Smithers version not found in nix/modules/ralph.nix")
             return
           }
-          const latestMainSha = resolveSmithersRefToSha("main")
-          const pinnedSha = /^[a-f0-9]{40}$/.test(pinnedRef) ? pinnedRef : resolveSmithersRefToSha(pinnedRef)
-          const upToDate = pinnedSha === latestMainSha
-          console.log(`[deps] Smithers pinned ref: ${pinnedRef}`)
-          console.log(`[deps] Smithers pinned sha: ${pinnedSha}`)
-          console.log(`[deps] Smithers latest main: ${latestMainSha}`)
+          let latestVersion = ""
+          try {
+            latestVersion = fetchLatestSmithersVersion()
+          } catch (error) {
+            console.log(`[deps] Failed to resolve latest Smithers version: ${String(error)}`)
+            return
+          }
+          const upToDate = pinnedVersion === latestVersion
+          console.log(`[deps] Smithers pinned version: ${pinnedVersion}`)
+          console.log(`[deps] Smithers latest version: ${latestVersion}`)
           console.log(`[deps] Smithers status: ${upToDate ? "up-to-date" : "update available"}`)
         })
     ).pipe(Command.withDescription("Check outdated Bun deps and Smithers pin drift")),
@@ -944,9 +947,9 @@ const depsCommand = Command.make("deps").pipe(
             execFileSync("bun", ["update"], { cwd: home, stdio: "inherit" })
           }
           if (smithers) {
-            const refValue = unwrapOptional(smithersRef) ?? "main"
-            const nextSha = resolveSmithersRefToSha(refValue)
-            updateSmithersRef(home, nextSha)
+            const refValue = unwrapOptional(smithersRef) ?? "latest"
+            const nextVersion = resolveSmithersVersion(refValue)
+            updateSmithersRef(home, nextVersion)
           }
         })
     ).pipe(Command.withDescription("Update Bun deps and/or Smithers pin"))

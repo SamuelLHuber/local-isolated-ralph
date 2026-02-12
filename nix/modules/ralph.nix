@@ -18,7 +18,7 @@ let
     (optional cfg.agents.claude "@anthropic-ai/claude-code@2.1.39") ++
     (optional cfg.agents.codex "@openai/codex@0.99.0") ++
     (optional cfg.agents.opencode "opencode-ai@1.1.59") ++
-    (optional cfg.agents.smithers "github:evmts/smithers#951d371cfe64c6e4d2d79047968351c387683a1d") ++
+    (optional cfg.agents.smithers "smithers-orchestrator@0.6.0") ++
     (optional cfg.browser.mcp "@playwright/mcp@0.0.64");
 
   # Script to install agent CLIs via bun

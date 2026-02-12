@@ -87,4 +87,14 @@ if (latestMatches.length > 0) {
   )
 }
 
+const smithersGithubMatch = nixSource.match(/github:evmts\/smithers#[A-Za-z0-9._/-]+/)
+if (smithersGithubMatch) {
+  fail("Smithers must be installed from npm as smithers-orchestrator@<version>, not a GitHub ref.")
+}
+
+const smithersVersionMatch = nixSource.match(/smithers-orchestrator@([0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?)/)
+if (!smithersVersionMatch) {
+  fail("Smithers version not found in nix/modules/ralph.nix. Pin smithers-orchestrator@<version>.")
+}
+
 console.log("[deps-policy] OK")
