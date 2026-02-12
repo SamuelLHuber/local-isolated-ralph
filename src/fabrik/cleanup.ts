@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
-import { runCommand, runCommandOutput } from "./exec.js"
+import { runCommand } from "./exec.js"
 import { ensureCommands } from "./prereqs.js"
+import { getVmIp } from "./vm-utils.js"
 import { openRunDb, resolveDbPath } from "./runDb.js"
 
 type CleanupOptions = {
@@ -12,15 +13,6 @@ type CleanupOptions = {
 }
 
 const sshOpts = ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"]
-
-const getVmIp = (vm: string) => {
-  const output = runCommandOutput("virsh", ["domifaddr", vm], { context: "find VM IP" })
-  const line = output
-    .split("\n")
-    .map((entry) => entry.trim())
-    .find((entry) => entry.includes("ipv4"))
-  return line?.split(/\s+/)[3]?.split("/")[0]
-}
 
 const runRemote = (vm: string, command: string) => {
   if (process.platform === "darwin") {

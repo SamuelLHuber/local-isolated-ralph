@@ -1,5 +1,6 @@
 import { runCommand, runCommandOutput } from "./exec.js"
 import { openRunDb, updateRunStatus as updateRunStatusDb } from "./runDb.js"
+import { getVmIp } from "./vm-utils.js"
 
 type RunRecord = {
   id: number
@@ -9,12 +10,6 @@ type RunRecord = {
 }
 
 const sshOpts = ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"]
-
-const getVmIp = (vm: string) => {
-  const raw = runCommandOutput("virsh", ["domifaddr", vm], { context: "find VM IP" }).split("\n")
-  const line = raw.map((l) => l.trim()).find((l) => l.includes("ipv4"))
-  return line?.split(/\s+/)[3]?.split("/")[0]
-}
 
 const runRemote = (vm: string, command: string) => {
   if (process.platform === "darwin") {
