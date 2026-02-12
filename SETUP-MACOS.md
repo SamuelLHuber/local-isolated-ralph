@@ -264,12 +264,13 @@ limactl shell ralph-2 -- -L 9223:localhost:9222 -N &
 
 ```bash
 # Basic dispatch (100 max iterations by default)
-./scripts/dispatch.sh ralph-1 ~/tasks/feature-a/PROMPT.md &
-./scripts/dispatch.sh ralph-2 ~/tasks/feature-b/PROMPT.md &
+./dist/fabrik run --spec ~/tasks/feature-a/spec.min.json --vm ralph-1 --prompt ~/tasks/feature-a/PROMPT.md &
+./dist/fabrik run --spec ~/tasks/feature-b/spec.min.json --vm ralph-2 --prompt ~/tasks/feature-b/PROMPT.md &
 wait
 
 # With local project and iteration limit
-./scripts/dispatch.sh ralph-1 ~/tasks/feature-a/PROMPT.md ~/projects/my-app 20
+./dist/fabrik run --spec ~/tasks/feature-a/spec.min.json --vm ralph-1 --prompt ~/tasks/feature-a/PROMPT.md \
+  --project ~/projects/my-app --iterations 20
 ```
 
 ## 9. Cleanup & Teardown
