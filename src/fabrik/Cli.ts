@@ -31,6 +31,8 @@ const ralphHomeOption = Options.text("ralph-home").pipe(
 const specOption = Options.text("spec").pipe(Options.withDescription("Spec minified JSON path"))
 const todoOption = Options.text("todo").pipe(Options.optional, Options.withDescription("Todo minified JSON path (optional)"))
 const vmOption = Options.text("vm").pipe(Options.withDescription("VM name (e.g. ralph-1)"))
+const runSpecOption = specOption.pipe(Options.optional)
+const runVmOption = vmOption.pipe(Options.optional)
 const projectOption = Options.text("project").pipe(Options.optional, Options.withDescription("Project directory to sync"))
 const repoOption = Options.text("repo").pipe(
   Options.optional,
@@ -255,12 +257,12 @@ const runAttachCommand = Command.make(
     })
 ).pipe(Command.withDescription("Attach to an existing run and stream logs"))
 
-const runCommand = Command.make(
+const runDispatchCommand = Command.make(
   "run",
   {
     ralphHome: ralphHomeOption,
-    spec: specOption,
-    vm: vmOption,
+    spec: runSpecOption,
+    vm: runVmOption,
     todo: todoOption,
     project: projectOption,
     repo: repoOption,
@@ -302,6 +304,14 @@ const runCommand = Command.make(
     requireAgents
   }) => {
     const home = resolveRalphHome(ralphHome)
+    const specValue = unwrapOptional(spec)
+    const vmValue = unwrapOptional(vm)
+    if (!specValue) {
+      throw new Error("Missing required option: --spec")
+    }
+    if (!vmValue) {
+      throw new Error("Missing required option: --vm")
+    }
     const todoValue = unwrapOptional(todo)
     let projectValue = unwrapOptional(project)
     const repoValue = unwrapOptional(repo)
@@ -325,12 +335,12 @@ const runCommand = Command.make(
         console.log(`[INFO] No --project provided; using current repo: ${cwd}`)
       }
     }
-    const resolvedTodo = todoValue ?? resolveTodoPath(spec)
+    const resolvedTodo = todoValue ?? resolveTodoPath(specValue)
     if (process.platform === "darwin" || process.platform === "linux") {
       return Effect.sync(() =>
         dispatchRun({
-          vm,
-          spec,
+          vm: vmValue,
+          spec: specValue,
           todo: resolvedTodo,
           project: projectValue,
           repoUrl: repoValue ?? undefined,
@@ -847,7 +857,7 @@ const orchestrateCommand = Command.make(
 
 const cli = Command.make("fabrik").pipe(
   Command.withSubcommands([
-    runCommand,
+    runDispatchCommand,
     specsCommand,
     feedbackCommand,
     cleanupCommand,

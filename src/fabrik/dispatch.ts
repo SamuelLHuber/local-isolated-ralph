@@ -163,9 +163,13 @@ const isWritable = (path: string) => {
 }
 
 const getBinaryHash = () => {
-  const binary = process.argv[0]
-  if (!binary || !existsSync(binary)) return ""
-  return sha256(binary)
+  const candidates = [process.execPath, process.argv[0]].filter(Boolean) as string[]
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) {
+      return sha256(candidate)
+    }
+  }
+  return ""
 }
 
 const getGitSha = () => {
