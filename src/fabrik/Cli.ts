@@ -821,8 +821,282 @@ const specsStatusCommand = Command.make(
     })
 ).pipe(Command.withDescription("List specs and status"))
 
+const specInterviewPrompt = `SPEC INTERVIEW PROCESS
+======================
+
+You are conducting a structured interview to create a high-quality Spec JSON file.
+Follow this process meticulously. DO NOT proceed to the next question until the previous is answered.
+
+PRE-INTERVIEW CHECKLIST (confirm with user):
+1. Do you have a clear problem statement?
+2. Do you understand the boundaries (what's in/out of scope)?
+3. Do you know the acceptance criteria (when is this "done")?
+
+INTERVIEW QUESTIONS (ask in order):
+
+Q1: IDENTITY
+"What is the unique identifier for this spec?"
+- Format: kebab-case (e.g., "user-auth", "billing-v2")
+- Must be unique across all specs
+- Used in filenames and branch names
+
+Q2: TITLE  
+"What is the one-sentence description?"
+- Active voice ("Implement", "Add", "Fix")
+- No implementation details
+- Example: "Add passwordless authentication" not "Use WebAuthn API"
+
+Q3: STATUS
+"What is the current status?"
+- Options: draft | ready | in-progress | review | done | superseded
+- Start with "draft" unless you're continuing existing work
+
+Q4: GOALS (non-negotiable)
+"What MUST this accomplish? List 3-7 specific outcomes."
+- Each goal starts with verb ("Enable", "Provide", "Ensure")
+- Measurable when possible
+- NO implementation details
+- Example: "Enable users to log in without passwords" NOT "Use Passkeys API"
+
+Q5: NON-GOALS (critical for scope)
+"What is explicitly OUT of scope?"
+- Prevents scope creep
+- Lists tempting but excluded features
+- Example: "Social login (Google/GitHub) - out of scope for v1"
+
+Q6: REQUIREMENTS - API
+"What interfaces/contracts must exist?"
+- Function signatures
+- Data structures
+- API endpoints
+- Configuration options
+
+Q7: REQUIREMENTS - BEHAVIOR
+"What must happen functionally?"
+- Business logic rules
+- State transitions
+- Error handling
+- Edge cases
+
+Q8: REQUIREMENTS - OBSERVABILITY
+"How do we know it's working?"
+- Metrics to emit
+- Logs to write
+- Alerts needed
+- Health checks
+
+Q9: ACCEPTANCE CRITERIA
+"How do we verify this is complete?"
+- Test scenarios
+- Manual QA steps
+- Performance thresholds
+- Security checks
+
+Q10: ASSUMPTIONS
+"What are we assuming that could change?"
+- External dependencies
+- Platform constraints
+- Timing expectations
+
+POST-INTERVIEW:
+Generate the Spec JSON with format:
+
+{
+  "v": 1,
+  "id": "<answer-Q1>",
+  "title": "<answer-Q2>",
+  "status": "<answer-Q3>",
+  "version": "1.0.0",
+  "lastUpdated": "<today-ISO>",
+  "goals": ["<answer-Q4-1>", "<answer-Q4-2>", ...],
+  "nonGoals": ["<answer-Q5-1>", "<answer-Q5-2>", ...],
+  "req": {
+    "api": ["<answer-Q6-1>", "<answer-Q6-2>", ...],
+    "behavior": ["<answer-Q7-1>", "<answer-Q7-2>", ...],
+    "obs": ["<answer-Q8-1>", "<answer-Q8-2>", ...]
+  },
+  "accept": ["<answer-Q9-1>", "<answer-Q9-2>", ...],
+  "assume": ["<answer-Q10-1>", "<answer-Q10-2>", ...]
+}
+
+Save to: specs/{id}.json
+
+IMPORTANT:
+- DO NOT include implementation details in Goals
+- NON-GOALS are as important as GOALS
+- Each requirement MUST be verifiable (testable or observable)
+- When in doubt, split into smaller specs`;
+
+const specInterviewCommand = Command.make(
+  "interview",
+  {},
+  () =>
+    Effect.gen(function*() {
+      yield* Console.log(specInterviewPrompt)
+    })
+).pipe(Command.withDescription("Print structured prompt for conducting a spec interview"))
+
+const todoGeneratePrompt = `TODO GENERATION FROM SPEC
+==========================
+
+You are converting a Spec into a structured Todo JSON file.
+This requires understanding the SPEC deeply and breaking it into verifiable tasks.
+
+INPUT: Read specs/{id}.json
+OUTPUT: Write specs/{id}.todo.json
+
+PROCESS:
+
+STEP 1: Analyze the Spec
+- Identify the criticality tier:
+  * T1 (Critical/Money/Auth): Needs ALL 6 guarantee layers
+  * T2 (Important/State): Needs L1-L5
+  * T3-T4: Needs L1-L4
+
+- List all invariants that MUST hold (for @property tests)
+- Identify DB schema changes needed
+- Note external integrations
+
+STEP 2: Determine TDD Mode
+- TDD = true: For logic-heavy code (state machines, calculations, transformations)
+- TDD = false: For glue/config/setup code
+
+STEP 3: Define Definition of Done (DoD)
+Include based on criticality tier:
+
+T1 (Critical) - ALL of:
+- L1: Branded types implemented (no primitive types)
+- L2: Effect.assert for pre/postconditions present
+- L3: DB migration with UNIQUE/CHECK constraints
+- L4: @property TSDoc on every invariant test
+- L4: Property-based tests (conservation, idempotency)
+- L5: TODO comments for production alerts
+- L5: Metrics emission points identified
+- L6: Seed-based simulation plan documented
+- Tests: 90%+ line coverage, 85%+ branch coverage
+- Code reviewed by 8 reviewers (including NASA-10-RULES)
+- Pushed to GitHub branch, CI passes
+
+T2 (Important) - ALL of:
+- L1: Branded types for domain values
+- L2: Assertions for key invariants
+- L3: DB constraints for uniqueness/referential integrity
+- L4: Unit tests + property tests for core invariants
+- L5: Monitoring TODOs
+- Tests: 85%+ line coverage, 70%+ branch coverage
+- Code reviewed, CI passes
+
+T3-T4 (Standard) - ALL of:
+- L1: Basic typing (no any)
+- L2: Input validation
+- L4: Unit tests for happy path and errors
+- Tests: 80%+ line coverage
+- CI passes
+
+STEP 4: Create Tasks (3-15 per spec)
+Each task MUST be:
+- Independent (can be done in any order within constraints)
+- Verifiable (clear "verify" criteria)
+- Small (1-4 hours of focused work)
+
+Task structure:
+{
+  "id": "1",
+  "do": "What to implement (active voice, specific)",
+  "verify": "How to confirm it's correct (tests, assertions, constraints)"
+}
+
+EXAMPLE TASKS BY TYPE:
+
+Type: Domain Model
+{
+  "id": "1",
+  "do": "Define branded types: UserId, SubscriptionId, PositiveAmount",
+  "verify": "Types compile, Schema validates, no primitive string/number usage"
+}
+
+Type: State Machine
+{
+  "id": "2",
+  "do": "Implement phantom types for Subscription<Status> state machine",
+  "verify": "Invalid transitions cause compile errors; Match.exhaustive covers all states"
+}
+
+Type: DB Schema
+{
+  "id": "3", 
+  "do": "Create migration with UNIQUE constraint for idempotency keys",
+  "verify": "Tests confirm duplicate key rejection at DB level"
+}
+
+Type: Core Logic
+{
+  "id": "4",
+  "do": "Implement chargeSubscription with Effect.assert pre/postconditions",
+  "verify": "@property tests: CANCELED_NEVER_CHARGED, NO_DOUBLE_CHARGE, PERIOD_ADVANCES_ONCE"
+}
+
+Type: API Layer
+{
+  "id": "5",
+  "do": "Add REST endpoint POST /subscriptions/:id/charge",
+  "verify": "Integration tests pass; input validation rejects malformed requests"
+}
+
+Type: Observability
+{
+  "id": "6",
+  "do": "Add TODO comments for production alerts (double charge, failed renewal)",
+  "verify": "TODOs include alert conditions and severity levels"
+}
+
+Type: Simulation (T1 only)
+{
+  "id": "7",
+  "do": "Document seed-based simulation plan for billing invariants",
+  "verify": "Plan includes: seed generation, operations per seed, invariant checks, failure injection"
+}
+
+OUTPUT FORMAT:
+
+{
+  "v": 1,
+  "id": "<same-as-spec-id>",
+  "tdd": <true|false>,
+  "dod": [
+    "L1: Branded types implemented",
+    "L2: Effect.assert for pre/postconditions",
+    "..."
+  ],
+  "tasks": [
+    { "id": "1", "do": "...", "verify": "..." },
+    { "id": "2", "do": "...", "verify": "..." }
+  ]
+}
+
+QUALITY CHECKLIST:
+- [ ] Every task has clear "verify" criteria
+- [ ] TDD flag matches actual test requirements
+- [ ] DoD includes all required layers for tier
+- [ ] Tasks are ordered by dependency (not necessarily execution order)
+- [ ] No task exceeds 4 hours of work
+- [ ] Critical paths have more verification tasks`;
+
+const todoGenerateCommand = Command.make(
+  "generate",
+  {},
+  () =>
+    Effect.gen(function*() {
+      yield* Console.log(todoGeneratePrompt)
+    })
+).pipe(Command.withDescription("Print structured prompt for generating a todo.json from a spec"))
+
 const specsCommand = Command.make("spec").pipe(
-  Command.withSubcommands([validateCommand, minifyCommand, specsStatusCommand])
+  Command.withSubcommands([validateCommand, minifyCommand, specsStatusCommand, specInterviewCommand])
+)
+
+const todoCommand = Command.make("todo").pipe(
+  Command.withSubcommands([todoGenerateCommand])
 )
 
 const credentialsCommand = Command.make("credentials").pipe(
@@ -920,6 +1194,7 @@ const cli = Command.make("fabrik").pipe(
   Command.withSubcommands([
     runDispatchCommand,
     specsCommand,
+    todoCommand,
     feedbackCommand,
     cleanupCommand,
     fleetCommand,
