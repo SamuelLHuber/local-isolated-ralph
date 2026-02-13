@@ -9,9 +9,9 @@ Before starting, ensure you have:
 - [ ] **macOS 13+** (Ventura) or **Linux** with KVM support
 - [ ] **Docker** installed and running
 - [ ] **SSH key** generated (`ls ~/.ssh/id_*.pub`)
-- [ ] **Codex auth** on host (`codex login`) — default agent
+- [ ] **pi auth** on host (`pi` then `/login`) — default agent
+- [ ] **Codex auth** if using Codex (`codex login`)
 - [ ] **Claude auth** if using Claude (`claude auth login`)
-- [ ] **OpenCode auth** if using OpenCode (`opencode auth login`)
 
 **macOS specific:**
 ```bash
@@ -62,24 +62,25 @@ cd /path/to/local-isolated-ralph
 
 ## Step 2: Authenticate Agents on Your Host
 
-If you haven't already, authenticate Codex on your host machine:
+If you haven't already, authenticate pi on your host machine:
+
+```bash
+pi
+/login
+```
+
+This creates `~/.pi/agent/auth.json` which will be copied to your VMs.
+
+Optional (only if using Codex):
 
 ```bash
 codex login
 ```
 
-This creates `~/.codex/auth.json` which will be copied to your VMs.
-
 Optional (only if using Claude):
 
 ```bash
 claude auth login
-```
-
-Optional (only if using OpenCode):
-
-```bash
-opencode auth login
 ```
 
 ---
@@ -152,7 +153,7 @@ claude --version
 
 **Install Smithers (required):**
 ```bash
-bun add -g smithers-orchestrator@0.6.0
+bun add -g github:evmts/smithers#ea5ece3b156ebd32990ec9c528f9435c601a0403
 ```
 
 **Verify JJ is available (required):**
@@ -184,16 +185,15 @@ Note: Claude CLI auth is stored in `~/.claude.json` on the host. Make sure it ex
 
 ## Step 6: Write Your First Spec
 
-Create a JSON spec and TODO, then minify:
+Create a JSON spec and TODO (Fabrik will minify on dispatch):
 
 ```bash
 # Use templates as a starting point
 cp specs/templates/spec.json specs/001-hello-world.json
 cp specs/templates/todo.json specs/001-hello-world.todo.json
 
-# Edit both files, then validate + minify
+# Edit both files, then validate
 bun run scripts/validate-specs.ts
-bun run scripts/minify-specs.ts
 ```
 
 ---
@@ -203,22 +203,22 @@ bun run scripts/minify-specs.ts
 **Use the Fabrik CLI (runs from host)**
 
 ```bash
-# Smithers mode (spec/todo minified JSON)
-./dist/fabrik run --spec specs/001-hello-world.min.json --vm ralph-1
+# Smithers mode (spec/todo JSON; minified on dispatch)
+./dist/fabrik run --spec specs/001-hello-world.json --vm ralph-1
 
 # Sync a local project directory to the VM
-./dist/fabrik run --spec specs/001-hello-world.min.json --vm ralph-1 --project ~/projects/my-app
+./dist/fabrik run --spec specs/001-hello-world.json --vm ralph-1 --project ~/projects/my-app
 
 # Limit iterations (stops after 20 Smithers iterations)
-./dist/fabrik run --spec specs/001-hello-world.min.json --vm ralph-1 --project ~/projects/my-app --iterations 20
+./dist/fabrik run --spec specs/001-hello-world.json --vm ralph-1 --project ~/projects/my-app --iterations 20
 
 # Or use environment variable
-MAX_ITERATIONS=10 ./dist/fabrik run --spec specs/001-hello-world.min.json --vm ralph-1
+MAX_ITERATIONS=10 ./dist/fabrik run --spec specs/001-hello-world.json --vm ralph-1
 ```
 
 **Smithers loop at a glance:**
 ```
-spec.min.json + todo.min.json → smithers workflow → report.json (per task)
+spec.json + todo.json (minified on dispatch) → smithers workflow → task_report rows (per task)
 ```
 
 ---
@@ -226,11 +226,11 @@ spec.min.json + todo.min.json → smithers workflow → report.json (per task)
 ## Step 8: Watch and Wait
 
 The workflow will:
-1. Read `spec.min.json` + `todo.min.json`
+1. Read `spec.json` + `todo.json` (minified on dispatch)
 2. Implement tasks in order
-3. Write `reports/<task>.report.json` per task
+3. Write `task_report` rows in the Smithers SQLite db
 4. Run an agent reviewer
-5. Write `reports/review.json` and `reports/human-gate.json`
+5. Write `review_report`, `review_summary`, and `human_gate` rows in the Smithers db
 6. Stop for human review
 
 **Monitor progress:**
@@ -242,13 +242,13 @@ The workflow will:
 
 **Human review gate:**
 
-After the reviewer runs, `reports/human-gate.json` is written with `status: "blocked"`.
+After the reviewer runs, a `human_gate` row is written in the Smithers db with `status: "blocked"`.
 Human approves, then starts the next spec run.
 
 **Custom prompts:**
 
 ```bash
-./dist/fabrik run --spec specs/001-hello-world.min.json --vm ralph-1 \
+./dist/fabrik run --spec specs/001-hello-world.json --vm ralph-1 \
   --prompt ./prompts/PROMPT-implementer.md \
   --review-prompt ./prompts/PROMPT-reviewer.md
 ```
@@ -256,7 +256,7 @@ Human approves, then starts the next spec run.
 Record feedback:
 
 ```bash
-./scripts/record-human-feedback.sh --vm ralph-1 --spec specs/001-hello-world.min.json \
+./scripts/record-human-feedback.sh --vm ralph-1 --spec specs/001-hello-world.json \
   --decision approve --notes "Matches spec."
 ```
 

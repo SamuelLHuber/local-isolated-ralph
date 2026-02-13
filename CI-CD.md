@@ -74,7 +74,7 @@ jobs:
           RALPH_AGENT: codex
           LOCAL_RALPH_HOME: ${{ github.workspace }}
         run: |
-          ./dist/fabrik run --spec specs/000-base.min.json --vm ralph-1 --iterations 20
+          ./dist/fabrik run --spec specs/000-base.json --vm ralph-1 --iterations 20
 ```
 
 ## Notes

@@ -13,7 +13,7 @@ Smithers replaces the bash loop inside each VM. The host still handles VM lifecy
 Provide per-run instructions with `PROMPT.md` and reviewer instructions with `REVIEW_PROMPT.md`:
 
 ```bash
-./dist/fabrik run --spec specs/feature.min.json --vm ralph-1 \
+./dist/fabrik run --spec specs/feature.json --vm ralph-1 \
   --prompt ./prompts/PROMPT-implementer.md \
   --review-prompt ./prompts/PROMPT-reviewer.md
 ```
@@ -39,12 +39,12 @@ Commit message rules:
 Host fabrik run
      │
      ▼
-VM workdir (spec.min.json + todo.min.json + workflow.tsx)
+VM workdir (spec.json + todo.json, minified on dispatch + workflow.tsx)
      │
      ▼
 smithers workflow.tsx
   ├─ runs tasks sequentially or in parallel
-  ├─ writes reports/<task>.report.json
+  ├─ writes task_report rows in the Smithers db
   └─ persists state in .smithers/*.db
 ```
 
@@ -233,9 +233,8 @@ jj new master -m "task-3: tests"
 jj new master -m "task-4: documentation"
 
 # 3. Prepare spec/todo JSON for each task
-#    (store in specs/, then validate + minify)
+#    (store in specs/, then validate; fabrik minifies on dispatch)
 bun run scripts/validate-specs.ts
-bun run scripts/minify-specs.ts
 
 # 4. Launch swarm (fleet)
 ./scripts/smithers-fleet.sh specs ralph
@@ -308,12 +307,11 @@ gh pr create --title "Big Feature" --body "Implements auth system"
 # Prepare spec + todo
 cp specs/templates/spec.json specs/feature-x.json
 cp specs/templates/todo.json specs/feature-x.todo.json
-# Edit both files, then validate + minify
+# Edit both files, then validate
 bun run scripts/validate-specs.ts
-bun run scripts/minify-specs.ts
 
 # Start Smithers workflow
-./dist/fabrik run --spec specs/feature-x.min.json --vm ralph-1
+./dist/fabrik run --spec specs/feature-x.json --vm ralph-1
 
 # Watch
 tmux attach -t ralph-1
@@ -352,9 +350,8 @@ cp specs/templates/todo.json specs/dashboard.todo.json
 cp specs/templates/spec.json specs/api-fix.json
 cp specs/templates/todo.json specs/api-fix.todo.json
 
-# Edit files, then validate + minify
+# Edit files, then validate
 bun run scripts/validate-specs.ts
-bun run scripts/minify-specs.ts
 
 # Create VMs
 for i in 1 2 3; do
@@ -383,18 +380,18 @@ Runs are immutable: every dispatch creates a new workdir. Track runs in `~/.cach
 ┌─────────────────────────────────────────────────────────────────┐
 │  Implementer Smithers                                           │
 │  └── Implements feature                                         │
-│  └── Writes reports/<task>.report.json                          │
+│  └── Writes task_report rows in Smithers db                     │
 └───────────────────────────────┬─────────────────────────────────┘
                                 ▼
                     ┌───────────────────────┐
                     │  Reports Directory    │
-                    │  reports/*.json       │
+                    │  .smithers/*.db       │
                     └───────────┬───────────┘
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  Reviewer Smithers                                              │
 │  └── Reviews code vs spec + reports                             │
-│  └── Writes reports/review.json                                 │
+│  └── Writes review_summary row                                  │
 └───────────────────────────────┬─────────────────────────────────┘
                                 ▼
                     ┌───────────────────────┐
@@ -404,7 +401,7 @@ Runs are immutable: every dispatch creates a new workdir. Track runs in `~/.cach
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  Human                                                         │
-│  └── Reviews reports/review.json                                │
+│  └── Reviews review_summary row                                 │
 │  └── Approves or updates spec/todo                              │
 │  └── Starts next spec run                                       │
 └───────────────────────────────┬─────────────────────────────────┘
@@ -425,7 +422,7 @@ Runs are immutable: every dispatch creates a new workdir. Track runs in `~/.cach
 ./scripts/create-ralph.sh ralph-review 2 4 20
 
 # Start reviewer workflow (Smithers)
-./dist/fabrik run --spec specs/reviewer.min.json --vm ralph-review --workflow scripts/smithers-reviewer.tsx
+./dist/fabrik run --spec specs/reviewer.json --vm ralph-review --workflow scripts/smithers-reviewer.tsx
 
 # Review runs automatically after tasks in scripts/smithers-spec-runner.tsx.
 ```
@@ -434,7 +431,7 @@ Runs are immutable: every dispatch creates a new workdir. Track runs in `~/.cach
 
 **Reviewer Output:**
 ```json
-// reports/review.json
+// review_summary row
 {
   "v": 1,
   "status": "approved",
@@ -445,7 +442,7 @@ Runs are immutable: every dispatch creates a new workdir. Track runs in `~/.cach
 
 **Human Gate:**
 ```json
-// reports/human-gate.json
+// human_gate row
 {
   "v": 1,
   "status": "blocked",
@@ -455,7 +452,7 @@ Runs are immutable: every dispatch creates a new workdir. Track runs in `~/.cach
 
 **Record Human Feedback (host):**
 ```bash
-./scripts/record-human-feedback.sh --vm ralph-1 --spec specs/feature-x.min.json \
+./scripts/record-human-feedback.sh --vm ralph-1 --spec specs/feature-x.json \
   --decision approve --notes "Spec satisfied."
 ```
 
@@ -469,7 +466,7 @@ With this setup, humans only need to:
 |--------|------|
 | **Write specs** | Start of feature |
 | **Answer questions** | When a task report or human gate is `blocked` |
-| **Final merge approval** | After review.json and human approval |
+| **Final merge approval** | After review_summary and human approval |
 | **Receive shipped notification** | Feature complete |
 
 The goal: **Humans write specs, agents ship features.**
@@ -483,13 +480,13 @@ The goal: **Humans write specs, agents ship features.**
 ├── specs/                        # Spec + TODO JSON (on host)
 │   ├── auth.json
 │   ├── auth.todo.json
-│   ├── auth.min.json
-│   ├── auth.todo.min.json
 │   └── ...
 │
 └── vms/                          # VM storage (Linux only)
     └── wisp/
 ```
+
+Minified copies are generated inside each run workdir and are gitignored.
 
 Inside each VM:
 ```
@@ -497,7 +494,7 @@ Inside each VM:
 ├── repo/                         # Cloned repository
 │   └── (working on feature branch)
 ├── specs/                        # Copied from host
-├── reports/                      # task reports
+├── reports/                      # run logs + context
 └── .smithers/                    # SQLite state
 ```
 
@@ -507,14 +504,14 @@ Inside each VM:
 
 ```bash
 # Single Ralph
-./dist/fabrik run --spec specs/feature.min.json --vm ralph-1
+./dist/fabrik run --spec specs/feature.json --vm ralph-1
 
 # Multi-Ralph (fleet)
 ./scripts/smithers-fleet.sh specs ralph
 
 # Multi-Ralph in single VM (density mode)
-./dist/fabrik run --spec specs/auth.min.json --vm ralph-1
-./dist/fabrik run --spec specs/dashboard.min.json --vm ralph-1
+./dist/fabrik run --spec specs/auth.json --vm ralph-1
+./dist/fabrik run --spec specs/dashboard.json --vm ralph-1
 
 # List all Ralphs
 ./scripts/list-ralphs.sh

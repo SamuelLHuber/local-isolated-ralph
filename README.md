@@ -83,22 +83,21 @@ for i in 1 2 3 4; do ./scripts/create-ralph.sh ralph-$i 2 4 20; done
 ### 2. Prepare a task (Spec + TODO)
 
 ```bash
-# Use the JSON spec/todo workflow (minified inputs for Smithers)
+# Validate the JSON spec/todo (fabrik auto-minifies on dispatch)
 bun run scripts/validate-specs.ts
-bun run scripts/minify-specs.ts
 ```
 
 ### 3. Launch Smithers
 
 ```bash
-# Run a Smithers workflow (spec/todo minified JSON)
-./dist/fabrik run --spec specs/010-weekly-summary.min.json --vm ralph-1
+# Run a Smithers workflow (spec/todo JSON; minified on dispatch)
+./dist/fabrik run --spec specs/010-weekly-summary.json --vm ralph-1
 
 # With local project directory synced to VM
-./dist/fabrik run --spec specs/010-weekly-summary.min.json --vm ralph-1 --project ~/projects/my-app
+./dist/fabrik run --spec specs/010-weekly-summary.json --vm ralph-1 --project ~/projects/my-app
 
 # With iteration limit (stops after 20 Smithers iterations)
-./dist/fabrik run --spec specs/010-weekly-summary.min.json --vm ralph-1 --project ~/projects/my-app --iterations 20
+./dist/fabrik run --spec specs/010-weekly-summary.json --vm ralph-1 --project ~/projects/my-app --iterations 20
 
 # Or start multiple Ralphs on different specs (fleet)
 ./dist/fabrik fleet --specs-dir specs --vm-prefix ralph
@@ -117,7 +116,7 @@ open http://localhost:3010
 fabrik runs watch --vm ralph-1
 ```
 
-When done, Smithers writes `reports/<task>.report.json` per task and exits when all tasks are done.
+When done, Smithers writes task outputs into its SQLite db (`.smithers/<spec>.db`) and exits when all tasks are done.
 
 ### Desktop notifications
 
@@ -188,25 +187,26 @@ to `~/.cache/fabrik/embedded/<hash>/` and runs from there.
 Common commands:
 
 ```bash
-# Validate + minify specs in current repo
+# Validate specs in current repo
 fabrik spec validate
+# Optional: generate minified copies (gitignored)
 fabrik spec minify
 
 # Dispatch a run (from another repo)
-fabrik run --spec specs/feature.min.json --vm ralph-1
+fabrik run --spec specs/feature.json --vm ralph-1
 
 # Run with custom prompts
-fabrik run --spec specs/feature.min.json --vm ralph-1 \
+fabrik run --spec specs/feature.json --vm ralph-1 \
   --prompt ./prompts/PROMPT-implementer.md \
   --review-prompt ./prompts/PROMPT-reviewer.md
 
 # Run with custom reviewer models + retry cap
-fabrik run --spec specs/feature.min.json --vm ralph-1 \
+fabrik run --spec specs/feature.json --vm ralph-1 \
   --review-max 3 \
   --review-models ./prompts/reviewer-models.json
 
 # Record human feedback
-fabrik feedback --vm ralph-1 --spec specs/feature.min.json --decision approve --notes "OK"
+fabrik feedback --vm ralph-1 --spec specs/feature.json --decision approve --notes "OK"
 
 # Fleet
 fabrik fleet --specs-dir specs --vm-prefix ralph
@@ -258,7 +258,7 @@ bun build src/fabrik/bin.ts --compile --outfile dist/fabrik
 cd ~/git/<your-repo>
 ~/git/local-isolated-ralph/dist/fabrik spec validate
 ~/git/local-isolated-ralph/dist/fabrik spec minify
-~/git/local-isolated-ralph/dist/fabrik run --spec specs/001-foo.min.json --vm ralph-1
+~/git/local-isolated-ralph/dist/fabrik run --spec specs/001-foo.json --vm ralph-1
 ```
 
 ### Binary Releases (GitHub)
@@ -285,7 +285,7 @@ export LOCAL_RALPH_HOME=/path/to/local-isolated-ralph
 
 ### Smithers (Required Orchestration + JJ)
 
-Smithers is required. It consumes minified spec/todo JSON and executes tasks with durable state. It always runs an agent reviewer and writes `reports/review.json`, then writes `reports/human-gate.json` to block for human approval. Version control is JJ (colocated Git backend).
+Smithers is required. Fabrik dispatches minified spec/todo JSON for token efficiency and Smithers executes tasks with durable state. It always runs an agent reviewer and writes review outputs to the Smithers SQLite db (`review_report`, `review_summary`) along with a `human_gate` row for human approval. Version control is JJ (colocated Git backend).
 
 Default models:
 - Claude: `opus`
@@ -320,45 +320,45 @@ Create `reviewer-models.json` to map reviewers to models:
 ```
 
 Backpressure:
-- If any reviewer requests changes, Smithers generates `reports/review-todo.json`
-  and runs those review tasks only.
+- If any reviewer requests changes, Smithers generates follow-up review tasks in the workflow and records them in the SQLite db.
 - The review pipeline reruns after review tasks.
-- Only when all reviewers approve does the human gate appear.
+- Only when all reviewers approve does the human gate row appear.
 
 Run context audit:
 - Each run writes `reports/run-context.json` with prompt contents + hashes.
 
 ```bash
 # Install in VM if missing
-# bun add -g smithers-orchestrator@0.6.0
+# bun add -g github:evmts/smithers#ea5ece3b156ebd32990ec9c528f9435c601a0403
 
 # Local workflow (uses scripts/smithers-spec-runner.tsx by default)
-./dist/fabrik run --spec specs/000-base.min.json --vm ralph-1
+./dist/fabrik run --spec specs/000-base.json --vm ralph-1
 
 # With custom prompts
-./dist/fabrik run --spec specs/000-base.min.json --vm ralph-1 \
+./dist/fabrik run --spec specs/000-base.json --vm ralph-1 \
   --prompt ./prompts/PROMPT-implementer.md \
   --review-prompt ./prompts/PROMPT-reviewer.md
 
 # Custom TODO and workflow
-./dist/fabrik run --spec specs/010-weekly-summary.min.json --todo specs/010-weekly-summary.todo.min.json \
+./dist/fabrik run --spec specs/010-weekly-summary.json --todo specs/010-weekly-summary.todo.json \
   --workflow scripts/smithers-spec-runner.tsx --model sonnet --vm ralph-1
 
-# Review runs automatically after tasks; Smithers writes reports/review.json and reports/human-gate.json.
+# Review runs automatically after tasks; Smithers writes review outputs + human gate into the SQLite db.
 ```
 
 ### Smithers Workflow Diagram
 
 ```
-spec.min.json + todo.min.json
+spec.json + todo.json
+   (minified on dispatch)
           │
           ▼
   Smithers workflow
   (Ralph loop in React)
           │
-          ├─ task 1 → report.json
-          ├─ task 2 → report.json
-          └─ task N → report.json
+          ├─ task 1 → task_report row
+          ├─ task 2 → task_report row
+          └─ task N → task_report row
           │
           ▼
      DONE / BLOCKED / FAILED
@@ -369,7 +369,7 @@ spec.min.json + todo.min.json
 Use the built-in Smithers reviewer workflow:
 
 ```bash
-./dist/fabrik run --spec specs/feature.min.json --vm ralph-review --workflow scripts/smithers-reviewer.tsx
+./dist/fabrik run --spec specs/feature.json --vm ralph-review --workflow scripts/smithers-reviewer.tsx
 ```
 
 ### JJ Primer (Required VCS)
@@ -424,12 +424,12 @@ jj git push --change @
   [--iterations <n>] [--follow]
 
 # Example with .git included (enables push from synced project)
-RALPH_AGENT=codex ./dist/fabrik run --include-git --spec specs/000-base.min.json --vm ralph-1 --project ~/projects/app --iterations 20
+RALPH_AGENT=pi ./dist/fabrik run --include-git --spec specs/000-base.json --vm ralph-1 --project ~/projects/app --iterations 20
 ```
 
 - `--include-git` - Include `.git` in sync (otherwise agent must clone from repo URL)
-- `--spec` - Spec JSON (minified recommended) for Smithers mode
-- `--todo` - TODO JSON (minified recommended) for Smithers mode
+- `--spec` - Spec JSON (minified on dispatch for Smithers mode)
+- `--todo` - TODO JSON (minified on dispatch for Smithers mode)
 - `--workflow` - Smithers workflow script (default: `scripts/smithers-spec-runner.tsx`)
 - `--report-dir` - Report output directory inside VM (default: workdir/reports)
 - `--model` - Model name for Smithers agent
@@ -437,7 +437,7 @@ RALPH_AGENT=codex ./dist/fabrik run --include-git --spec specs/000-base.min.json
 - `--review-prompt` - Reviewer PROMPT.md prepended to review prompt
 - `--review-max` - Max review reruns before human gate (default: 2)
 - `--review-models` - JSON map of reviewer_id -> model
-- `RALPH_AGENT` - Agent to use: `codex` (default), `claude`, `opencode`
+- `RALPH_AGENT` - Agent to use: `pi` (default), `claude`, `codex`
 - `MAX_ITERATIONS` - Max loops (default: 100, 0 = unlimited)
 
 Each dispatch creates a timestamped work directory (`/home/ralph/work/<vm>/<project>-<timestamp>/`), enabling parallel dispatches to the same VM.
@@ -467,11 +467,11 @@ The token is used by both `git push/pull` (credential helper) and `gh` CLI (auto
 
 Agent auth files are synced to VMs when you run `fabrik credentials sync` (or the bash equivalent).
 
-Required by default (Codex):
-- `~/.codex/auth.json` (created by `codex login`)
+Required by default (pi):
+- `~/.pi/agent/auth.json` (created by `pi` then `/login`)
 
-Optional (only if using `RALPH_AGENT=opencode`):
-- `~/.local/share/opencode/auth.json` (created by `opencode auth login`)
+Optional (only if using `RALPH_AGENT=codex`):
+- `~/.codex/auth.json` (created by `codex login`)
 
 Optional (only if using `RALPH_AGENT=claude`):
 - `~/.claude` or `~/.claude.json` (created by `claude login` / `claude setup-token`)
@@ -526,7 +526,7 @@ Cleanup old runs:
 Record human feedback:
 
 ```bash
-./scripts/record-human-feedback.sh --vm ralph-1 --spec specs/010-weekly-summary.min.json \
+./scripts/record-human-feedback.sh --vm ralph-1 --spec specs/010-weekly-summary.json \
   --decision approve --notes "Looks good."
 ```
 Spec is explicit:
@@ -551,7 +551,7 @@ Reviewer stack:
   REVIEW_PROMPT.md (if provided),
   reviewer-specific prompt (from prompts/reviewers/*.md),
   spec.json-derived system prompt,
-  reports/*.report.json,
+  Smithers db task_report rows,
   review schema
 ]
 ```

@@ -16,7 +16,7 @@
     "@effect/cli": "latest",
     "@effect/platform-node": "latest",
     "effect": "latest",
-    "smithers-orchestrator": "0.3.0"
+    "smithers-orchestrator": "github:evmts/smithers#ea5ece3b156ebd32990ec9c528f9435c601a0403"
   },
   "devDependencies": {
     "@changesets/changelog-github": "latest",

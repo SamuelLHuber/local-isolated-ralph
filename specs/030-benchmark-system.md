@@ -81,7 +81,7 @@ Every inference is tagged with three independent dimensions:
 
 | Dimension | Description | Source |
 |-----------|-------------|--------|
-| **Harness** | Client tool calling the LLM | Smithers component (`<Codex>`, `<Claude>`, `<OpenCode>`) |
+| **Harness** | Client tool calling the LLM | Smithers agent (`PiAgent`, `CodexAgent`, `ClaudeCodeAgent`) |
 | **Provider** | API endpoint serving the model | Environment config (`OPENAI_BASE_URL`, provider detection) |
 | **Model** | Specific LLM being used | `SMITHERS_MODEL` env var |
 
@@ -94,7 +94,7 @@ This enables analysis like:
 
 **Existing infrastructure we leverage:**
 
-1. **Agent Components** - `<Codex>`, `<Claude>`, `<OpenCode>` with `onFinished` callbacks
+1. **Agent Classes** - `PiAgent`, `CodexAgent`, `ClaudeCodeAgent` with task outputs
 2. **Result Objects** - `result.output` (response text), `result.tokensUsed` (when available)
 3. **SQLite State DB** - `reactiveDb` for persistence across workflow steps
 4. **Phase Tracking** - `phase` state (tasks → review → review-tasks → done)
@@ -122,7 +122,7 @@ Captured in every `onFinished` callback:
   timestamp: string;          // ISO 8601 completion time
   
   // Three dimensions
-  harness: "codex" | "claude" | "opencode";
+  harness: "pi" | "codex" | "claude";
   provider: "openai" | "anthropic" | "azure-openai" | "local-vllm" | ...;
   model: string;              // "gpt-4", "claude-3-opus", etc.
   
@@ -407,7 +407,8 @@ local-isolated-ralph/
 │   └── 030-benchmark-system.md      # This spec
 └── reports/
     ├── <run-id>/
-    │   ├── task-001.report.json
+    │   ├── .smithers/
+    │   │   └── <spec-id>.db          # task_report/review_summary rows
     │   └── metrics.json              # NEW: Run metrics export
     └── benchmark-<name>-<ts>/
         ├── report/
@@ -626,8 +627,8 @@ Reuse existing `smithers-reviewer.tsx`:
 ```
 reports/
   <run-id>/
-    task-001.report.json       # Existing
-    review.json                # Existing
+    .smithers/
+      <spec-id>.db             # task_report/review_summary rows
     metrics.json               # NEW: RunMetrics
   
   benchmark-<name>-<timestamp>/
@@ -652,13 +653,13 @@ fabrik run --spec specs/feature.json
 ```bash
 # Run defined scenarios
 fabrik run \
-  --spec specs/benchmark.min.json \
+  --spec specs/benchmark.json \
   --config @benchmark/smithers-benchmark.tsx \
   --output reports/benchmark-001
 
 # Override iterations
 fabrik run \
-  --spec specs/benchmark.min.json \
+  --spec specs/benchmark.json \
   --config @benchmark/smithers-benchmark.tsx \
   --output reports/benchmark-002 \
   --iterations 5
@@ -964,7 +965,7 @@ describe("extractTokens", () => {
 describe("Metrics Integration", () => {
   it("run completes successfully with metrics enabled", async () => {
     const result = await runSmithers({
-      spec: "specs/000-base.min.json",
+      spec: "specs/000-base.json",
       enableMetrics: true
     });
     expect(result.status).toBe("complete");
@@ -974,7 +975,7 @@ describe("Metrics Integration", () => {
   it("run completes successfully with metrics disabled", async () => {
     process.env.DISABLE_METRICS = "1";
     const result = await runSmithers({
-      spec: "specs/000-base.min.json"
+      spec: "specs/000-base.json"
     });
     expect(result.status).toBe("complete");
     expect(result.metricsFile).not.toExist();
@@ -983,7 +984,7 @@ describe("Metrics Integration", () => {
   it("handles provider errors gracefully", async () => {
     // Mock provider returning malformed response
     const result = await runSmithers({
-      spec: "specs/000-base.min.json",
+      spec: "specs/000-base.json",
       mockProvider: "malformed"
     });
     expect(result.status).toBe("complete");

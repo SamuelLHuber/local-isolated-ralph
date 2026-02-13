@@ -72,6 +72,25 @@ else:
   return runRemote(vm, `python3 - <<'PY'\n${script}\nPY`).trim()
 }
 
+const readExitCode = (vm: string, controlDir: string) => {
+  const script = `
+import os
+path = os.path.join("${controlDir}", "exit_code")
+if not os.path.exists(path):
+  print('')
+else:
+  try:
+    with open(path, 'r', encoding='utf-8') as f:
+      print(f.read().strip())
+  except Exception:
+    print('')
+`
+  const output = runRemote(vm, `python3 - <<'PY'\n${script}\nPY`).trim()
+  if (!output) return null
+  const parsed = Number(output)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
 const isHeartbeatStale = (ts: string, thresholdSeconds: number) => {
   if (!ts) return true
   const parsed = Date.parse(ts)
@@ -91,7 +110,7 @@ export type ReconcileOptions = {
   heartbeatSeconds?: number
 }
 
-export const reconcileRuns = ({ dbPath, limit = 50, heartbeatSeconds = 180 }: ReconcileOptions) => {
+export const reconcileRuns = ({ dbPath, limit = 50, heartbeatSeconds = 60 }: ReconcileOptions) => {
   const { db } = openRunDb(dbPath)
   const rows = db
     .query<{ id: number; vm_name: string; workdir: string; status: string }>(
@@ -112,6 +131,11 @@ export const reconcileRuns = ({ dbPath, limit = 50, heartbeatSeconds = 180 }: Re
     const workBase = run.workdir.split("/").pop() ?? ""
     const controlDir = `/home/ralph/work/${run.vm}/.runs/${workBase}`
     const pid = readPid(run.vm, controlDir)
+    const exitCode = readExitCode(run.vm, controlDir)
+    if (exitCode !== null) {
+      updateRunStatus(dbPath, run.id, exitCode === 0 ? "done" : "failed", exitCode)
+      continue
+    }
     const heartbeatTs = readHeartbeat(run.vm, controlDir)
     const staleHeartbeat = isHeartbeatStale(heartbeatTs, heartbeatSeconds)
     if (!pid && staleHeartbeat) {

@@ -14,7 +14,7 @@ This repo follows a strict, test-driven flow for all features.
 
 3) **TODO → Implementation (Smithers)**
    - Smithers runs tasks in order with tests first.
-   - Emit `report.json` per task (includes root-cause fields).
+   - Write `task_report` rows per task in the Smithers db (includes root-cause fields).
 
 4) **Manual Review Checkpoints**
    - Review after each spec before proceeding to the next.
@@ -22,15 +22,14 @@ This repo follows a strict, test-driven flow for all features.
 ## Diagram
 
 ```
-PRD.md → spec.json → todo.json → Smithers workflow → report.json
-          (minify)      (tasks, TDD, DOD)   (per task)
+PRD.md → spec.json → todo.json → fabrik dispatch (minify) → Smithers workflow → task_report rows
+                               (token-efficient input)    (per task)
 ```
 
 ## Files
 - Specs (human): `specs/*.json`
-- Specs (Smithers input): `specs/*.min.json`
 - TODOs (human): `specs/*.todo.json`
-- TODOs (Smithers input): `specs/*.todo.min.json`
+- Minified inputs: generated in the run workdir (gitignored)
 
 ## Current Specs
 - `000-base`
@@ -39,19 +38,13 @@ PRD.md → spec.json → todo.json → Smithers workflow → report.json
 - `022-fabrik-doctor`
 
 ## Report Format (per task)
-`reports/<task>.report.json` fields include:
+`task_report` rows include:
 - `status`, `work`, `files`, `tests`, `issues`, `next`
 - `rootCause`, `reasoning`, `fix`, `error`, `commit`
 
 ## Minified Inputs (Smithers)
-- Humans generate minified JSON for token-efficient runs.
-- Smithers consumes `*.min.json` and does **not** regenerate them.
-
-Generate minified files:
-
-```bash
-bun run scripts/minify-specs.ts
-```
+- `fabrik run` minifies spec/todo JSON on dispatch and writes the minified copies into the run workdir.
+- Minified files are **not** tracked in git.
 
 ## Testing Requirements
 - TDD is mandatory.
