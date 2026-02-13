@@ -821,111 +821,46 @@ const specsStatusCommand = Command.make(
     })
 ).pipe(Command.withDescription("List specs and status"))
 
-const specInterviewPrompt = `SPEC INTERVIEW PROCESS
-======================
+const specInterviewPrompt = `COMPOUND ENGINEERING: SPEC INTERVIEW
+======================================
 
-You are conducting a structured interview to create a high-quality Spec JSON file.
-Follow this process meticulously. DO NOT proceed to the next question until the previous is answered.
+> Each unit of engineering work should make subsequent units easier—not harder.
 
-PRE-INTERVIEW CHECKLIST (confirm with user):
-1. Do you have a clear problem statement?
-2. Do you understand the boundaries (what's in/out of scope)?
-3. Do you know the acceptance criteria (when is this "done")?
+80% PLANNING | 20% EXECUTION
 
-INTERVIEW QUESTIONS (ask in order):
+Read: specs/INTERVIEW.md for complete compound engineering principles.
 
-Q1: IDENTITY
-"What is the unique identifier for this spec?"
-- Format: kebab-case (e.g., "user-auth", "billing-v2")
-- Must be unique across all specs
-- Used in filenames and branch names
+QUICK REFERENCE - The 10 Questions:
 
-Q2: TITLE  
-"What is the one-sentence description?"
-- Active voice ("Implement", "Add", "Fix")
-- No implementation details
-- Example: "Add passwordless authentication" not "Use WebAuthn API"
+PRE-INTERVIEW CHECKLIST:
+[ ] Clear problem statement
+[ ] Boundary understanding (in/out of scope)
+[ ] Success criteria defined
 
-Q3: STATUS
-"What is the current status?"
-- Options: draft | ready | in-progress | review | done | superseded
-- Start with "draft" unless you're continuing existing work
+Q1: IDENTITY - Unique kebab-case ID (e.g., "billing-idempotency")
+Q2: TITLE - One sentence, active voice, NO implementation details
+Q3: STATUS - draft | ready | in-progress | review | done | superseded
+Q4: GOALS (3-7) - MUST accomplish, starts with verb, NO implementation
+Q5: NON-GOALS - Explicitly out of scope (prevents creep)
+Q6: API - Interfaces, signatures, branded types, error channels
+Q7: BEHAVIOR - Business rules, state transitions, edge cases
+Q8: OBSERVABILITY - Metrics, logs, alerts, health checks
+Q9: ACCEPTANCE - Testable criteria, performance thresholds
+Q10: ASSUMPTIONS - What could change (deps, platform, volume)
 
-Q4: GOALS (non-negotiable)
-"What MUST this accomplish? List 3-7 specific outcomes."
-- Each goal starts with verb ("Enable", "Provide", "Ensure")
-- Measurable when possible
-- NO implementation details
-- Example: "Enable users to log in without passwords" NOT "Use Passkeys API"
+CRITICAL PRINCIPLES:
+- Goals = WHAT (never HOW)
+- Non-goals = scope fence
+- Every requirement verifiable
+- Tier T1/T2/T3/T4 determines guarantee layers needed
 
-Q5: NON-GOALS (critical for scope)
-"What is explicitly OUT of scope?"
-- Prevents scope creep
-- Lists tempting but excluded features
-- Example: "Social login (Google/GitHub) - out of scope for v1"
+OUTPUT: specs/{id}.json (see full format in specs/INTERVIEW.md)
 
-Q6: REQUIREMENTS - API
-"What interfaces/contracts must exist?"
-- Function signatures
-- Data structures
-- API endpoints
-- Configuration options
+NEXT: Run 'fabrik todo generate' for todo creation guide`;
 
-Q7: REQUIREMENTS - BEHAVIOR
-"What must happen functionally?"
-- Business logic rules
-- State transitions
-- Error handling
-- Edge cases
+const specInterviewExtendedRef = `\n\nFor the complete Compound Engineering interview process with:\n- 80/20 planning/execution ratio explanation\n- 4 principles (Plan, Review, Codify, Quality)\n- Detailed Q1-Q10 guidance with examples\n- DoD by tier (T1-T4)\n- Compound impact over time\n\nSee: specs/INTERVIEW.md`;
 
-Q8: REQUIREMENTS - OBSERVABILITY
-"How do we know it's working?"
-- Metrics to emit
-- Logs to write
-- Alerts needed
-- Health checks
-
-Q9: ACCEPTANCE CRITERIA
-"How do we verify this is complete?"
-- Test scenarios
-- Manual QA steps
-- Performance thresholds
-- Security checks
-
-Q10: ASSUMPTIONS
-"What are we assuming that could change?"
-- External dependencies
-- Platform constraints
-- Timing expectations
-
-POST-INTERVIEW:
-Generate the Spec JSON with format:
-
-{
-  "v": 1,
-  "id": "<answer-Q1>",
-  "title": "<answer-Q2>",
-  "status": "<answer-Q3>",
-  "version": "1.0.0",
-  "lastUpdated": "<today-ISO>",
-  "goals": ["<answer-Q4-1>", "<answer-Q4-2>", ...],
-  "nonGoals": ["<answer-Q5-1>", "<answer-Q5-2>", ...],
-  "req": {
-    "api": ["<answer-Q6-1>", "<answer-Q6-2>", ...],
-    "behavior": ["<answer-Q7-1>", "<answer-Q7-2>", ...],
-    "obs": ["<answer-Q8-1>", "<answer-Q8-2>", ...]
-  },
-  "accept": ["<answer-Q9-1>", "<answer-Q9-2>", ...],
-  "assume": ["<answer-Q10-1>", "<answer-Q10-2>", ...]
-}
-
-Save to: specs/{id}.json
-
-IMPORTANT:
-- DO NOT include implementation details in Goals
-- NON-GOALS are as important as GOALS
-- Each requirement MUST be verifiable (testable or observable)
-- When in doubt, split into smaller specs`;
+const specInterviewFullPrompt = specInterviewPrompt + specInterviewExtendedRef;
 
 const specInterviewCommand = Command.make(
   "interview",
