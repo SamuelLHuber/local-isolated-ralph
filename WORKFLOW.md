@@ -1,50 +1,50 @@
-# Workflow Guide: Compound Engineering mit Fabrik
+# Workflow Guide: Compound Engineering with Fabrik
 
-**Scope**: Dieses Dokument beschreibt den vollständigen Workflow von Spec-Erstellung bis Human Gate.
+**Scope**: Complete workflow from Spec creation to Human Gate.
 
-**Implicit Assumption**: Der Leser hat QUICKSTART.md durchgearbeitet und versteht die 80/20-Regel (80% Planning, 20% Execution).
+**Implicit Assumption**: Reader has completed QUICKSTART.md and understands the 80/20 rule (80% Planning, 20% Execution).
 
 ---
 
-## 1. Compound Engineering: Die 4 Prinzipien
+## 1. Compound Engineering: The 4 Principles
 
 ### 1.1 Plan thoroughly before writing code
-- Spec ist der Vertrag. Änderungen kosten 10x.
-- Keine Implementation ohne abgeschlossenes Interview.
+- Spec is the contract. Changes cost 10x.
+- No implementation without completed interview.
 
 ### 1.2 Review to catch issues and capture learnings
-- 8 Reviewer (automatisch, parallel).
-- Jedes Finding wird zu wiederverwendbarem Pattern.
+- 8 Reviewers (automatic, parallel).
+- Every finding becomes a reusable pattern.
 
 ### 1.3 Codify knowledge so it's reusable
-- `@property` TSDoc nennt Invarianten explizit.
-- Branded Types verhindern primitive obsession.
-- Todo-Templates werden in `prompts/reviewers/` dokumentiert.
+- `@property` TSDoc names invariants explicitly.
+- Branded Types prevent primitive obsession.
+- Todo templates documented in `prompts/reviewers/`.
 
 ### 1.4 Keep quality high so future changes are easy
 - 6 Guarantee Layers (L1-L6).
-- Je höher die Qualität, desto schneller der nächste Cycle.
+- Higher quality = faster next cycle.
 
 ---
 
-## 2. Der Workflow (Step-by-Step)
+## 2. The Workflow (Step-by-Step)
 
-### Phase 1: Spec-Erstellung (40% der Zeit)
+### Phase 1: Spec Creation (40% of time)
 
 ```bash
-# Step 1: Interview-Guide ausgeben
+# Step 1: Output interview guide
 ./dist/fabrik spec interview | tee /tmp/spec-interview.txt
 
-# Step 2: Mit Agent durchführen
-# Input: Konversation mit dem Agent über die 10 Fragen
+# Step 2: Run with agent
+# Input: Conversation with agent about the 10 questions
 # Output: specs/{id}.json
 cat /tmp/spec-interview.txt | claude-code
 
-# Step 3: Validieren
+# Step 3: Validate
 ./dist/fabrik spec validate
 ```
 
-**Die 10 Fragen** (implizit in `fabrik spec interview`):
+**The 10 Questions** (implicit in `fabrik spec interview`):
 1. IDENTITY: Kebab-case ID
 2. TITLE: One sentence, active voice, NO implementation
 3. STATUS: draft | ready | in-progress | review | done | superseded
@@ -56,50 +56,50 @@ cat /tmp/spec-interview.txt | claude-code
 9. ACCEPTANCE: Testable criteria, performance thresholds
 10. ASSUMPTIONS: What could change (deps, platform, volume)
 
-**Critical**: Spec muss `status: "ready"` haben vor dem nächsten Schritt.
+**Critical**: Spec must have `status: "ready"` before next step.
 
 ---
 
-### Phase 2: Todo-Generierung (40% der Zeit)
+### Phase 2: Todo Generation (40% of time)
 
 ```bash
-# Step 1: Todo-Guide ausgeben
+# Step 1: Output todo guide
 ./dist/fabrik todo generate | tee /tmp/todo-guide.txt
 
-# Step 2: Mit Agent durchführen
+# Step 2: Run with agent
 # Input: specs/{id}.json
 # Output: specs/{id}.todo.json
 cat /tmp/todo-guide.txt | claude-code
 
-# Step 3: Validieren
+# Step 3: Validate
 ./dist/fabrik spec validate
 ```
 
-**Criticality Tier** (bestimmt DoD):
+**Criticality Tier** (determines DoD):
 
-| Tier | Beispiele | Layers |
-|------|-----------|--------|
+| Tier | Examples | Layers |
+|------|----------|--------|
 | T1 | Money, Auth, Signing, irreversible State | ALL 6 (L1-L5 + Simulation) |
 | T2 | User data, Business logic, State machines | L1-L5 |
 | T3 | Features, UI state, Caching | L1-L4 |
 | T4 | Analytics, Logging, Metrics | L1, L4 |
 
-**T1 DoD** (muss alles geprüft sein):
+**T1 DoD** (all must be checked):
 - [ ] L1: Branded types
-- [ ] L2: Effect.assert für pre/postconditions
+- [ ] L2: Effect.assert for pre/postconditions
 - [ ] L3: DB UNIQUE/CHECK constraints
-- [ ] L4: @property TSDoc auf jedem Invariant-Test
+- [ ] L4: @property TSDoc on every invariant test
 - [ ] L4: Property-based tests (conservation, idempotency)
 - [ ] L4: 90%+ line coverage, 85%+ branch coverage
-- [ ] L5: TODOs für production alerts
+- [ ] L5: TODOs for production alerts
 - [ ] L6: Seed-based simulation plan
-- [ ] Review: All 8 Reviewer approved
-- [ ] VCS: Gepusht zu GitHub, CI passed
+- [ ] Review: All 8 reviewers approved
+- [ ] VCS: Pushed to GitHub, CI passed
 - [ ] Human: Gate cleared
 
 ---
 
-### Phase 3: Execution (20% der Zeit)
+### Phase 3: Execution (20% of time)
 
 ```bash
 # Single-VM Workflow
@@ -107,10 +107,10 @@ cat /tmp/todo-guide.txt | claude-code
   --spec specs/feature.json \
   --todo specs/feature.todo.json \
   --vm ralph-1 \
-  --project /path/to/target/repo        # Optional: Ziel-Repo außerhalb VM
+  --project /path/to/target/repo        # Optional: target repo outside VM
 ```
 
-**Was passiert intern**:
+**Internal Flow**:
 
 ```
 spec.json + todo.json (minified)
@@ -118,29 +118,29 @@ spec.json + todo.json (minified)
            ▼
     smithers-spec-runner.tsx
            │
-           ├─ Sequentielle Tasks (mit skipIf bei Fehler)
+           ├─ Sequential Tasks (with skipIf on error)
            ├─ JJ: jj new main && jj bookmark create feature-1
            ├─ Work → jj describe → jj git push --branch feature-1
            │
            ▼
-    Review Loop (Ralph bis maxIterations)
-           ├─ 8 Reviewer parallel
-           ├─ Bei "changes_requested": Review-Tasks generieren
-           └─ Resubmit bis "approved" oder max erreicht
+    Review Loop (Ralph until maxIterations)
+           ├─ 8 Reviewers parallel
+           ├─ On "changes_requested": Generate review tasks
+           └─ Resubmit until "approved" or max reached
            │
            ▼
     Human Gate (blocked)
-           └─ Wartet auf: fabrik feedback --decision approve
+           └─ Waits for: fabrik feedback --decision approve
 ```
 
 ---
 
-## 3. VCS-Strategien (JJ)
+## 3. VCS Strategies (JJ)
 
 ### 3.1 Single-Ralph: Feature Branch
 
 ```bash
-# In der VM (automatisch durch Agent)
+# In VM (automatic by agent)
 jj new main
 jj bookmark create feature-1
 # ... work ...
@@ -148,12 +148,12 @@ jj describe -m "feat(feature-1): implement X"
 jj git push --branch feature-1
 ```
 
-**Implicit Assumption**: Der Agent arbeitet im `/home/ralph/work/...` Verzeichnis, nicht auf dem Host.
+**Implicit Assumption**: Agent works in `/home/ralph/work/...` directory, not on host.
 
 ### 3.2 Multi-Ralph: Separate VMs
 
 ```bash
-# Host: Starte mehrere Runs
+# Host: Start multiple runs
 ./dist/fabrik run --spec specs/auth.json --vm ralph-1 &
 ./dist/fabrik run --spec specs/dashboard.json --vm ralph-2 &
 ./dist/fabrik run --spec specs/api-fix.json --vm ralph-3 &
@@ -164,7 +164,7 @@ jj git push --branch feature-1
 ./dist/fabrik runs watch --vm ralph-3 &
 ```
 
-**Implicit Assumption**: Jede VM hat eigenen Workdir. Keine Kollisionen möglich.
+**Implicit Assumption**: Each VM has own workdir. No collisions possible.
 
 ### 3.3 Multi-Ralph: Fleet Mode
 
@@ -175,11 +175,11 @@ jj git push --branch feature-1
   --project /path/to/repo
 ```
 
-**Implicit Assumption**: Fleet matched specs/*.json zu verfügbaren VMs (ralph-1, ralph-2, ...).
+**Implicit Assumption**: Fleet matches specs/*.json to available VMs (ralph-1, ralph-2, ...).
 
 ---
 
-## 4. Review Pipeline (8 Reviewer)
+## 4. Review Pipeline (8 Reviewers)
 
 **Parallel Execution**:
 
@@ -195,7 +195,7 @@ Parallel:
   └─ correctness-guarantees
 ```
 
-**Reviewer-Prompts**: `prompts/reviewers/{id}.md`
+**Reviewer Prompts**: `prompts/reviewers/{id}.md`
 
 **Custom Models** (optional):
 ```json
@@ -215,7 +215,7 @@ Parallel:
 
 ## 5. Human Gate
 
-**Zustand**: Nach Review-Loop wird `human_gate` row geschrieben:
+**State**: After review loop, `human_gate` row written:
 
 ```json
 {
@@ -225,17 +225,17 @@ Parallel:
 }
 ```
 
-**Aktionen**:
+**Actions**:
 
 ```bash
-# Genehmigen
+# Approve
 ./dist/fabrik feedback \
   --vm ralph-1 \
   --spec specs/feature.json \
   --decision approve \
   --notes "Implementation correct. Tests pass."
 
-# Ablehnen (mit Begründung für Re-run)
+# Reject (with reason for re-run)
 ./dist/fabrik feedback \
   --vm ralph-1 \
   --spec specs/feature.json \
@@ -243,7 +243,7 @@ Parallel:
   --notes "Security issue in auth flow. Fix and re-run."
 ```
 
-**Implicit Assumption**: Kein automatischer Übergang von "blocked". Human decision ist bindend.
+**Implicit Assumption**: No automatic transition from "blocked". Human decision is binding.
 
 ---
 
@@ -255,7 +255,7 @@ Parallel:
 # Terminal 1: Desktop notifications
 ./dist/fabrik runs watch --vm ralph-1
 
-# Terminal 2: Logs streamen
+# Terminal 2: Stream logs
 ./dist/fabrik laos logs --follow
 
 # Browser: Grafana
@@ -265,16 +265,16 @@ open http://localhost:3010/explore
 ### 6.2 Post-Mortem
 
 ```bash
-# Run Details
+# Run details
 ./dist/fabrik runs show --id <run-id>
 
-# Ausgabe enthält:
-# - failure_reason (wenn failed)
-# - blocked_task (wenn blocked)
-# - reports/run-context.json (Prompt-Hashes)
-# - .smithers/*.db (SQLite mit allen Reports)
+# Output includes:
+# - failure_reason (if failed)
+# - blocked_task (if blocked)
+# - reports/run-context.json (prompt hashes)
+# - .smithers/*.db (SQLite with all reports)
 
-# SQLite inspizieren
+# Inspect SQLite
 sqlite3 .smithers/feature.db "SELECT * FROM taskReport;"
 sqlite3 .smithers/feature.db "SELECT * FROM reviewReport;"
 sqlite3 .smithers/feature.db "SELECT * FROM humanGate;"
@@ -282,47 +282,47 @@ sqlite3 .smithers/feature.db "SELECT * FROM humanGate;"
 
 ---
 
-## 7. Compound Effect: Der Flywheel
+## 7. Compound Effect: The Flywheel
 
-**Monat 1**: Langsamer als "just coding" (Planungsoverhead)
-**Monat 3**: Gleiche Geschwindigkeit, weniger Bugs
-**Monat 6**: Schneller als traditionell (Patterns etabliert)
-**Monat 12**: 2-3x Velocity (Zinseszins auf Qualität)
+**Month 1**: Slower than "just coding" (planning overhead)
+**Month 3**: Same speed, fewer bugs
+**Month 6**: Faster than traditional (patterns established)
+**Month 12**: 2-3x Velocity (compound interest on quality)
 
-**Mechanismus**:
-1. Spec → Wiederverwendbare Requirement-Patterns
-2. Todo → Wiederverwendbare Task-Templates
-3. Reviewer → Wiederverwendbare Checklisten
-4. L1-L6 → Jede Änderung ist sicherer als die vorherige
+**Mechanism**:
+1. Spec → Reusable requirement patterns
+2. Todo → Reusable task templates
+3. Reviewers → Reusable checklists
+4. L1-L6 → Each change safer than previous
 
 ---
 
-## 8. Kommandoreferenz
+## 8. Command Reference
 
-| Befehl | Zweck | Output |
-|--------|-------|--------|
-| `fabrik spec interview` | 10-Fragen Guide | Terminal (pipe to agent) |
-| `fabrik todo generate` | Todo-Guide | Terminal (pipe to agent) |
+| Command | Purpose | Output |
+|---------|---------|--------|
+| `fabrik spec interview` | 10-question guide | Terminal (pipe to agent) |
+| `fabrik todo generate` | Todo guide | Terminal (pipe to agent) |
 | `fabrik spec validate` | JSON Schema check | Exit code 0/1 |
-| `fabrik spec minify` | .min.json generieren | Filesystem |
+| `fabrik spec minify` | Generate .min.json | Filesystem |
 | `fabrik run ...` | Workflow dispatch | SQLite + Reports |
-| `fabrik runs list` | Übersicht aller Runs | Table |
-| `fabrik runs show --id X` | Einzelnes Run Detail | JSON |
+| `fabrik runs list` | Overview all runs | Table |
+| `fabrik runs show --id X` | Single run detail | JSON |
 | `fabrik runs watch` | Desktop notifications | Desktop popup |
 | `fabrik feedback ...` | Human Gate decision | SQLite update |
 | `fabrik fleet ...` | Multi-VM dispatch | SQLite + Reports |
 
 ---
 
-## 9. Implizite Annahmen (Critical)
+## 9. Implicit Assumptions (Critical)
 
-1. **VCS**: JJ ist installiert und konfiguriert (`jj --version`)
-2. **Auth**: `~/.pi/agent/auth.json` existiert (oder codex/claude equivalent)
-3. **Token**: `GITHUB_TOKEN` ist gesetzt und gültig (scope: `repo`, `workflow`)
-4. **LAOS**: Läuft auf localhost:3010 (für Logs/Metrics)
-5. **VMs**: Existieren und sind erreichbar (`fabrik laos status` zeigt healthy)
-6. **Network**: VMs können GitHub erreichen (firewall/egress erlaubt)
-7. **Disk**: VMs haben >10GB frei für Repos + Dependencies
-8. **Reihenfolge**: Spec → Todo → Run (bindend, nicht überspringbar)
-9. **Human Gate**: Erfordert explizites Feedback (kein Timeout)
-10. **Review**: 8 Reviewer laufen parallel (Netzwerk/Bandwidth erforderlich)
+1. **VCS**: JJ installed and configured (`jj --version`)
+2. **Auth**: `~/.pi/agent/auth.json` exists (or codex/claude equivalent)
+3. **Token**: `GITHUB_TOKEN` set and valid (scope: `repo`, `workflow`)
+4. **LAOS**: Running on localhost:3010 (for logs/metrics)
+5. **VMs**: Exist and reachable (`fabrik laos status` shows healthy)
+6. **Network**: VMs can reach GitHub (firewall/egress allowed)
+7. **Disk**: VMs have >10GB free for repos + dependencies
+8. **Order**: Spec → Todo → Run (binding, not skippable)
+9. **Human Gate**: Requires explicit feedback (no timeout)
+10. **Review**: 8 reviewers run parallel (network/bandwidth required)

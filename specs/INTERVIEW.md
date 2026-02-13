@@ -19,12 +19,12 @@ The result: quality compounds, future changes become easier.
 ┌─────────────────────────────────────────────────────────────┐
 │  80% PLANNING & REVIEW                                       │
 │  ├── Interview (this document)                              │
-│  ├── Spec creation with layered guarantees                  │
-│  ├── Todo generation with task decomposition                │
+│  ├── Spec creation with layered guarantees                    │
+│  ├── Todo generation with task decomposition                  │
 │  └── Multi-agent review (8 reviewers)                       │
 ├─────────────────────────────────────────────────────────────┤
 │  20% EXECUTION                                               │
-│  └── Implementation with strict guardrails                  │
+│  └── Implementation with strict guardrails                    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -117,7 +117,7 @@ L6 Simulation: 24/7 seed-based testing (T1 only)
 
 Before starting, confirm:
 1. [ ] **Problem clarity**: Can you state the problem in one sentence?
-2. [ ] **Boundary understanding**: What's explicitly out of scope?
+2. [ ] **Boundary understanding**: What's explicitly in/out of scope?
 3. [ ] **Success criteria**: How will we know this is done?
 
 If any unchecked, **do not proceed**. Clarify first.
@@ -128,7 +128,7 @@ If any unchecked, **do not proceed**. Clarify first.
 
 **"What is the unique identifier for this work?"**
 
-- Format: `kebab-case` (e.g., `user-auth-v2`, `billing-idempotency`)
+- Format: `kebab-case` (e.g., `user-auth`, `billing-v2`)
 - Must be unique across all specs
 - Used in:
   - Filename: `specs/{id}.json`
