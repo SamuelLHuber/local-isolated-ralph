@@ -171,7 +171,7 @@ Install a notifier:
 | **Multi-Ralph Fleet** | Parallel features | N VMs, fleet dispatch | Parallel |
 | **Multi-Ralph per VM** | Resource constrained | 2-4 Ralphs in 1 VM | Density |
 
-**Compound Effect**: Jeder Cycle macht den nächsten schneller (Zinseszins auf Qualität).
+**Compound Effect**: Each cycle makes the next faster (compound interest on quality).
 
 See **[WORKFLOW.md](./WORKFLOW.md)** for detailed patterns.
 
@@ -179,16 +179,16 @@ See **[WORKFLOW.md](./WORKFLOW.md)** for detailed patterns.
 
 | Document | Description | Self-Contained |
 |----------|-------------|----------------|
-| [QUICKSTART.md](./QUICKSTART.md) | End-to-end tutorial | ❌ (braucht Repo) |
-| [WORKFLOW.md](./WORKFLOW.md) | Workflow patterns, 80/20 Regel | ❌ (braucht Repo) |
-| [specs/INTERVIEW.md](./specs/INTERVIEW.md) | 10-Fragen Interview-Guide | ✅ (via `fabrik spec interview`) |
-| [prompts/COMPOUND-ENGINEERING.md](./prompts/COMPOUND-ENGINEERING.md) | Todo-Generierung | ✅ (via `fabrik todo generate`) |
-| [prompts/reviewers/](./prompts/reviewers/) | 8 Reviewer-Prompts | ⚠️ (wenn verfügbar) |
-| [OBSERVABILITY.md](./OBSERVABILITY.md) | Telemetry, LAOS Setup | ❌ (braucht Repo) |
-| [SETUP-MACOS.md](./SETUP-MACOS.md) | macOS setup mit Lima | ❌ (braucht Repo) |
-| [SETUP-LINUX.md](./SETUP-LINUX.md) | Linux setup mit libvirt | ❌ (braucht Repo) |
-| [CI-CD.md](./CI-CD.md) | CI/CD mit self-hosted runners | ❌ (braucht Repo) |
-| [dtechvision/laos](https://github.com/dtechvision/laos) | LAOS Observability (extern) | N/A |
+| [QUICKSTART.md](./QUICKSTART.md) | End-to-end tutorial | ❌ (needs Repo) |
+| [WORKFLOW.md](./WORKFLOW.md) | Workflow patterns, 80/20 Rule | ❌ (needs Repo) |
+| [specs/INTERVIEW.md](./specs/INTERVIEW.md) | 10-Question Interview Guide | ✅ (via `fabrik spec interview`) |
+| [prompts/COMPOUND-ENGINEERING.md](./prompts/COMPOUND-ENGINEERING.md) | Todo Generation | ✅ (via `fabrik todo generate`) |
+| [prompts/reviewers/](./prompts/reviewers/) | 8 Reviewer Prompts | ⚠️ (if available) |
+| [OBSERVABILITY.md](./OBSERVABILITY.md) | Telemetry, LAOS Setup | ❌ (needs Repo) |
+| [SETUP-MACOS.md](./SETUP-MACOS.md) | macOS setup with Lima | ❌ (needs Repo) |
+| [SETUP-LINUX.md](./SETUP-LINUX.md) | Linux setup with libvirt | ❌ (needs Repo) |
+| [CI-CD.md](./CI-CD.md) | CI/CD with self-hosted runners | ❌ (needs Repo) |
+| [dtechvision/laos](https://github.com/dtechvision/laos) | LAOS Observability (external) | N/A |
 
 ## Scripts
 

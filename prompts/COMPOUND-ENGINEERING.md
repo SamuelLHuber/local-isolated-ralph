@@ -299,7 +299,7 @@ Document the patterns in `docs/guides/` for reuse.
     "L3: DB UNIQUE on (provider, subscription_id, idempotency_key)",
     "L4: @property: CANCELED_NEVER_CHARGED, NO_DOUBLE_CHARGE, PERIOD_ADVANCES_ONCE",
     "L4: 90%+ line, 85%+ branch coverage",
-    "L5: TODOs for double_charge_detected→P1, renewal_failure→P2",
+    "L5: TODOs for double_charge→P1, renewal_fail→P2",
     "L6: Seed-based simulation plan documented",
     "Review: All 8 reviewers approved",
     "VCS: Pushed to branch, CI passes",
