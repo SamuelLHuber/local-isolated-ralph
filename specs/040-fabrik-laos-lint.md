@@ -241,7 +241,7 @@ As an operator, I want reports to include run_id, agent, service, and tool versi
 - If lint fails, the reviewer flow should:
   - mark `CHANGES_REQUESTED`, or
   - generate `review-todo.json` tasks from violations, or
-  - block with `human-gate.json` (configurable).
+  - block with `human_gate` row in Smithers db (configurable).
 
 ### 6.1 Integration Examples (Minimal, v0.1)
 - **k6**: set `X-Run-Id` header; set `RUN_ID` env for test metadata.

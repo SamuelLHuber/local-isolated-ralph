@@ -29,8 +29,8 @@ const ralphHomeOption = Options.text("ralph-home").pipe(
   Options.withDefault(defaultRalphHome)
 )
 
-const specOption = Options.text("spec").pipe(Options.withDescription("Spec minified JSON path"))
-const todoOption = Options.text("todo").pipe(Options.optional, Options.withDescription("Todo minified JSON path (optional)"))
+const specOption = Options.text("spec").pipe(Options.withDescription("Spec JSON path"))
+const todoOption = Options.text("todo").pipe(Options.optional, Options.withDescription("Todo JSON path (optional)"))
 const vmOption = Options.text("vm").pipe(Options.withDescription("VM name (e.g. ralph-1)"))
 const runSpecOption = specOption.pipe(Options.optional)
 const runVmOption = vmOption.pipe(Options.optional)
@@ -95,10 +95,10 @@ const runIdOption = Options.integer("run-id").pipe(
   Options.withDescription("Run id (defaults to latest run for VM)")
 )
 
-const specsDirOption = Options.text("specs-dir").pipe(Options.withDescription("Directory containing spec/todo min files"))
+const specsDirOption = Options.text("specs-dir").pipe(Options.withDescription("Directory containing spec/todo JSON files"))
 const vmPrefixOption = Options.text("vm-prefix").pipe(Options.withDescription("VM name prefix (default: ralph)"))
 const vmsOption = Options.text("vms").pipe(Options.withDescription("Comma-separated VM list (e.g. valpha,ralph-2)"))
-const specsOption = Options.text("specs").pipe(Options.withDescription("Comma-separated spec min.json list"))
+const specsOption = Options.text("specs").pipe(Options.withDescription("Comma-separated spec.json list"))
 const branchPrefixOption = Options.text("branch-prefix").pipe(
   Options.optional,
   Options.withDescription("Branch prefix for orchestrated runs (default: spec)")
@@ -121,6 +121,17 @@ const laosDirOption = Options.text("dir").pipe(
   Options.optional,
   Options.withDescription("LAOS working directory (default: ~/.cache/fabrik/laos)")
 )
+
+const readSpecId = (path?: string) => {
+  if (!path) return ""
+  try {
+    const raw = readFileSync(path, "utf8")
+    const parsed = JSON.parse(raw) as { id?: string }
+    return typeof parsed.id === "string" ? parsed.id : ""
+  } catch {
+    return ""
+  }
+}
 const laosFollowOption = Options.boolean("follow").pipe(
   Options.withDefault(false),
   Options.withDescription("Follow logs")
@@ -232,17 +243,31 @@ const runAttachCommand = Command.make(
       }
       const workBase = run.workdir.split("/").pop() ?? ""
       const reportsDir = `/home/ralph/work/${run.vm_name}/.runs/${workBase}/reports`
+      const controlDir = `/home/ralph/work/${run.vm_name}/.runs/${workBase}`
+      const specId = readSpecId(run.spec_path)
+      const dbName = specId ? `${specId}.db` : `run-${run.id}.db`
+      const smithersDbPath = `${controlDir}/.smithers/${dbName}`
       const logPath = `${reportsDir}/smithers.log`
       const command = [
         `if [ -f "${logPath}" ]; then`,
         `  tail -n 200 -f "${logPath}"`,
         "else",
-        `  echo "smithers.log not found; showing reports instead."`,
-        `  for file in "${reportsDir}"/*.report.json; do`,
-        "    [ -f \"$file\" ] || continue",
-        "    echo \"== $file ==\"",
-        "    cat \"$file\"",
-        "  done",
+        `  echo "smithers.log not found; showing smithers db instead."`,
+        `  python3 - <<'PY'`,
+        `import json, os, sqlite3`,
+        `db_path = "${smithersDbPath}"`,
+        `if not os.path.exists(db_path):`,
+        `  print("No smithers db found.")`,
+        `  raise SystemExit(0)`,
+        `conn = sqlite3.connect(db_path)`,
+        `try:`,
+        `  for row in conn.execute("SELECT task_id, status, issues, next FROM task_report ORDER BY node_id"):` ,
+        `    print(json.dumps({"taskId": row[0], "status": row[1], "issues": row[2], "next": row[3]}, indent=2))`,
+        `  for row in conn.execute("SELECT status, issues, next FROM review_summary ORDER BY iteration DESC LIMIT 1"):` ,
+        `    print(json.dumps({"reviewStatus": row[0], "issues": row[1], "next": row[2]}, indent=2))`,
+        `finally:`,
+        `  conn.close()`,
+        `PY`,
         "fi"
       ].join("\n")
       runRemoteStream(run.vm_name, command)
@@ -520,7 +545,7 @@ const runsReconcileCommand = Command.make(
     limit: Options.integer("limit").pipe(Options.optional, Options.withDescription("Max rows (default 50)")),
     heartbeatSeconds: Options.integer("heartbeat-seconds").pipe(
       Options.optional,
-      Options.withDescription("Seconds before heartbeat is stale (default: 180)")
+      Options.withDescription("Seconds before heartbeat is stale (default: 60)")
     )
   },
   ({ db, limit, heartbeatSeconds }) =>
@@ -534,7 +559,7 @@ const runsReconcileCommand = Command.make(
       reconcileRuns({
         dbPath,
         limit: unwrapOptional(limit) ?? 50,
-        heartbeatSeconds: unwrapOptional(heartbeatSeconds) ?? 180
+        heartbeatSeconds: unwrapOptional(heartbeatSeconds) ?? 60
       })
     }).pipe(Effect.withSpan("runs.reconcile"))
 ).pipe(Command.withDescription("Reconcile run status against VM processes"))
@@ -561,7 +586,7 @@ const runsCommand = Command.make("runs").pipe(
             return
           }
           try {
-            reconcileRuns({ dbPath, limit: limitValue ?? 10, heartbeatSeconds: 180 })
+            reconcileRuns({ dbPath, limit: limitValue ?? 10, heartbeatSeconds: 60 })
           } catch {
             // best-effort
           }
@@ -597,7 +622,7 @@ const runsCommand = Command.make("runs").pipe(
             return
           }
           try {
-            reconcileRuns({ dbPath, limit: 50, heartbeatSeconds: 180 })
+            reconcileRuns({ dbPath, limit: 50, heartbeatSeconds: 60 })
           } catch {
             // best-effort
           }
@@ -669,7 +694,7 @@ const runsCommand = Command.make("runs").pipe(
             return
           }
           try {
-            reconcileRuns({ dbPath, limit: 50, heartbeatSeconds: 180 })
+            reconcileRuns({ dbPath, limit: 50, heartbeatSeconds: 60 })
           } catch {
             // best-effort
           }
@@ -692,37 +717,56 @@ const runsCommand = Command.make("runs").pipe(
           const vmName = run.vm_name
           const workdir = run.workdir
           const workBase = workdir.split("/").pop() ?? ""
-          const reportsDir = `/home/ralph/work/${vmName}/.runs/${workBase}/reports`
+          const controlDir = `/home/ralph/work/${vmName}/.runs/${workBase}`
+          const specId = readSpecId(run.spec_path)
+          const dbName = specId ? `${specId}.db` : `run-${rid}.db`
+          const smithersDbPath = `${controlDir}/.smithers/${dbName}`
           const seen = new Set<string>()
-          console.log(`[${vmName}] Watching reports for run ${rid}`)
+          console.log(`[${vmName}] Watching Smithers DB for run ${rid}`)
 
           while (true) {
             const script = `
-import json, os
-path = "${reportsDir}"
+import json, os, sqlite3
+path = "${smithersDbPath}"
+run_id = "${rid}"
 items = []
-if os.path.isdir(path):
-  for name in sorted(os.listdir(path)):
-    if not name.endswith(".report.json"):
-      continue
-    try:
-      with open(os.path.join(path, name), "r") as f:
-        data = json.load(f)
-      status = data.get("status")
-      if status == "blocked":
-        items.append((name, data.get("taskId", ""), data.get("issues", []), data.get("next", [])))
-    except Exception:
-      continue
-for name, task_id, issues, nxt in items:
-  print(name + "|" + task_id + "|" + "; ".join(issues) + "|" + "; ".join(nxt))
+if not os.path.exists(path):
+  raise SystemExit(0)
+conn = sqlite3.connect(path)
+try:
+  cur = conn.execute(
+    "SELECT task_id, node_id, status, issues, next FROM task_report WHERE run_id = ? AND status IN ('blocked','failed') ORDER BY node_id",
+    (run_id,)
+  )
+  for row in cur.fetchall():
+    task_id, node_id, status, issues_raw, next_raw = row
+    def parse_list(raw):
+      if raw is None:
+        return []
+      if isinstance(raw, (list, tuple)):
+        return list(raw)
+      if isinstance(raw, str):
+        try:
+          parsed = json.loads(raw)
+          if isinstance(parsed, list):
+            return parsed
+        except Exception:
+          return [raw]
+      return []
+    items.append((str(task_id or node_id or ""), str(status or ""), "; ".join(parse_list(issues_raw)), "; ".join(parse_list(next_raw))))
+finally:
+  conn.close()
+for task_id, status, issues, nxt in items:
+  print(task_id + "|" + status + "|" + issues + "|" + nxt)
 `
             const output = runRemote(vmName, `python3 - <<'PY'\n${script}\nPY`).trim()
             if (output) {
               for (const line of output.split("\n")) {
-                const [file, taskId, issues, next] = line.split("|")
-                if (seen.has(file)) continue
-                seen.add(file)
-                const msg = `Blocked: ${taskId}\n${issues}\nNext: ${next}`
+                const [taskId, status, issues, next] = line.split("|")
+                const key = `${taskId}:${status}`
+                if (seen.has(key)) continue
+                seen.add(key)
+                const msg = `Blocked (${status}): ${taskId}\n${issues}\nNext: ${next}`
                 console.log(`[${vmName}] ${msg}`)
                 if (notifyEnabled) notifyDesktop("fabrik", msg)
               }

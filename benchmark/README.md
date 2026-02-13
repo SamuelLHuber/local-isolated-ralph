@@ -46,7 +46,7 @@ Run the benchmark workflow by executing the Smithers script directly:
 
 ```bash
 fabrik run \
-  --spec specs/your-benchmark.min.json \
+  --spec specs/your-benchmark.json \
   --vm ralph-1 \
   --config @benchmark/smithers-benchmark.tsx \
   --output reports/your-benchmark \
@@ -55,7 +55,7 @@ fabrik run \
 
 * `--iterations` – number of times each scenario is repeated (default = 3).
 * The report will be written to `reports/your-benchmark/report/benchmark-report.json`.
-* All generated code, raw review JSONs, and test results are stored in the
+* All generated code, Smithers db outputs, and test results are stored in the
   corresponding `runs/<run‑id>` sub‑directories for auditability.
 
 The generated report will be a JSON file that contains timing, token, and
@@ -91,7 +91,7 @@ The benchmark system uses a **three-dimensional analysis model**:
 
 | Dimension | Description | Example Values |
 |-----------|-------------|----------------|
-| **Harness** | The client/tool used to call the LLM | `codex`, `claude`, `opencode` |
+| **Harness** | The client/tool used to call the LLM | `pi`, `codex`, `claude` |
 | **Provider** | The API endpoint answering the inference | `openai`, `anthropic`, `azure-openai`, `local-vllm` |
 | **Model** | The specific LLM being benchmarked | `gpt-4`, `claude-3-opus`, `llama-3.1-70b` |
 
@@ -171,7 +171,7 @@ This enables powerful comparisons like:
 
 ```bash
 fabrik run \
-  --spec specs/benchmark-test.min.json \
+  --spec specs/benchmark-test.json \
   --vm ralph-1 \
   --config @benchmark/smithers-benchmark.tsx \
   --output reports/benchmark-001 \
@@ -251,9 +251,8 @@ reports/
     runs/
       codex-openai-run-0/
         metrics.json             # Per-run metrics
-        task-001.report.json
-        task-002.report.json
-        review.json
+        .smithers/
+          <spec-id>.db           # task_report/review_summary rows
       codex-azure-run-0/
         ...
     inference-metrics.jsonl      # All inferences (one per line)

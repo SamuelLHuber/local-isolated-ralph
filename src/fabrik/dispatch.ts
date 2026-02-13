@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, accessSync, constants, readdirSync } from "node:fs"
 import { createHash } from "node:crypto"
 import { basename, dirname, join, resolve, relative, isAbsolute } from "node:path"
-import ts from "typescript"
 import { runCommand, runCommandOutput } from "./exec.js"
 import { ensureAnyCommand, ensureCommands, hasCommand } from "./prereqs.js"
 import { insertRun, openRunDb } from "./runDb.js"
@@ -48,6 +47,26 @@ const readText = (path?: string) => {
   if (!path) return ""
   if (!existsSync(path)) return ""
   return readFileSync(path, "utf8")
+}
+
+const minifyJson = (path: string) => {
+  if (!existsSync(path)) {
+    throw new Error(`Missing JSON file: ${path}`)
+  }
+  try {
+    const raw = readFileSync(path, "utf8")
+    const json = JSON.parse(raw)
+    return JSON.stringify(json)
+  } catch (error) {
+    throw new Error(`Failed to parse JSON: ${path}\n${String(error)}`)
+  }
+}
+
+const toMinName = (path: string) => {
+  const name = basename(path)
+  if (name.endsWith(".min.json")) return name
+  if (name.endsWith(".json")) return name.replace(/\.json$/i, ".min.json")
+  return `${name}.min.json`
 }
 
 const buildRunContext = (options: {
@@ -110,32 +129,11 @@ const buildRunContext = (options: {
 
 const workflowAgentNeeds = (workflowPath: string) => {
   const text = readText(workflowPath)
-  if (!text) return { needsCodex: false, needsClaude: false, needsOpencode: false }
-  const source = ts.createSourceFile(workflowPath, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
-  let needsCodex = false
-  let needsClaude = false
-  let needsOpencode = false
-  const checkTag = (tagName: string) => {
-    if (tagName === "Codex") needsCodex = true
-    if (tagName === "Claude") needsClaude = true
-    if (tagName === "OpenCode") needsOpencode = true
-  }
-  const visit = (node: ts.Node) => {
-    if (ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) {
-      const tag = node.tagName
-      if (ts.isIdentifier(tag)) {
-        checkTag(tag.text)
-      } else if (ts.isPropertyAccessExpression(tag)) {
-        const base = tag.expression
-        if (ts.isIdentifier(base) && base.text === "Orchestrator") {
-          checkTag(tag.name.text)
-        }
-      }
-    }
-    ts.forEachChild(node, visit)
-  }
-  visit(source)
-  return { needsCodex, needsClaude, needsOpencode }
+  if (!text) return { needsPi: false, needsCodex: false, needsClaude: false }
+  const needsPi = /\bPiAgent\b/.test(text)
+  const needsCodex = /\bCodexAgent\b/.test(text)
+  const needsClaude = /\bClaudeCodeAgent\b/.test(text)
+  return { needsPi, needsCodex, needsClaude }
 }
 
 const requireFile = (label: string, path: string, hint: string) => {
@@ -449,7 +447,7 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
   const projectDir = options.project ? safeRealpath(options.project)! : undefined
   const repoUrl = options.repoUrl?.trim()
   const repoRef = options.repoRef?.trim() ?? options.repoBranch?.trim()
-  const agentKind = (process.env.SMITHERS_AGENT ?? process.env.RALPH_AGENT ?? "codex").toLowerCase()
+  const agentKind = (process.env.SMITHERS_AGENT ?? process.env.RALPH_AGENT ?? "pi").toLowerCase()
   const specId = readSpecId(specPath)
   const runStamp = `${new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "")}`
   const branch = sanitizeBranch(options.branch ?? (specId ? `spec-${specId}` : `spec-run-${runStamp}`))
@@ -496,11 +494,16 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
   const vmWorkdir = `/home/ralph/work/${options.vm}/${workSubdir}`
   const controlDir = `/home/ralph/work/${options.vm}/.runs/${workSubdir}`
   const reportDir = options.reportDir ?? `${controlDir}/reports`
+  const smithersDbName = specId ? `${specId}.db` : `run-${runId}.db`
+  const smithersDbPath = `${controlDir}/.smithers/${smithersDbName}`
   const projectRelative = projectDir ? (path: string) => relative(projectDir, path) : undefined
   const projectRootInVm = repoUrl ? `${vmWorkdir}/repo` : vmWorkdir
   if (repoUrl && repoRef && !repoRef.length) {
     throw new Error("repo ref provided but empty.")
   }
+
+  const specMinified = minifyJson(specPath)
+  const todoMinified = minifyJson(todoPath)
 
   const osInfo = `${process.platform}-${process.arch}`
   const binaryHash = getBinaryHash()
@@ -528,40 +531,39 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
   console.log(`[${options.vm}] Work dir: ${vmWorkdir}`)
   console.log(`[${options.vm}] Branch: ${branch}`)
   const detectedAgents = [
+    workflowNeeds.needsPi ? "pi" : null,
     workflowNeeds.needsCodex ? "codex" : null,
-    workflowNeeds.needsClaude ? "claude" : null,
-    workflowNeeds.needsOpencode ? "opencode" : null
+    workflowNeeds.needsClaude ? "claude" : null
   ].filter(Boolean)
   console.log(`[${options.vm}] Workflow agents detected: ${detectedAgents.length ? detectedAgents.join(", ") : "none"}`)
   if (!detectedAgents.length && !requiredAgents.length) {
     throw new Error(
       [
         "No agent components detected in workflow.",
-        "Provide explicit requirements with --require-agents codex,opencode (comma-separated)."
+        "Provide explicit requirements with --require-agents pi,codex,claude (comma-separated)."
       ].join("\n")
     )
   }
 
+  const needsPi =
+    workflowNeeds.needsPi || requiredAgents.includes("pi") || agentKind === "pi"
   const needsCodex =
     workflowNeeds.needsCodex || requiredAgents.includes("codex") || agentKind === "codex"
-  const needsOpencode =
-    workflowNeeds.needsOpencode || requiredAgents.includes("opencode") || agentKind === "opencode"
   const needsClaude =
     workflowNeeds.needsClaude || requiredAgents.includes("claude") || agentKind === "claude"
+
+  if (needsPi) {
+    const piDir = join(process.env.HOME ?? "", ".pi", "agent")
+    if (!existsSync(piDir)) {
+      console.log("    Note: ~/.pi/agent not found (pi will need login in VM).")
+    }
+  }
 
   if (needsCodex) {
     requireFile(
       "Codex auth",
       join(process.env.HOME ?? "", ".codex/auth.json"),
       "Run `codex login` or copy ~/.codex/auth.json before dispatch."
-    )
-  }
-
-  if (needsOpencode) {
-    requireFile(
-      "OpenCode auth",
-      join(process.env.HOME ?? "", ".local/share/opencode/auth.json"),
-      "Run `opencode auth login` or copy ~/.local/share/opencode/auth.json before dispatch."
     )
   }
 
@@ -589,8 +591,8 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
     ssh(ip, ["mkdir", "-p", vmWorkdir, controlDir])
   }
 
-  let specInVm = `${vmWorkdir}/specs/spec.min.json`
-  let todoInVm = `${vmWorkdir}/specs/todo.min.json`
+  let specInVm = `${vmWorkdir}/specs/${toMinName(specPath)}`
+  let todoInVm = `${vmWorkdir}/specs/${toMinName(todoPath)}`
   let workflowInVm = `${vmWorkdir}/smithers-workflow.tsx`
 
   if (projectDir) {
@@ -671,16 +673,6 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
       }
     }
 
-    if (pathWithin(projectDir, specPath)) {
-      specInVm = `${vmWorkdir}/${projectRelative?.(specPath)}`
-    } else {
-      specInVm = `${vmWorkdir}/specs/${basename(specPath)}`
-    }
-    if (pathWithin(projectDir, todoPath)) {
-      todoInVm = `${vmWorkdir}/${projectRelative?.(todoPath)}`
-    } else {
-      todoInVm = `${vmWorkdir}/specs/${basename(todoPath)}`
-    }
     if (pathWithin(projectDir, workflowPath)) {
       workflowInVm = `${vmWorkdir}/${projectRelative?.(workflowPath)}`
     }
@@ -688,28 +680,16 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
 
   if (process.platform === "darwin") {
     limactlShell(options.vm, ["sudo", "-u", "ralph", "mkdir", "-p", `${vmWorkdir}/specs`, reportDir])
-    if (!projectDir || !pathWithin(projectDir, specPath)) {
-      writeFileInVm(options.vm, specInVm, readText(specPath))
-    }
-    if (!projectDir || !pathWithin(projectDir, todoPath)) {
-      writeFileInVm(options.vm, todoInVm, readText(todoPath))
-    }
-    if (!projectDir || !pathWithin(projectDir, workflowPath)) {
-      writeFileInVm(options.vm, workflowInVm, readText(workflowPath))
-    }
   } else if (process.platform === "linux") {
     const ip = getVmIp(options.vm)
     if (!ip) throw new Error(`Could not determine IP for VM '${options.vm}'. Is it running?`)
     ssh(ip, ["mkdir", "-p", `${vmWorkdir}/specs`, reportDir])
-    if (!projectDir || !pathWithin(projectDir, specPath)) {
-      scp([specPath, `ralph@${ip}:${specInVm}`])
-    }
-    if (!projectDir || !pathWithin(projectDir, todoPath)) {
-      scp([todoPath, `ralph@${ip}:${todoInVm}`])
-    }
-    if (!projectDir || !pathWithin(projectDir, workflowPath)) {
-      scp([workflowPath, `ralph@${ip}:${workflowInVm}`])
-    }
+  }
+
+  writeFileRemote(options.vm, specInVm, specMinified)
+  writeFileRemote(options.vm, todoInVm, todoMinified)
+  if (!projectDir || !pathWithin(projectDir, workflowPath)) {
+    writeFileRemote(options.vm, workflowInVm, readText(workflowPath))
   }
   if (promptPath) writeFileRemote(options.vm, `${vmWorkdir}/PROMPT.md`, readText(promptPath))
   if (reviewPromptPath) writeFileRemote(options.vm, `${vmWorkdir}/REVIEW_PROMPT.md`, readText(reviewPromptPath))
@@ -800,6 +780,8 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
     `export SMITHERS_CWD="${projectRootInVm}"`,
     `export SMITHERS_BRANCH="${branch}"`,
     `export SMITHERS_RUN_ID="${runId}"`,
+    `export SMITHERS_DB_PATH="${smithersDbPath}"`,
+    "mkdir -p \"$(dirname \"$SMITHERS_DB_PATH\")\"",
     workflowSha ? `export SMITHERS_WORKFLOW_SHA="${workflowSha}"` : "",
     options.model ? `export SMITHERS_MODEL="${options.model}"` : "",
     options.reviewMax ? `export SMITHERS_REVIEW_MAX="${options.reviewMax}"` : "",
@@ -813,34 +795,39 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
     `CONTROL_DIR="${controlDir}"`,
     "PID_FILE=\"${CONTROL_DIR}/smithers.pid\"",
     "HEARTBEAT_FILE=\"${CONTROL_DIR}/heartbeat.json\"",
-    "DB_GLOB=\"${CONTROL_DIR}/.smithers/*.db\"",
+    "DB_PATH=\"${SMITHERS_DB_PATH:-${controlDir}/.smithers/${smithersDbName}}\"",
     "HEARTBEAT_SECONDS=30",
-    "export CONTROL_DIR PID_FILE HEARTBEAT_FILE DB_GLOB HEARTBEAT_SECONDS",
+    "export CONTROL_DIR PID_FILE HEARTBEAT_FILE DB_PATH HEARTBEAT_SECONDS",
     "if [ -f \"$PID_FILE\" ]; then",
     "  OLD_PID=$(cat \"$PID_FILE\" || true)",
     "  if [ -n \"$OLD_PID\" ] && ! kill -0 \"$OLD_PID\" 2>/dev/null; then",
     "    python3 - <<'PY'",
-    "import glob, os, sqlite3",
-    "dbs = glob.glob(os.path.expanduser(os.environ.get('DB_GLOB','')))",
-    "for db_path in dbs:",
-    "    try:",
-    "        conn = sqlite3.connect(db_path)",
-    "        conn.execute(\"UPDATE executions SET status='failed', end_reason='stale_process', completed_at=datetime('now') WHERE status='running'\")",
-    "        conn.commit()",
-    "        conn.close()",
-    "    except Exception:",
-    "        pass",
+    "import json, os, sqlite3, time",
+    "db_path = os.environ.get('DB_PATH','')",
+    "run_id = os.environ.get('SMITHERS_RUN_ID','')",
+    "if not db_path or not os.path.exists(db_path):",
+    "    raise SystemExit(0)",
+    "try:",
+    "    conn = sqlite3.connect(db_path)",
+    "    payload = json.dumps({'reason': 'stale_process'})",
+    "    now_ms = int(time.time() * 1000)",
+    "    if run_id:",
+    "        conn.execute(\"UPDATE _smithers_runs SET status='failed', finished_at_ms=?, error_json=? WHERE run_id=? AND status='running'\", (now_ms, payload, run_id))",
+    "    else:",
+    "        conn.execute(\"UPDATE _smithers_runs SET status='failed', finished_at_ms=?, error_json=? WHERE status='running'\", (now_ms, payload))",
+    "    conn.commit()",
+    "    conn.close()",
+    "except Exception:",
+    "    pass",
     "PY",
     "    rm -f \"$PID_FILE\"",
     "  fi",
     "fi",
-    "SMITHERS_RUN_CMD=\"smithers\"",
-    "if smithers --help 2>&1 | grep -q 'run <workflow'; then SMITHERS_RUN_CMD=\"smithers run\"; fi",
-    `eval $SMITHERS_RUN_CMD \"${workflowInVm}\" &`,
+    `smithers run "${workflowInVm}" --run-id "${runId}" --root "${projectRootInVm}" &`,
     "SMITHERS_PID=$!",
     "export SMITHERS_PID",
     "echo \"$SMITHERS_PID\" > \"$PID_FILE\"",
-    "(\nwhile kill -0 \"$SMITHERS_PID\" 2>/dev/null; do\n  python3 - <<'PY'\nimport glob, json, os, sqlite3\nfrom datetime import datetime, timezone\ncontrol = os.environ.get('CONTROL_DIR','')\nheartbeat = os.environ.get('HEARTBEAT_FILE','')\nrun_id = os.environ.get('SMITHERS_RUN_ID','')\nspec_path = os.environ.get('SMITHERS_SPEC_PATH','')\nphase = ''\ntry:\n    dbs = glob.glob(os.path.join(control, '.smithers', '*.db'))\n    if dbs:\n        conn = sqlite3.connect(dbs[0])\n        cur = conn.execute(\"SELECT value FROM state WHERE key='phase'\")\n        row = cur.fetchone()\n        if row and row[0]:\n            phase = str(row[0])\n        conn.close()\nexcept Exception:\n    pass\npayload = {\n  'v': 1,\n  'ts': datetime.now(timezone.utc).isoformat(),\n  'pid': int(os.environ.get('SMITHERS_PID','0') or 0),\n  'run_id': run_id,\n  'spec_path': spec_path,\n  'phase': phase\n}\ntry:\n    with open(heartbeat, 'w', encoding='utf-8') as f:\n        json.dump(payload, f)\nexcept Exception:\n    pass\nPY\n  sleep \"$HEARTBEAT_SECONDS\"\ndone\n) &",
+    "(\nwhile kill -0 \"$SMITHERS_PID\" 2>/dev/null; do\n  python3 - <<'PY'\nimport json, os, sqlite3\nfrom datetime import datetime, timezone\nheartbeat = os.environ.get('HEARTBEAT_FILE','')\nrun_id = os.environ.get('SMITHERS_RUN_ID','')\nspec_path = os.environ.get('SMITHERS_SPEC_PATH','')\ndb_path = os.environ.get('DB_PATH','')\nphase = ''\ntry:\n    if db_path and os.path.exists(db_path) and run_id:\n        conn = sqlite3.connect(db_path)\n        cur = conn.execute(\"SELECT status FROM _smithers_runs WHERE run_id=? ORDER BY started_at_ms DESC LIMIT 1\", (run_id,))\n        row = cur.fetchone()\n        if row and row[0]:\n            phase = str(row[0])\n        conn.close()\nexcept Exception:\n    pass\npayload = {\n  'v': 1,\n  'ts': datetime.now(timezone.utc).isoformat(),\n  'pid': int(os.environ.get('SMITHERS_PID','0') or 0),\n  'run_id': run_id,\n  'spec_path': spec_path,\n  'phase': phase\n}\ntry:\n    with open(heartbeat, 'w', encoding='utf-8') as f:\n        json.dump(payload, f)\nexcept Exception:\n    pass\nPY\n  sleep \"$HEARTBEAT_SECONDS\"\ndone\n) &",
     "wait \"$SMITHERS_PID\"",
     "EXIT_CODE=$?",
     "echo \"$EXIT_CODE\" > \"${CONTROL_DIR}/exit_code\"",
