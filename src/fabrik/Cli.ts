@@ -826,41 +826,135 @@ const specInterviewPrompt = `COMPOUND ENGINEERING: SPEC INTERVIEW
 
 > Each unit of engineering work should make subsequent units easier—not harder.
 
-80% PLANNING | 20% EXECUTION
+Traditional development accumulates technical debt. Every feature adds complexity.
+Compound engineering inverts this: 80% planning, 20% execution.
 
-Read: specs/INTERVIEW.md for complete compound engineering principles.
+The result: quality compounds, future changes become easier.
 
-QUICK REFERENCE - The 10 Questions:
+=== THE 10-QUESTION INTERVIEW ===
 
-PRE-INTERVIEW CHECKLIST:
-[ ] Clear problem statement
-[ ] Boundary understanding (in/out of scope)
-[ ] Success criteria defined
+PRE-INTERVIEW CHECKLIST (all must be checked):
+[ ] Clear problem statement - Can you state it in one sentence?
+[ ] Boundary understanding - What's explicitly in/out of scope?
+[ ] Success criteria - How will we know this is "done"?
 
-Q1: IDENTITY - Unique kebab-case ID (e.g., "billing-idempotency")
-Q2: TITLE - One sentence, active voice, NO implementation details
-Q3: STATUS - draft | ready | in-progress | review | done | superseded
-Q4: GOALS (3-7) - MUST accomplish, starts with verb, NO implementation
-Q5: NON-GOALS - Explicitly out of scope (prevents creep)
-Q6: API - Interfaces, signatures, branded types, error channels
-Q7: BEHAVIOR - Business rules, state transitions, edge cases
-Q8: OBSERVABILITY - Metrics, logs, alerts, health checks
-Q9: ACCEPTANCE - Testable criteria, performance thresholds
-Q10: ASSUMPTIONS - What could change (deps, platform, volume)
+Q1: IDENTITY
+"What is the unique identifier for this work?"
+- Format: kebab-case (e.g., "billing-idempotency", "auth-passwordless")
+- Must be unique across all specs
+- Used for: filenames, branch names, commit trailers
 
-CRITICAL PRINCIPLES:
-- Goals = WHAT (never HOW)
-- Non-goals = scope fence
-- Every requirement verifiable
-- Tier T1/T2/T3/T4 determines guarantee layers needed
+Q2: TITLE
+"What is the one-sentence description?"
+- Active voice: "Implement", "Add", "Fix", "Remove"
+- NO implementation details
+- NO technology names
+- Example: "Enable passwordless authentication" NOT "Use WebAuthn API"
 
-OUTPUT: specs/{id}.json (see full format in specs/INTERVIEW.md)
+Q3: STATUS
+Current state: draft | ready | in-progress | review | done | superseded
+Start with "draft". Move to "ready" only after interview complete.
 
-NEXT: Run 'fabrik todo generate' for todo creation guide`;
+Q4: GOALS (3-7 outcomes)
+"What MUST this accomplish?"
+- Each starts with verb: "Enable", "Provide", "Ensure", "Prevent"
+- Measurable when possible
+- NO implementation details
+- Focus on user/customer success
 
-const specInterviewExtendedRef = `\n\nFor the complete Compound Engineering interview process with:\n- 80/20 planning/execution ratio explanation\n- 4 principles (Plan, Review, Codify, Quality)\n- Detailed Q1-Q10 guidance with examples\n- DoD by tier (T1-T4)\n- Compound impact over time\n\nSee: specs/INTERVIEW.md`;
+Q5: NON-GOALS (Critical!)
+"What is explicitly OUT of scope?"
+- Prevents scope creep
+- Lists tempting but excluded features
+- Document what you'll do later, not now
 
-const specInterviewFullPrompt = specInterviewPrompt + specInterviewExtendedRef;
+Q6: API REQUIREMENTS
+"What interfaces and contracts must exist?"
+- Function signatures (inputs, outputs, errors)
+- Data structures (schemas, validation rules)
+- API endpoints (paths, methods, request/response)
+- Configuration options (env vars, feature flags)
+
+Q7: BEHAVIOR REQUIREMENTS
+"What must happen functionally?"
+- Business logic rules
+- State transitions and triggers
+- Error handling (what happens when things fail?)
+- Edge cases (empty inputs, max values, race conditions)
+
+Q8: OBSERVABILITY REQUIREMENTS
+"How do we know it's working?"
+- Metrics to emit (counters, histograms, gauges)
+- Logs to write (events, decisions, errors)
+- Alerts needed (conditions, severity, runbooks)
+- Health checks (endpoints, thresholds)
+
+Q9: ACCEPTANCE CRITERIA
+"How do we verify this is complete?"
+- Test scenarios with inputs/expected outputs
+- Manual QA steps for UI flows
+- Performance thresholds (latency, throughput)
+- Security checks (penetration tests, audit logs)
+
+Q10: ASSUMPTIONS
+"What are we assuming that could change?"
+- External dependencies (APIs, libraries, platforms)
+- Platform constraints (OS, hardware, browser versions)
+- Timing expectations (response times, SLAs)
+- Volume expectations (users, requests, data size)
+
+=== OUTPUT FORMAT ===
+
+Save to: specs/{id}.json
+
+{
+  "v": 1,
+  "id": "<Q1-kebab-case-id>",
+  "title": "<Q2-active-voice-title>",
+  "status": "<Q3-status>",
+  "version": "1.0.0",
+  "lastUpdated": "<ISO-date>",
+  "goals": ["<Q4-1>", "<Q4-2>", ...],
+  "nonGoals": ["<Q5-1>", "<Q5-2>", ...],
+  "req": {
+    "api": ["<Q6-1>", "<Q6-2>", ...],
+    "behavior": ["<Q7-1>", "<Q7-2>", ...],
+    "obs": ["<Q8-1>", "<Q8-2>", ...]
+  },
+  "accept": ["<Q9-1>", "<Q9-2>", ...],
+  "assume": ["<Q10-1>", "<Q10-2>", ...]
+}
+
+=== COMPOUND ENGINEERING PRINCIPLES ===
+
+1. PLAN THOROUGHLY BEFORE WRITING CODE
+   - Spec is the contract. Changing requirements mid-flight costs 10x.
+   - If you can't answer all 10 questions, you don't understand the problem.
+
+2. REVIEW TO CATCH ISSUES AND CAPTURE LEARNINGS
+   - Every finding is an opportunity to document patterns.
+   - 8 reviewers: Security, Quality, Simplicity, Coverage, Maintainability,
+     Tigerstyle, NASA-10-RULES, Correctness-Guarantees
+
+3. CODIFY KNOWLEDGE SO IT'S REUSABLE
+   - @property TSDoc names invariants explicitly
+   - Branded types prevent primitive obsession
+   - Todo templates capture task patterns
+
+4. KEEP QUALITY HIGH SO FUTURE CHANGES ARE EASY
+   - 6 Guarantee Layers: Types, Runtime, Persistence, Tests, Monitoring, Simulation
+   - Each layer makes the next change safer
+
+=== CRITICALITY TIERS ===
+
+T1 (Critical): Money, auth, signing, irreversible state → ALL 6 layers
+T2 (Important): User data, business logic, state machines → L1-L5
+T3 (Standard): Features, UI state, caching → L1-L4
+T4 (Low): Analytics, logging, metrics → L1, L4
+
+=== NEXT STEP ===
+
+After spec creation, run: fabrik todo generate`;
 
 const specInterviewCommand = Command.make(
   "interview",
@@ -869,130 +963,161 @@ const specInterviewCommand = Command.make(
     Effect.gen(function*() {
       yield* Console.log(specInterviewPrompt)
     })
-).pipe(Command.withDescription("Print structured prompt for conducting a spec interview"))
+).pipe(Command.withDescription("Print complete spec interview guide with 10 questions and compound engineering principles"))
 
-const todoGeneratePrompt = `TODO GENERATION FROM SPEC
-==========================
+// =============================================================================
+// TODO GENERATION COMMAND
+// =============================================================================
 
-You are converting a Spec into a structured Todo JSON file.
-This requires understanding the SPEC deeply and breaking it into verifiable tasks.
+const todoGeneratePrompt = `COMPOUND ENGINEERING: TODO GENERATION
+=====================================
 
-INPUT: Read specs/{id}.json
-OUTPUT: Write specs/{id}.todo.json
+> Plan thoroughly. Review rigorously. Codify knowledge. Compound quality.
 
-PROCESS:
+INPUT:  specs/{id}.json (from completed interview)
+OUTPUT: specs/{id}.todo.json
 
-STEP 1: Analyze the Spec
-- Identify the criticality tier:
-  * T1 (Critical/Money/Auth): Needs ALL 6 guarantee layers
-  * T2 (Important/State): Needs L1-L5
-  * T3-T4: Needs L1-L4
+=== STEP 1: DETERMINE CRITICALITY TIER ===
 
-- List all invariants that MUST hold (for @property tests)
-- Identify DB schema changes needed
-- Note external integrations
+| Tier | Examples | Layers Required |
+|------|----------|-----------------|
+| T1 (Critical) | Money, auth, signing, irreversible state | ALL 6 (L1-L5 + Simulation) |
+| T2 (Important) | User data, business logic, state machines | L1-L5 |
+| T3 (Standard) | Features, UI state, caching | L1-L4 |
+| T4 (Low) | Analytics, logging, metrics | L1, L4 |
 
-STEP 2: Determine TDD Mode
-- TDD = true: For logic-heavy code (state machines, calculations, transformations)
-- TDD = false: For glue/config/setup code
+=== STEP 2: DEFINE DEFINITION OF DONE ===
 
-STEP 3: Define Definition of Done (DoD)
-Include based on criticality tier:
+T1 (Critical) - ALL must be checked:
+- [ ] L1: Branded types implemented (no primitive types)
+- [ ] L2: Effect.assert for pre/postconditions present
+- [ ] L3: DB migration with UNIQUE/CHECK constraints
+- [ ] L4: @property TSDoc on every invariant test
+- [ ] L4: Property-based tests (conservation, idempotency)
+- [ ] L4: 90%+ line coverage, 85%+ branch coverage
+- [ ] L5: TODO comments for production alerts
+- [ ] L5: Metrics emission points identified
+- [ ] L6: Seed-based simulation plan documented
+- [ ] Review: All 8 reviewers approved
+- [ ] VCS: Code pushed to GitHub branch, CI passes
+- [ ] Human: Gate cleared with manual approval
 
-T1 (Critical) - ALL of:
-- L1: Branded types implemented (no primitive types)
-- L2: Effect.assert for pre/postconditions present
-- L3: DB migration with UNIQUE/CHECK constraints
-- L4: @property TSDoc on every invariant test
-- L4: Property-based tests (conservation, idempotency)
-- L5: TODO comments for production alerts
-- L5: Metrics emission points identified
-- L6: Seed-based simulation plan documented
-- Tests: 90%+ line coverage, 85%+ branch coverage
-- Code reviewed by 8 reviewers (including NASA-10-RULES)
-- Pushed to GitHub branch, CI passes
+T2 (Important) - ALL must be checked:
+- [ ] L1: Branded types for domain values
+- [ ] L2: Assertions for key invariants
+- [ ] L3: DB constraints for uniqueness/referential integrity
+- [ ] L4: Unit tests + property tests for core invariants
+- [ ] L4: 85%+ line coverage, 70%+ branch coverage
+- [ ] L5: Monitoring TODOs with alert conditions
+- [ ] Review: All applicable reviewers passed
+- [ ] VCS: Pushed to branch, CI passes
 
-T2 (Important) - ALL of:
-- L1: Branded types for domain values
-- L2: Assertions for key invariants
-- L3: DB constraints for uniqueness/referential integrity
-- L4: Unit tests + property tests for core invariants
-- L5: Monitoring TODOs
-- Tests: 85%+ line coverage, 70%+ branch coverage
-- Code reviewed, CI passes
+T3-T4 (Standard/Low) - ALL must be checked:
+- [ ] L1: Basic typing (strict mode, no any)
+- [ ] L2: Input validation at boundaries
+- [ ] L4: Unit tests for happy path and errors
+- [ ] L4: 80%+ line coverage
+- [ ] VCS: Pushed, CI passes
 
-T3-T4 (Standard) - ALL of:
-- L1: Basic typing (no any)
-- L2: Input validation
-- L4: Unit tests for happy path and errors
-- Tests: 80%+ line coverage
-- CI passes
+=== STEP 3: SET TDD MODE ===
 
-STEP 4: Create Tasks (3-15 per spec)
-Each task MUST be:
-- Independent (can be done in any order within constraints)
-- Verifiable (clear "verify" criteria)
-- Small (1-4 hours of focused work)
+TDD = true: Logic-heavy code (state machines, calculations, transformations)
+TDD = false: Glue/config/setup code
 
-Task structure:
+Even with TDD=false, you MUST have tests. They just don't need to be written first.
+
+=== STEP 4: CREATE TASKS (3-15 per spec, max 4 hours each) ===
+
+Task sizing rules:
+- Max 4 hours of focused work
+- Independent where possible (can parallelize)
+- Verifiable with clear "verify" criteria
+- Atomic (all-or-nothing completion)
+
+Task ordering: By dependency, not execution
+1. Foundation (types, schemas, constraints)
+2. Core logic (domain rules, invariants)
+3. Integration (APIs, external services)
+4. Observability (metrics, alerts, logging)
+
+=== TASK TEMPLATES BY LAYER ===
+
+L1 - TYPES (Foundation):
 {
   "id": "1",
-  "do": "What to implement (active voice, specific)",
-  "verify": "How to confirm it's correct (tests, assertions, constraints)"
+  "do": "Define branded types: {DomainId}, {AmountType}, {StatusType}",
+  "verify": "Types compile; Schema validates; No primitive string/number in domain code"
 }
 
-EXAMPLE TASKS BY TYPE:
-
-Type: Domain Model
-{
-  "id": "1",
-  "do": "Define branded types: UserId, SubscriptionId, PositiveAmount",
-  "verify": "Types compile, Schema validates, no primitive string/number usage"
-}
-
-Type: State Machine
+L1 - STATE MACHINE (Foundation):
 {
   "id": "2",
-  "do": "Implement phantom types for Subscription<Status> state machine",
-  "verify": "Invalid transitions cause compile errors; Match.exhaustive covers all states"
+  "do": "Implement phantom types for {Entity}<Status> state machine",
+  "verify": "Invalid transitions cause compile-time errors; Match.exhaustive covers all states"
 }
 
-Type: DB Schema
+L2 - RUNTIME (Core Logic):
 {
-  "id": "3", 
-  "do": "Create migration with UNIQUE constraint for idempotency keys",
-  "verify": "Tests confirm duplicate key rejection at DB level"
+  "id": "3",
+  "do": "Implement {operation} with Effect.assert pre/postconditions",
+  "verify": "@property tests: {INVARIANT_1}, {INVARIANT_2}; All assertions pass"
 }
 
-Type: Core Logic
+L2 - IDEMPOTENCY (Critical Operations):
 {
   "id": "4",
-  "do": "Implement chargeSubscription with Effect.assert pre/postconditions",
-  "verify": "@property tests: CANCELED_NEVER_CHARGED, NO_DOUBLE_CHARGE, PERIOD_ADVANCES_ONCE"
+  "do": "Implement idempotency key generation and storage",
+  "verify": "Duplicate requests with same key return same result; DB UNIQUE constraint prevents duplicates"
 }
 
-Type: API Layer
+L3 - PERSISTENCE (DB Schema):
 {
   "id": "5",
-  "do": "Add REST endpoint POST /subscriptions/:id/charge",
-  "verify": "Integration tests pass; input validation rejects malformed requests"
+  "do": "Create migration with constraints: UNIQUE({field}), CHECK({condition})",
+  "verify": "Tests confirm constraint rejection at DB level; Schema matches spec requirements"
 }
 
-Type: Observability
+L4 - TESTS (Property-Based):
 {
   "id": "6",
-  "do": "Add TODO comments for production alerts (double charge, failed renewal)",
-  "verify": "TODOs include alert conditions and severity levels"
+  "do": "Add @property TSDoc and property tests for {invariants}",
+  "verify": "Property tests pass for: conservation, idempotency, commutativity"
 }
 
-Type: Simulation (T1 only)
+L5 - MONITORING (Observability):
 {
   "id": "7",
-  "do": "Document seed-based simulation plan for billing invariants",
-  "verify": "Plan includes: seed generation, operations per seed, invariant checks, failure injection"
+  "do": "Add production TODOs for alerts: {condition} -> {severity}",
+  "verify": "TODOs include: alert condition, severity level, runbook link"
 }
 
-OUTPUT FORMAT:
+L6 - SIMULATION (T1 Only):
+{
+  "id": "8",
+  "do": "Document seed-based simulation plan for {invariants}",
+  "verify": "Plan includes: seed generation, operations_per_seed, invariant checks, failure injection"
+}
+
+=== @PROPERTY NAMING CONVENTIONS ===
+
+Name invariants explicitly with UPPER_SNAKE_CASE:
+
+Billing:
+- CANCELED_NEVER_CHARGED
+- NO_DOUBLE_CHARGE
+- PERIOD_ADVANCES_ONCE
+- MONEY_CONSERVED
+
+Auth:
+- TOKEN_EXPIRES_CORRECTLY
+- SESSION_ISOLATION_HOLDS
+- PERMISSION_CHECKS_ALWAYS_RUN
+
+State Machines:
+- INVALID_TRANSITIONS_BLOCKED
+- STATE_CONSISTENCY_MAINTAINED
+
+=== OUTPUT FORMAT ===
 
 {
   "v": 1,
@@ -1009,13 +1134,34 @@ OUTPUT FORMAT:
   ]
 }
 
-QUALITY CHECKLIST:
-- [ ] Every task has clear "verify" criteria
-- [ ] TDD flag matches actual test requirements
-- [ ] DoD includes all required layers for tier
-- [ ] Tasks are ordered by dependency (not necessarily execution order)
-- [ ] No task exceeds 4 hours of work
-- [ ] Critical paths have more verification tasks`;
+=== QUALITY CHECKLIST ===
+
+Before finalizing todo:
+- [ ] Tier appropriate for risk level
+- [ ] DoD complete for the tier
+- [ ] TDD flag matches actual requirements
+- [ ] Tasks sized (1-4 hours max)
+- [ ] Ordered by dependency
+- [ ] Every task has verifiable criteria
+- [ ] All required guarantee layers have tasks
+- [ ] @property names are explicit and UPPER_SNAKE_CASE
+- [ ] Critical paths have extra verification tasks
+
+=== COMPOUND ENGINEERING IMPACT ===
+
+Each todo is a teaching document:
+- New team member reads it -> understands architecture
+- Future spec references it -> reuses patterns
+- Reviewer checks against it -> consistent quality
+- Operations uses it -> knows what to monitor
+
+Each todo makes the next easier:
+- Task templates get refined
+- Common patterns emerge
+- Reviews get faster
+- Implementation gets safer
+
+The flywheel effect: Month 1 (slower) -> Month 6 (same speed, fewer bugs) -> Month 12 (2-3x velocity)`;
 
 const todoGenerateCommand = Command.make(
   "generate",
@@ -1024,7 +1170,7 @@ const todoGenerateCommand = Command.make(
     Effect.gen(function*() {
       yield* Console.log(todoGeneratePrompt)
     })
-).pipe(Command.withDescription("Print structured prompt for generating a todo.json from a spec"))
+).pipe(Command.withDescription("Print complete todo generation guide with compound engineering principles"))
 
 const specsCommand = Command.make("spec").pipe(
   Command.withSubcommands([validateCommand, minifyCommand, specsStatusCommand, specInterviewCommand])
