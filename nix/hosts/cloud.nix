@@ -61,17 +61,17 @@
       Type = "simple";
       User = "ralph";
       WorkingDirectory = "/var/lib/ralph/tasks/%i";
-      # RALPH_AGENT can be: claude, codex, or opencode
+      # RALPH_AGENT can be: pi, claude, or codex
       # Flags:
+      #   pi:     --print (non-interactive)
       #   claude: --dangerously-skip-permissions
       #   codex:  --dangerously-bypass-approvals-and-sandbox (or --yolo)
-      #   opencode: (uses config file, no CLI flag needed)
       ExecStart = "${pkgs.bash}/bin/bash -c '\
-        AGENT=\"\${RALPH_AGENT:-claude}\"; \
+        AGENT=\"\${RALPH_AGENT:-pi}\"; \
         case \"$AGENT\" in \
+          pi) exec pi --print \"$(cat PROMPT.md)\" ;; \
           claude) exec claude --dangerously-skip-permissions -p \"$(cat PROMPT.md)\" ;; \
           codex) exec codex --dangerously-bypass-approvals-and-sandbox -p \"$(cat PROMPT.md)\" ;; \
-          opencode) exec opencode -p \"$(cat PROMPT.md)\" ;; \
           *) echo \"Unknown agent: $AGENT\"; exit 1 ;; \
         esac'";
       Restart = "on-failure";

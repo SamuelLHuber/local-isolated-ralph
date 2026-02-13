@@ -5,10 +5,10 @@
 #
 # Expects specs-dir structure:
 #   specs/
-#     001-foo.min.json
-#     001-foo.todo.min.json
-#     002-bar.min.json
-#     002-bar.todo.min.json
+#     001-foo.json
+#     001-foo.todo.json
+#     002-bar.json
+#     002-bar.todo.json
 #
 # Example:
 #   ./scripts/smithers-fleet.sh specs ralph
@@ -19,13 +19,15 @@ SPECS_DIR="${1:?Usage: $0 <specs-dir> <vm-prefix>}"
 VM_PREFIX="${2:?Usage: $0 <specs-dir> <vm-prefix>}"
 SPECS_DIR=$(realpath "$SPECS_DIR")
 
+PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
+
 SPECS=()
-for spec in "$SPECS_DIR"/*.min.json; do
-  if [[ "$spec" == *.todo.min.json ]]; then
+for spec in "$SPECS_DIR"/*.json; do
+  if [[ "$spec" == *.todo.json ]] || [[ "$spec" == *.min.json ]]; then
     continue
   fi
-  base="${spec%.min.json}"
-  todo="${base}.todo.min.json"
+  base="${spec%.json}"
+  todo="${base}.todo.json"
   if [[ -f "$todo" ]]; then
     SPECS+=("$spec")
   fi
@@ -68,5 +70,5 @@ for i in "${!SPECS[@]}"; do
   VM="${VMS[$i]}"
   SPEC="${SPECS[$i]}"
   echo "Dispatching $(basename "$SPEC") -> $VM"
-  ./scripts/dispatch.sh --spec "$SPEC" "$VM" "$SPEC"
+  ./dist/fabrik run --spec "$SPEC" --vm "$VM" --project "$PROJECT_DIR"
 done

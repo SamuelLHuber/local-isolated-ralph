@@ -50,6 +50,15 @@ copy_credentials_ssh() {
     scp $ssh_opts -r ~/.config/gh "$user@$host:~/.config/" 2>/dev/null || echo "    Warning: Failed to copy ~/.config/gh"
   fi
 
+  if [[ -d ~/.pi/agent ]]; then
+    echo "    Copying ~/.pi/agent..."
+    ssh $ssh_opts "$user@$host" "mkdir -p ~/.pi && chmod 700 ~/.pi" 2>/dev/null || true
+    scp $ssh_opts -r ~/.pi/agent "$user@$host:~/.pi/" 2>/dev/null || echo "    Warning: Failed to copy ~/.pi/agent"
+  else
+    echo "    Note: ~/.pi/agent not found (pi will need login in VM)"
+    ssh $ssh_opts "$user@$host" "mkdir -p ~/.pi/agent && chmod 700 ~/.pi && chmod 700 ~/.pi/agent" 2>/dev/null || true
+  fi
+
   if [[ -f ~/.codex/auth.json ]]; then
     echo "    Copying ~/.codex/auth.json..."
     ssh $ssh_opts "$user@$host" "mkdir -p ~/.codex && chmod 700 ~/.codex" 2>/dev/null || true
@@ -115,6 +124,16 @@ copy_credentials_lima() {
     echo "    Copying ~/.config/gh..."
     limactl shell "$vm_name" sudo -u "$user" mkdir -p "/home/$user/.config" 2>/dev/null || true
     tar -C ~/.config -cf - gh 2>/dev/null | limactl shell "$vm_name" sudo -u "$user" tar -C "/home/$user/.config" -xf - 2>/dev/null || echo "    Warning: Failed to copy ~/.config/gh"
+  fi
+
+  if [[ -d ~/.pi/agent ]]; then
+    echo "    Copying ~/.pi/agent..."
+    limactl shell "$vm_name" sudo -u "$user" mkdir -p "/home/$user/.pi" 2>/dev/null || true
+    tar -C ~/.pi -cf - agent 2>/dev/null | limactl shell "$vm_name" sudo -u "$user" tar -C "/home/$user/.pi" -xf - 2>/dev/null || echo "    Warning: Failed to copy ~/.pi/agent"
+  else
+    echo "    Note: ~/.pi/agent not found (pi will need login in VM)"
+    limactl shell "$vm_name" sudo -u "$user" mkdir -p "/home/$user/.pi/agent" 2>/dev/null || true
+    limactl shell "$vm_name" sudo -u "$user" chmod 700 "/home/$user/.pi" "/home/$user/.pi/agent" 2>/dev/null || true
   fi
 
   if [[ -f ~/.codex/auth.json ]]; then

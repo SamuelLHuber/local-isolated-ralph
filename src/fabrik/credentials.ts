@@ -66,8 +66,10 @@ const copyCredentialsLima = (vm: string) => {
   run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "mkdir", "-p", `${userHome}/.config`])
   run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "chown", "-R", "ralph:users", `${userHome}/.config`])
   run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "-u", "ralph", "chmod", "700", `${userHome}/.config`])
-  run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "mkdir", "-p", `${userHome}/.local/share/opencode`])
-  run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "chown", "-R", "ralph:users", `${userHome}/.local`])
+  run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "mkdir", "-p", `${userHome}/.pi/agent`])
+  run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "chown", "-R", "ralph:users", `${userHome}/.pi`])
+  run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "-u", "ralph", "chmod", "700", `${userHome}/.pi`])
+  run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "-u", "ralph", "chmod", "700", `${userHome}/.pi/agent`])
 
   if (!copyTarLima(vm, home, ".claude", userHome)) {
     console.log("    Note: ~/.claude not found")
@@ -108,14 +110,12 @@ const copyCredentialsLima = (vm: string) => {
   copyTarLima(vm, join(home, ".config"), "gh", `${userHome}/.config`) ||
     console.log("    Warning: Failed to copy ~/.config/gh")
 
-  if (copyFileLima(vm, hostPath(".codex/auth.json"), `${userHome}/.codex/auth.json`)) {
-    run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "-u", "ralph", "chmod", "600", `${userHome}/.codex/auth.json`])
+  if (!copyTarLima(vm, join(home, ".pi"), "agent", `${userHome}/.pi`)) {
+    console.log("    Note: ~/.pi/agent not found (pi will need login in VM)")
   }
 
-  if (copyFileLima(vm, hostPath(".local/share/opencode/auth.json"), `${userHome}/.local/share/opencode/auth.json`)) {
-    run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "-u", "ralph", "chmod", "600", `${userHome}/.local/share/opencode/auth.json`])
-  } else {
-    console.log("    Note: ~/.local/share/opencode/auth.json not found")
+  if (copyFileLima(vm, hostPath(".codex/auth.json"), `${userHome}/.codex/auth.json`)) {
+    run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "-u", "ralph", "chmod", "600", `${userHome}/.codex/auth.json`])
   }
 
   if (copyFileLima(vm, hostPath(".config/ralph/ralph.env"), `${userHome}/.config/ralph/ralph.env`)) {
@@ -141,8 +141,10 @@ const copyCredentialsLinux = (vm: string) => {
   ssh(ip, ["sudo", "mkdir", "-p", "/home/ralph/.config"])
   ssh(ip, ["sudo", "chown", "-R", "ralph:users", "/home/ralph/.config"])
   ssh(ip, ["sudo", "-u", "ralph", "chmod", "700", "/home/ralph/.config"])
-  ssh(ip, ["sudo", "mkdir", "-p", "/home/ralph/.local/share/opencode"])
-  ssh(ip, ["sudo", "chown", "-R", "ralph:users", "/home/ralph/.local"])
+  ssh(ip, ["sudo", "mkdir", "-p", "/home/ralph/.pi/agent"])
+  ssh(ip, ["sudo", "chown", "-R", "ralph:users", "/home/ralph/.pi"])
+  ssh(ip, ["sudo", "-u", "ralph", "chmod", "700", "/home/ralph/.pi"])
+  ssh(ip, ["sudo", "-u", "ralph", "chmod", "700", "/home/ralph/.pi/agent"])
 
   if (existsSync(hostPath(".claude"))) {
     scp(["-r", hostPath(".claude"), `ralph@${ip}:~/`])
@@ -183,19 +185,21 @@ const copyCredentialsLinux = (vm: string) => {
     scp(["-r", hostPath(".config/gh"), `ralph@${ip}:~/.config/`])
   }
 
+  if (existsSync(hostPath(".pi/agent"))) {
+    ssh(ip, ["mkdir", "-p", "~/.pi"])
+    scp(["-r", hostPath(".pi/agent"), `ralph@${ip}:~/.pi/`])
+    ssh(ip, ["chmod", "700", "~/.pi", "~/.pi/agent"])
+  } else {
+    console.log("    Note: ~/.pi/agent not found (pi will need login in VM)")
+    ssh(ip, ["mkdir", "-p", "~/.pi/agent"])
+    ssh(ip, ["chmod", "700", "~/.pi", "~/.pi/agent"])
+  }
+
   if (existsSync(hostPath(".codex/auth.json"))) {
     ssh(ip, ["mkdir", "-p", "~/.codex"])
     ssh(ip, ["chmod", "700", "~/.codex"])
     scp([hostPath(".codex/auth.json"), `ralph@${ip}:~/.codex/`])
     ssh(ip, ["chmod", "600", "~/.codex/auth.json"])
-  }
-
-  if (existsSync(hostPath(".local/share/opencode/auth.json"))) {
-    ssh(ip, ["mkdir", "-p", "~/.local/share/opencode"])
-    scp([hostPath(".local/share/opencode/auth.json"), `ralph@${ip}:~/.local/share/opencode/`])
-    ssh(ip, ["chmod", "600", "~/.local/share/opencode/auth.json"])
-  } else {
-    console.log("    Note: ~/.local/share/opencode/auth.json not found")
   }
 
   if (existsSync(hostPath(".config/ralph/ralph.env"))) {

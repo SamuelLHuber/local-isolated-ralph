@@ -10,7 +10,7 @@ Three coding agent CLIs, all installed via **Bun**:
 |-------|---------|---------|-------------|
 | **Claude Code** | `@anthropic-ai/claude-code` | `claude` | Anthropic's CLI agent |
 | **Codex** | `@openai/codex` | `codex` | OpenAI's CLI agent |
-| **OpenCode** | `opencode-ai@latest` | `opencode` | Open-source agent |
+| **pi** | `@mariozechner/pi-coding-agent` | `pi` | pi coding agent |
 
 Plus browser automation (Chromium + Playwright) for MCP tools.
 
@@ -21,7 +21,7 @@ Plus browser automation (Chromium + Playwright) for MCP tools.
 │           modules/ralph.nix (single source of truth)            │
 │                                                                 │
 │  • Bun (package manager)                                        │
-│  • Claude Code, Codex, OpenCode (agent CLIs)                    │
+│  • Claude Code, Codex, pi (agent CLIs)                          │
 │  • Chromium + Playwright (browser automation)                   │
 │  • Autonomous mode configs (bypass prompts)                     │
 └─────────────────────────────────────────────────────────────────┘
@@ -131,7 +131,7 @@ limactl start ./result/nixos.qcow2 --name ralph-1 --vm-type vz
 limactl shell ralph-1
 
 # Verify agents are installed
-which claude codex opencode
+which claude codex pi
 ```
 
 ### Deploy to Kubernetes
@@ -193,7 +193,7 @@ The Ralph module (`modules/ralph.nix`) exposes these options:
 |--------|---------|-------------|
 | `services.ralph.agents.claude` | `true` | Install Claude Code |
 | `services.ralph.agents.codex` | `true` | Install OpenAI Codex |
-| `services.ralph.agents.opencode` | `true` | Install OpenCode AI |
+| `services.ralph.agents.pi` | `true` | Install pi coding agent |
 | `services.ralph.agents.smithers` | `true` | Install Smithers orchestrator |
 
 ### Browser Support
@@ -250,7 +250,7 @@ sandbox_mode = "danger-full-access"
 |-------|----------|-------|
 | **Claude Code** | `--dangerously-skip-permissions` | - |
 | **Codex** | `--dangerously-bypass-approvals-and-sandbox` | `--yolo` |
-| **OpenCode** | *(uses config file only)* | - |
+| **pi** | `--print` | Non-interactive output |
 
 ### How It Works
 
@@ -260,7 +260,7 @@ The Ralph systemd services automatically select the correct flag:
 # Set via environment variable
 RALPH_AGENT=claude   # uses --dangerously-skip-permissions
 RALPH_AGENT=codex    # uses --dangerously-bypass-approvals-and-sandbox
-RALPH_AGENT=opencode # no flag needed (config-based)
+RALPH_AGENT=pi       # uses --print
 ```
 
 ### Manual Invocation
@@ -277,8 +277,8 @@ codex --dangerously-bypass-approvals-and-sandbox -p "$(cat PROMPT.md)"
 # Codex (short alias)
 codex --yolo -p "$(cat PROMPT.md)"
 
-# OpenCode (config file handles permissions)
-opencode -p "$(cat PROMPT.md)"
+# pi (non-interactive)
+pi --print "$(cat PROMPT.md)"
 ```
 
 ## Customizing
@@ -314,7 +314,7 @@ services.ralph = {
   agents = {
     claude = true;
     codex = false;   # Don't install Codex
-    opencode = true;
+    pi = true;
   };
 };
 ```
@@ -373,7 +373,7 @@ colmena apply
 nix flake update
 
 # Update agent CLIs (inside a running VM)
-bun update -g @anthropic-ai/claude-code @openai/codex opencode-ai
+bun update -g @anthropic-ai/claude-code @openai/codex @mariozechner/pi-coding-agent
 
 # Rebuild images
 nix build .#qcow .#docker

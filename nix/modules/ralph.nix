@@ -1,10 +1,10 @@
 # Core Ralph module - defines what a Ralph agent environment needs
 # This is the single source of truth, used by VMs, containers, and bare metal
 #
-# Installs three coding agent CLIs via Bun:
+# Installs coding agent CLIs via Bun:
 #   - claude-code  (@anthropic-ai/claude-code)
 #   - codex        (@openai/codex)
-#   - opencode     (opencode-ai)
+#   - pi           (@mariozechner/pi-coding-agent)
 
 { config, lib, pkgs, ... }:
 
@@ -17,8 +17,8 @@ let
   agentPackages =
     (optional cfg.agents.claude "@anthropic-ai/claude-code@2.1.39") ++
     (optional cfg.agents.codex "@openai/codex@0.99.0") ++
-    (optional cfg.agents.opencode "opencode-ai@1.1.59") ++
-    (optional cfg.agents.smithers "smithers-orchestrator@0.6.0") ++
+    (optional cfg.agents.pi "@mariozechner/pi-coding-agent@0.52.10") ++
+    (optional cfg.agents.smithers "github:evmts/smithers#ea5ece3b156ebd32990ec9c528f9435c601a0403") ++
     (optional cfg.browser.mcp "@playwright/mcp@0.0.64");
 
   # Script to install agent CLIs via bun
@@ -37,7 +37,7 @@ let
     echo "Done! Installed agents:"
     ${optionalString cfg.agents.claude ''echo "  - claude (Claude Code)"''}
     ${optionalString cfg.agents.codex ''echo "  - codex (OpenAI Codex)"''}
-    ${optionalString cfg.agents.opencode ''echo "  - opencode (OpenCode AI)"''}
+    ${optionalString cfg.agents.pi ''echo "  - pi (pi coding agent)"''}
     ${optionalString cfg.agents.smithers ''echo "  - smithers (Smithers orchestrator)"''}
     ${optionalString cfg.browser.mcp ''echo "  - mcp (Playwright MCP for browser automation)"''}
   '';
@@ -77,16 +77,16 @@ in {
         description = "Install OpenAI Codex (@openai/codex)";
       };
 
-      opencode = mkOption {
+      pi = mkOption {
         type = types.bool;
         default = true;
-        description = "Install OpenCode AI (opencode-ai)";
+        description = "Install pi coding agent (@mariozechner/pi-coding-agent)";
       };
 
       smithers = mkOption {
         type = types.bool;
         default = true;
-        description = "Install Smithers orchestrator (smithers-orchestrator)";
+        description = "Install Smithers orchestrator (github:evmts/smithers)";
       };
     };
 
@@ -252,36 +252,6 @@ in {
       mode = "0644";
     };
 
-    # OpenCode config with autonomous permissions and MCP servers
-    # Note: Like Codex, OpenCode config is predefined (not copied from host).
-    # Uses ~/.config/opencode/opencode.json format.
-    environment.etc."ralph/opencode-config.json" = mkIf (cfg.autonomousMode || cfg.browser.mcp) {
-      text = builtins.toJSON ({
-        "$schema" = "https://opencode.ai/config.json";
-      } // optionalAttrs cfg.autonomousMode {
-        # Allow all tools without prompts for autonomous mode
-        permission = {
-          bash = "allow";
-          edit = "allow";
-          write = "allow";
-          read = "allow";
-          grep = "allow";
-          glob = "allow";
-          list = "allow";
-          webfetch = "allow";
-        };
-      } // optionalAttrs cfg.browser.mcp {
-        mcp = {
-          playwright = {
-            type = "local";
-            command = [ "npx" "-y" "@playwright/mcp@0.0.64" ];
-            enabled = true;
-          };
-        };
-      });
-      mode = "0644";
-    };
-
     # Symlink agent configs to user home
     system.activationScripts.ralphConfig = ''
       # Claude Code config directory
@@ -309,16 +279,6 @@ in {
       chown -R ${cfg.user}:users /home/${cfg.user}/.codex
       ''}
 
-      ${optionalString (cfg.autonomousMode || cfg.browser.mcp) ''
-      # OpenCode config - copy instead of symlink so opencode can modify it
-      mkdir -p /home/${cfg.user}/.config/opencode
-      if [ ! -f /home/${cfg.user}/.config/opencode/opencode.json ]; then
-        cp /etc/ralph/opencode-config.json /home/${cfg.user}/.config/opencode/opencode.json
-        chown ${cfg.user}:users /home/${cfg.user}/.config/opencode/opencode.json
-        chmod 644 /home/${cfg.user}/.config/opencode/opencode.json
-      fi
-      chown -R ${cfg.user}:users /home/${cfg.user}/.config/opencode
-      ''}
     '';
 
     # Install agent CLIs on first boot via systemd

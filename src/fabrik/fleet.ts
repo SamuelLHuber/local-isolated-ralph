@@ -13,12 +13,12 @@ const listSpecs = (specsDir: string) => {
   if (!existsSync(specsDir)) return []
   const entries = readdirSync(specsDir)
   const specFiles = entries
-    .filter((entry) => entry.endsWith(".min.json") && !entry.endsWith(".todo.min.json"))
+    .filter((entry) => entry.endsWith(".json") && !entry.endsWith(".todo.json") && !entry.endsWith(".min.json"))
     .map((entry) => resolve(specsDir, entry))
   return specFiles.filter((specPath) => {
-    const todoPath = specPath.replace(/\.min\.json$/i, ".todo.min.json")
+    const todoPath = specPath.replace(/\.json$/i, ".todo.json")
     if (!existsSync(todoPath)) {
-      console.log(`Warning: skipping ${basename(specPath)} (no matching .todo.min.json)`)
+      console.log(`Warning: skipping ${basename(specPath)} (no matching .todo.json)`)
       return false
     }
     return true
@@ -72,7 +72,7 @@ export const dispatchFleet = ({ specsDir, vmPrefix }: FleetOptions) => {
     dispatchRun({
       vm,
       spec,
-      todo: spec.replace(/\.min\.json$/i, ".todo.min.json"),
+      todo: spec.replace(/\.json$/i, ".todo.json"),
       project,
       includeGit: false,
       follow: false

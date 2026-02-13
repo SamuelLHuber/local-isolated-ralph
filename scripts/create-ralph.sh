@@ -256,6 +256,15 @@ copy_credentials() {
     scp $ssh_opts -r ~/.config/gh "$user@$host:~/.config/" 2>/dev/null || echo "    Warning: Failed to copy ~/.config/gh"
   fi
 
+  if [[ -d ~/.pi/agent ]]; then
+    echo "    Copying ~/.pi/agent..."
+    ssh $ssh_opts "$user@$host" "mkdir -p ~/.pi && chmod 700 ~/.pi" 2>/dev/null || true
+    scp $ssh_opts -r ~/.pi/agent "$user@$host:~/.pi/" 2>/dev/null || echo "    Warning: Failed to copy ~/.pi/agent"
+  else
+    echo "    Note: ~/.pi/agent not found (pi will need login in VM)"
+    ssh $ssh_opts "$user@$host" "mkdir -p ~/.pi/agent && chmod 700 ~/.pi && chmod 700 ~/.pi/agent" 2>/dev/null || true
+  fi
+
   if [[ -f ~/.codex/auth.json ]]; then
     echo "    Copying ~/.codex/auth.json..."
     ssh $ssh_opts "$user@$host" "mkdir -p ~/.codex && chmod 700 ~/.codex" 2>/dev/null || true
@@ -328,6 +337,16 @@ copy_credentials_lima() {
     echo "    Copying ~/.config/gh..."
     limactl shell "$vm_name" sudo -u "$user" mkdir -p "/home/$user/.config" 2>/dev/null || true
     tar -C ~/.config -cf - gh 2>/dev/null | limactl shell "$vm_name" sudo -u "$user" tar -C "/home/$user/.config" -xf - 2>/dev/null || echo "    Warning: Failed to copy ~/.config/gh"
+  fi
+
+  if [[ -d ~/.pi/agent ]]; then
+    echo "    Copying ~/.pi/agent..."
+    limactl shell "$vm_name" sudo -u "$user" mkdir -p "/home/$user/.pi" 2>/dev/null || true
+    tar -C ~/.pi -cf - agent 2>/dev/null | limactl shell "$vm_name" sudo -u "$user" tar -C "/home/$user/.pi" -xf - 2>/dev/null || echo "    Warning: Failed to copy ~/.pi/agent"
+  else
+    echo "    Note: ~/.pi/agent not found (pi will need login in VM)"
+    limactl shell "$vm_name" sudo -u "$user" mkdir -p "/home/$user/.pi/agent" 2>/dev/null || true
+    limactl shell "$vm_name" sudo -u "$user" chmod 700 "/home/$user/.pi" "/home/$user/.pi/agent" 2>/dev/null || true
   fi
 
   if [[ -f ~/.codex/auth.json ]]; then
@@ -476,8 +495,8 @@ EOF
 
   echo ""
   echo "Next steps:"
-  echo "  Dispatch a spec:    ./scripts/dispatch.sh --spec /path/to/spec.min.json $NAME /path/to/spec.min.json 20"
-  echo "  With repo sync:     ./scripts/dispatch.sh --include-git --spec /path/to/spec.min.json $NAME /path/to/spec.min.json /path/to/project 20"
+  echo "  Dispatch a spec:    ./dist/fabrik run --spec /path/to/spec.json --vm $NAME --project /path/to/project"
+  echo "  With repo sync:     ./dist/fabrik run --include-git --spec /path/to/spec.json --vm $NAME --project /path/to/project"
   echo ""
   echo "  Shell into VM:      limactl shell $NAME"
   echo "  Stop VM:            limactl stop $NAME"
@@ -543,7 +562,7 @@ else
     echo ""
     echo "Next steps:"
     echo "  1. SSH into VM:     ssh ralph@$VM_IP"
-    echo "  2. Dispatch spec:   ./scripts/dispatch.sh --spec /path/to/spec.min.json $NAME /path/to/spec.min.json 20"
+    echo "  2. Dispatch spec:   ./dist/fabrik run --spec /path/to/spec.json --vm $NAME --project /path/to/project"
     echo "  3. Stop VM:         virsh shutdown $NAME"
     echo "  4. Start VM:        virsh start $NAME"
     echo "  5. Delete VM:       virsh destroy $NAME; virsh undefine $NAME --remove-all-storage"

@@ -60,7 +60,7 @@ echo ""
 echo ">>> Agent CLIs"
 check_path_command "$HOME/.bun/bin/claude" "claude"
 check_path_command "$HOME/.bun/bin/codex" "codex"
-check_path_command "$HOME/.bun/bin/opencode" "opencode"
+check_path_command "$HOME/.bun/bin/pi" "pi"
 check_path_command "$HOME/.bun/bin/smithers" "smithers"
 
 if [[ ! -x "$HOME/.bun/bin/claude" ]]; then
@@ -72,7 +72,7 @@ if [[ ! -x "$HOME/.bun/bin/claude" ]]; then
     echo "Re-checking agent CLIs..."
     check_path_command "$HOME/.bun/bin/claude" "claude"
     check_path_command "$HOME/.bun/bin/codex" "codex"
-    check_path_command "$HOME/.bun/bin/opencode" "opencode"
+    check_path_command "$HOME/.bun/bin/pi" "pi"
   else
     echo "[ERROR] install-agent-clis command not found"
     ERRORS=$((ERRORS + 1))

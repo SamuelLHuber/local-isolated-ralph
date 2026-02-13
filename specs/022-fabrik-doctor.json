@@ -9,7 +9,7 @@
   "dependsOn": ["020-fabrik-v0-2-0"],
   "goals": [
     "Provide a single 'fabrik doctor' command that validates common local/VM setup issues.",
-    "Detect missing credentials and auth files for Codex, Claude, OpenCode, and GitHub.",
+    "Detect missing credentials and auth files for pi, Codex, Claude, and GitHub.",
     "Report actionable fixes with clear, copy-pastable commands.",
     "Work on macOS (Lima) and Linux (libvirt) with the same behavior."
   ],
@@ -26,7 +26,7 @@
     ],
     "checks": [
       "Codex auth presence: ~/.codex/auth.json (host + VM)",
-      "OpenCode auth presence: ~/.local/share/opencode/auth.json (host + VM)",
+      "pi auth presence: ~/.pi/agent/auth.json (host + VM)",
       "Claude auth presence: ~/.claude and/or ~/.claude.json (host + VM)",
       "GitHub token presence: ~/.config/ralph/ralph.env (host + VM)",
       "jj identity configured (name + email) with default fallback guidance",
@@ -41,13 +41,13 @@
     "env": ["GITHUB_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]
   },
   "accept": [
-    "Running 'fabrik doctor --vm valpha' reports missing OpenCode auth and explains how to sync it.",
+    "Running 'fabrik doctor --vm valpha' reports missing pi auth and explains how to sync it.",
     "Running 'fabrik doctor' on Linux and macOS produces the same checks.",
     "JSON output includes pass/fail and remediation text per check."
   ],
   "assume": [
     "VM user is 'ralph' and home is /home/ralph.",
-    "OpenCode auth uses ~/.local/share/opencode/auth.json.",
+    "pi auth uses ~/.pi/agent/auth.json.",
     "Codex auth uses ~/.codex/auth.json."
   ]
 }
