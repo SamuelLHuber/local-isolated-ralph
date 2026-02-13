@@ -143,10 +143,11 @@ See **[WORKFLOW.md](./WORKFLOW.md)** for detailed patterns.
 |----------|-------------|
 | [QUICKSTART.md](./QUICKSTART.md) | End-to-end tutorial |
 | [WORKFLOW.md](./WORKFLOW.md) | Workflow patterns, multi-agent coordination |
-| [SETUP-MACOS.md](./SETUP-MACOS.md) | macOS setup with Colima |
+| [OBSERVABILITY.md](./OBSERVABILITY.md) | Telemetry, logging, tracing, and analytics setup |
+| [SETUP-MACOS.md](./SETUP-MACOS.md) | macOS setup with Lima |
 | [SETUP-LINUX.md](./SETUP-LINUX.md) | Linux setup with libvirt/QEMU |
 | [CI-CD.md](./CI-CD.md) | CI/CD setup with self-hosted runners |
-| [dtechvision/laos](https://github.com/dtechvision/laos) | Shared observability stack |
+| [dtechvision/laos](https://github.com/dtechvision/laos) | Shared observability stack (external) |
 | [specs/templates/](./specs/templates/) | Spec/TODO JSON templates |
 
 ## Scripts

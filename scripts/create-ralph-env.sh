@@ -22,14 +22,21 @@ if [[ ! -f "$ENV_FILE" ]]; then
 # export GIT_COMMITTER_NAME="Your Name"
 # export GIT_COMMITTER_EMAIL="you@example.com"
 #
-# LAOS (shared observability stack on host)
+# LAOS (Local Analytics and Observability Stack) - runs on host
+# See: https://github.com/dtechvision/laos
+# Docs: OBSERVABILITY.md in this repo
+#
+# Required: Set LAOS_HOST based on your platform
 # macOS (Lima): export LAOS_HOST="host.lima.internal"
 # Linux (libvirt): export LAOS_HOST="192.168.122.1"
+#
+# Telemetry endpoints (auto-configure from LAOS_HOST):
 # export OTEL_EXPORTER_OTLP_ENDPOINT="http://${LAOS_HOST}:4317"
 # export LOKI_URL="http://${LAOS_HOST}:3100"
 # export SENTRY_DSN="http://<key>@${LAOS_HOST}:9000/1"
 # export POSTHOG_HOST="http://${LAOS_HOST}:8001"
 # export POSTHOG_API_KEY="phc_xxx"
+# export PYROSCOPE_SERVER_ADDRESS="http://${LAOS_HOST}:4040"
 EOF
   chmod 600 "$ENV_FILE"
   echo "Created $ENV_FILE"

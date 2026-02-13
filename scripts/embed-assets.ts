@@ -17,6 +17,7 @@ const assets: Asset[] = [
   { path: "prompts/reviewers/MAINTAINABILITY.md" },
   { path: "README.md" },
   { path: "WORKFLOW.md" },
+  { path: "OBSERVABILITY.md" },
   { path: "QUICKSTART.md" },
   { path: "specs/README.md" }
 ]
