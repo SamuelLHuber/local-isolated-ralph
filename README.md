@@ -80,12 +80,48 @@ for i in 1 2 3 4; do ./scripts/create-ralph.sh ralph-$i 2 4 20; done
 ./scripts/setup-base-vm.sh  # Run inside VM
 ```
 
-### 2. Prepare a task (Spec + TODO)
+### 2. Compound Engineering: Spec → Todo → Run
+
+**Principle**: 80% Planning, 20% Execution. Each cycle compounds quality.
+
+#### Step 1: Spec erstellen (40%)
 
 ```bash
-# Validate the JSON spec/todo (fabrik auto-minifies on dispatch)
-bun run scripts/validate-specs.ts
+# Interview-Guide ausgeben (self-contained, kein externes File nötig)
+./dist/fabrik spec interview | tee /tmp/spec-interview.txt
+
+# Mit Agent durchführen → Output: specs/feature.json
+cat /tmp/spec-interview.txt | claude-code
+
+# Validieren
+./dist/fabrik spec validate
 ```
+
+#### Step 2: Todo generieren (40%)
+
+```bash
+# Todo-Guide ausgeben
+./dist/fabrik todo generate | tee /tmp/todo-guide.txt
+
+# Mit Agent durchführen → Output: specs/feature.todo.json
+cat /tmp/todo-guide.txt | claude-code
+
+# Validieren
+./dist/fabrik spec validate
+```
+
+#### Step 3: Workflow starten (20%)
+
+```bash
+# Run dispatch
+./dist/fabrik run \
+  --spec specs/feature.json \
+  --todo specs/feature.todo.json \
+  --vm ralph-1 \
+  --project ~/projects/my-app     # Optional: Ziel-Repo
+```
+
+**Implicit Assumption**: Ohne `--project` arbeitet der Agent in einem frischen Clone innerhalb der VM.
 
 ### 3. Launch Smithers
 
@@ -128,27 +164,31 @@ Install a notifier:
 
 ## Workflows
 
-| Pattern | Use Case | Setup |
-|---------|----------|-------|
-| **Single Ralph** | One feature at a time | 1 VM, feature branch |
-| **Multi-Ralph Fleet** | Parallel features | N VMs, each on own branch |
-| **Multi-Ralph per VM** | Resource constrained | 2-4 Ralphs in 1 VM |
-| **Implementer + Reviewer** | Reduce human review | Agents review each other |
+| Pattern | Use Case | Setup | Time |
+|---------|----------|-------|------|
+| **Compound Engineering** | 80/20 Planning/Execution | `fabrik spec interview` → `fabrik todo generate` → `fabrik run` | 40/40/20% |
+| **Single Ralph** | One feature at a time | 1 VM, feature branch | Sequential |
+| **Multi-Ralph Fleet** | Parallel features | N VMs, fleet dispatch | Parallel |
+| **Multi-Ralph per VM** | Resource constrained | 2-4 Ralphs in 1 VM | Density |
+
+**Compound Effect**: Jeder Cycle macht den nächsten schneller (Zinseszins auf Qualität).
 
 See **[WORKFLOW.md](./WORKFLOW.md)** for detailed patterns.
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [QUICKSTART.md](./QUICKSTART.md) | End-to-end tutorial |
-| [WORKFLOW.md](./WORKFLOW.md) | Workflow patterns, multi-agent coordination |
-| [OBSERVABILITY.md](./OBSERVABILITY.md) | Telemetry, logging, tracing, and analytics setup |
-| [SETUP-MACOS.md](./SETUP-MACOS.md) | macOS setup with Lima |
-| [SETUP-LINUX.md](./SETUP-LINUX.md) | Linux setup with libvirt/QEMU |
-| [CI-CD.md](./CI-CD.md) | CI/CD setup with self-hosted runners |
-| [dtechvision/laos](https://github.com/dtechvision/laos) | Shared observability stack (external) |
-| [specs/templates/](./specs/templates/) | Spec/TODO JSON templates |
+| Document | Description | Self-Contained |
+|----------|-------------|----------------|
+| [QUICKSTART.md](./QUICKSTART.md) | End-to-end tutorial | ❌ (braucht Repo) |
+| [WORKFLOW.md](./WORKFLOW.md) | Workflow patterns, 80/20 Regel | ❌ (braucht Repo) |
+| [specs/INTERVIEW.md](./specs/INTERVIEW.md) | 10-Fragen Interview-Guide | ✅ (via `fabrik spec interview`) |
+| [prompts/COMPOUND-ENGINEERING.md](./prompts/COMPOUND-ENGINEERING.md) | Todo-Generierung | ✅ (via `fabrik todo generate`) |
+| [prompts/reviewers/](./prompts/reviewers/) | 8 Reviewer-Prompts | ⚠️ (wenn verfügbar) |
+| [OBSERVABILITY.md](./OBSERVABILITY.md) | Telemetry, LAOS Setup | ❌ (braucht Repo) |
+| [SETUP-MACOS.md](./SETUP-MACOS.md) | macOS setup mit Lima | ❌ (braucht Repo) |
+| [SETUP-LINUX.md](./SETUP-LINUX.md) | Linux setup mit libvirt | ❌ (braucht Repo) |
+| [CI-CD.md](./CI-CD.md) | CI/CD mit self-hosted runners | ❌ (braucht Repo) |
+| [dtechvision/laos](https://github.com/dtechvision/laos) | LAOS Observability (extern) | N/A |
 
 ## Scripts
 
@@ -188,39 +228,50 @@ to `~/.cache/fabrik/embedded/<hash>/` and runs from there.
 Common commands:
 
 ```bash
-# Validate specs in current repo
+# === COMPOUND ENGINEERING: PLANNING (80%) ===
+
+# Spec Interview: 10-Fragen Guide (self-contained)
+fabrik spec interview | tee /tmp/spec-prompt.txt
+cat /tmp/spec-prompt.txt | claude-code  # Output: specs/feature.json
+
+# Todo Generation: Task-Decomposition Guide (self-contained)  
+fabrik todo generate | tee /tmp/todo-prompt.txt
+cat /tmp/todo-prompt.txt | claude-code   # Output: specs/feature.todo.json
+
+# Validate JSON Schema
 fabrik spec validate
-# Optional: generate minified copies (gitignored)
-fabrik spec minify
+fabrik spec minify   # Optional: .min.json für Dispatch
 
-# Dispatch a run (from another repo)
-fabrik run --spec specs/feature.json --vm ralph-1
+# === COMPOUND ENGINEERING: EXECUTION (20%) ===
 
-# Run with custom prompts
-fabrik run --spec specs/feature.json --vm ralph-1 \
-  --prompt ./prompts/PROMPT-implementer.md \
-  --review-prompt ./prompts/PROMPT-reviewer.md
+# Single Run
+fabrik run --spec specs/feature.json --todo specs/feature.todo.json --vm ralph-1
 
-# Run with custom reviewer models + retry cap
-fabrik run --spec specs/feature.json --vm ralph-1 \
-  --review-max 3 \
-  --review-models ./prompts/reviewer-models.json
+# Mit Ziel-Repo außerhalb VM
+fabrik run ... --project ~/projects/my-app
 
-# Record human feedback
-fabrik feedback --vm ralph-1 --spec specs/feature.json --decision approve --notes "OK"
+# Mit Custom Reviewern
+fabrik run ... --review-max 3 --review-models ./reviewer-models.json
 
-# Fleet
+# Fleet (Multi-VM)
 fabrik fleet --specs-dir specs --vm-prefix ralph
 
-# Docs
-fabrik docs --topic workflow
+# === MONITORING & REVIEW ===
 
-# Runs
+# Desktop Notifications bei Blockierung
+fabrik runs watch --vm ralph-1
+
+# Run Details
 fabrik runs list --limit 10
-fabrik runs show --id 42  # includes failure_reason when available
-fabrik runs feedback --id 42 --decision approve --notes "OK"
+fabrik runs show --id 42  # Mit failure_reason wenn verfügbar
 
-# Observability stack (LAOS)
+# Human Gate (bindend, kein Timeout)
+fabrik feedback --vm ralph-1 --spec specs/feature.json \
+  --decision approve --notes "Implementation correct"
+
+# === INFRASTRUKTUR ===
+
+# LAOS (Observability)
 fabrik laos up
 fabrik laos status
 fabrik laos logs --follow
@@ -231,6 +282,8 @@ fabrik credentials sync --vm ralph-1
 
 # Dependency maintenance
 fabrik deps check
+fabrik deps update --bun
+fabrik deps update --smithers
 fabrik deps update --bun
 fabrik deps update --smithers
 fabrik deps update --bun --smithers
