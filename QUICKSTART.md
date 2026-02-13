@@ -239,6 +239,7 @@ The workflow will:
 - Or check Grafana at http://localhost:3010 for logs
 - Check iteration status: `cat ~/work/state/status`
 - Or use the CLI watcher: `fabrik runs watch --vm ralph-1`
+- Inspect failures with `fabrik runs show --id <run-id>` (prints `failure_reason` when available)
 
 **Human review gate:**
 

@@ -513,6 +513,10 @@ Inside each VM:
 ./dist/fabrik run --spec specs/auth.json --vm ralph-1
 ./dist/fabrik run --spec specs/dashboard.json --vm ralph-1
 
+# Runs
+./dist/fabrik runs list --limit 10
+./dist/fabrik runs show --id <run-id>  # includes failure_reason when available
+
 # List all Ralphs
 ./scripts/list-ralphs.sh
 

@@ -216,7 +216,7 @@ fabrik docs --topic workflow
 
 # Runs
 fabrik runs list --limit 10
-fabrik runs show --id 42
+fabrik runs show --id 42  # includes failure_reason when available
 fabrik runs feedback --id 42 --decision approve --notes "OK"
 
 # Observability stack (LAOS)
@@ -441,6 +441,10 @@ RALPH_AGENT=pi ./dist/fabrik run --include-git --spec specs/000-base.json --vm r
 - `MAX_ITERATIONS` - Max loops (default: 100, 0 = unlimited)
 
 Each dispatch creates a timestamped work directory (`/home/ralph/work/<vm>/<project>-<timestamp>/`), enabling parallel dispatches to the same VM.
+
+Failure reporting:
+- `fabrik runs show --id <run-id>` prints `failure_reason` when a run fails (derived from `reports/smithers.log`).
+- Stale or missing heartbeats are marked as `failure_reason: stale_process`.
 
 ## Resource Planning
 
