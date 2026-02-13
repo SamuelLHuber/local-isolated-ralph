@@ -10,7 +10,7 @@ Smithers replaces the bash loop inside each VM. The host still handles VM lifecy
 
 ## Prompt Control
 
-Provide per-run instructions with `PROMPT.md` and reviewer instructions with `REVIEW_PROMPT.md`:
+Provide per-run instructions with `PROMPT.md` and reviewer instructions with `REVIEW_PROMPT.md`. PI models are defined in `~/.pi/agent/models.json` (optional) and selected via `--model <name>` or `SMITHERS_MODEL`.
 
 ```bash
 ./dist/fabrik run --spec specs/feature.json --vm ralph-1 \
