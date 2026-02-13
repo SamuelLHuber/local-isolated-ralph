@@ -59,9 +59,9 @@ spec:
               cpu: "4"
 
           env:
-            # Which agent to use: claude, codex, or opencode
+            # Which agent to use: pi, claude, or codex
             - name: RALPH_AGENT
-              value: "claude"
+              value: "pi"
 
             - name: ANTHROPIC_API_KEY
               valueFrom:
@@ -97,7 +97,7 @@ spec:
           # Health checks
           livenessProbe:
             exec:
-              command: ["pgrep", "-f", "claude"]
+              command: ["pgrep", "-f", "pi|claude|codex"]
             initialDelaySeconds: 30
             periodSeconds: 60
 
@@ -190,11 +190,11 @@ spec:
             - -c
             - |
               cd /workspace
-              AGENT="${RALPH_AGENT:-claude}"
+              AGENT="${RALPH_AGENT:-pi}"
               case "$AGENT" in
+                pi) exec pi --print "$(cat PROMPT.md)" ;;
                 claude) exec claude --dangerously-skip-permissions -p "$(cat PROMPT.md)" ;;
                 codex) exec codex --dangerously-bypass-approvals-and-sandbox -p "$(cat PROMPT.md)" ;;
-                opencode) exec opencode -p "$(cat PROMPT.md)" ;;
                 *) echo "Unknown agent: $AGENT"; exit 1 ;;
               esac
       volumes:

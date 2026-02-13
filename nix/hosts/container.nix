@@ -52,17 +52,17 @@
       User = "ralph";
       WorkingDirectory = "/workspace";
       # The actual agent command - uses correct flag per agent
-      # RALPH_AGENT can be: claude, codex, or opencode
+      # RALPH_AGENT can be: pi, claude, or codex
       # Flags:
+      #   pi:     --print (non-interactive)
       #   claude: --dangerously-skip-permissions
       #   codex:  --dangerously-bypass-approvals-and-sandbox (or --yolo)
-      #   opencode: (uses config file, no CLI flag needed)
       ExecStart = "${pkgs.bash}/bin/bash -c '\
-        AGENT=\"\${RALPH_AGENT:-claude}\"; \
+        AGENT=\"\${RALPH_AGENT:-pi}\"; \
         case \"$AGENT\" in \
+          pi) exec pi --print \"$(cat $PROMPT_FILE)\" ;; \
           claude) exec claude --dangerously-skip-permissions -p \"$(cat $PROMPT_FILE)\" ;; \
           codex) exec codex --dangerously-bypass-approvals-and-sandbox -p \"$(cat $PROMPT_FILE)\" ;; \
-          opencode) exec opencode -p \"$(cat $PROMPT_FILE)\" ;; \
           *) echo \"Unknown agent: $AGENT\"; exit 1 ;; \
         esac'";
       Restart = "on-failure";

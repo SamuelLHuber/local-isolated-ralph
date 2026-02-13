@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 // Types inline - no external imports needed
-type Harness = "codex" | "claude" | "opencode";
+type Harness = "pi" | "codex" | "claude";
 type Provider = string;
 type Phase = "task" | "review" | "review-task";
 

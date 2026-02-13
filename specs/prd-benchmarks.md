@@ -22,7 +22,7 @@ Review prompts include:
 - Design
 - SALIGIA (nogos, e.g. using `goto` in C or `any` in TypeScript)
 
-We may run the same reviewer prompt multiple times to get aggregate scores and have it be a tribune of many judges piled together. These may also use different harnesses and models (Codex with different models, OpenCode, Claude Code, etc.).
+We may run the same reviewer prompt multiple times to get aggregate scores and have it be a tribune of many judges piled together. These may also use different harnesses and models (Codex with different models, pi, Claude Code, etc.).
 
 Reviewers can run in parallel and then be combined together to output the final report of the tribune. These final reports are the scores, and we may average across multiple runs (default 3).
 
@@ -56,7 +56,7 @@ Add a `benchmarks` section to a spec:
       "scenarios": [
         { "model": "codex-gpt4", "engine": "codex" },
         { "model": "claude-code", "engine": "claude" },
-        { "model": "opencode-mistral", "engine": "openai" }
+        { "model": "pi-mistral", "engine": "openai" }
       ],
       "iterations": 3,
       "timeoutSeconds": 300,
@@ -89,7 +89,7 @@ The benchmark object contains:
 
 ```bash
 fabrik benchmark \
-  --spec specs/your.min.json \
+  --spec specs/your.json \
   --vm ralph-1 \
   --output reports/benchmark.json \
   [--iterations 3] \
@@ -189,7 +189,7 @@ Prompts can be overridden per benchmark via the `reviewPrompts` array.
 
    ```bash
    fabrik benchmark \
-     --spec specs/your-benchmark.min.json \
+     --spec specs/your-benchmark.json \
      --vm ralph-1 \
      --output reports/your-benchmark.json
    ```

@@ -8,7 +8,7 @@
 #   2. Start VM: limactl start ./nix/lima/ralph.yaml --name ralph-1
 #
 # The NixOS image includes all tools pre-installed via Nix:
-#   - claude, codex, opencode (agent CLIs via bun)
+#   - pi, claude, codex (agent CLIs via bun)
 #   - git, jj (jujutsu), gh
 #   - tmux, ripgrep, fd, jq
 #   - node.js, bun
