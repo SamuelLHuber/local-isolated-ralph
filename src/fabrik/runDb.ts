@@ -14,13 +14,17 @@ export type RunRecord = {
   started_at: string
   status: string
   exit_code: number | null
+  failure_reason: string | null
   cli_version: string | null
   os: string | null
   binary_hash: string | null
   git_sha: string | null
 }
 
-export type RunInsert = Omit<RunRecord, "id" | "exit_code"> & { exit_code?: number | null }
+export type RunInsert = Omit<RunRecord, "id" | "exit_code" | "failure_reason"> & {
+  exit_code?: number | null
+  failure_reason?: string | null
+}
 
 const DEFAULT_DB = resolve(homedir(), ".cache", "ralph", "ralph.db")
 
@@ -44,6 +48,7 @@ const ensureRunsTable = (db: Database) => {
       started_at TEXT NOT NULL,
       status TEXT NOT NULL,
       exit_code INTEGER,
+      failure_reason TEXT,
       cli_version TEXT,
       os TEXT,
       binary_hash TEXT,
@@ -61,6 +66,7 @@ const ensureRunsTable = (db: Database) => {
 
   ensureColumn("repo_url", "TEXT")
   ensureColumn("repo_ref", "TEXT")
+  ensureColumn("failure_reason", "TEXT")
   ensureColumn("cli_version", "TEXT")
   ensureColumn("os", "TEXT")
   ensureColumn("binary_hash", "TEXT")
@@ -96,8 +102,8 @@ export const insertRun = (db: Database, record: RunInsert) => {
   const statement = db.query(`
     INSERT INTO runs (
       vm_name, workdir, spec_path, todo_path, repo_url, repo_ref,
-      started_at, status, exit_code, cli_version, os, binary_hash, git_sha
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      started_at, status, exit_code, failure_reason, cli_version, os, binary_hash, git_sha
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const info = statement.run(
     record.vm_name,
@@ -109,6 +115,7 @@ export const insertRun = (db: Database, record: RunInsert) => {
     record.started_at,
     record.status,
     record.exit_code ?? null,
+    record.failure_reason ?? null,
     record.cli_version ?? null,
     record.os ?? null,
     record.binary_hash ?? null,
@@ -117,32 +124,43 @@ export const insertRun = (db: Database, record: RunInsert) => {
   return Number(info.lastInsertRowid)
 }
 
-export const updateRunStatus = (db: Database, runId: number, status: string, exitCode: number | null) => {
-  db.query("UPDATE runs SET status = ?, exit_code = ? WHERE id = ?").run(status, exitCode, runId)
+export const updateRunStatus = (
+  db: Database,
+  runId: number,
+  status: string,
+  exitCode: number | null,
+  failureReason?: string | null
+) => {
+  db.query("UPDATE runs SET status = ?, exit_code = ?, failure_reason = COALESCE(?, failure_reason) WHERE id = ?").run(
+    status,
+    exitCode,
+    failureReason ?? null,
+    runId
+  )
 }
 
 export const findRunById = (db: Database, runId: number) => {
   return db.query<RunRecord>(
-    "SELECT id, vm_name, workdir, spec_path, todo_path, repo_url, repo_ref, started_at, status, exit_code, cli_version, os, binary_hash, git_sha FROM runs WHERE id = ?"
+    "SELECT id, vm_name, workdir, spec_path, todo_path, repo_url, repo_ref, started_at, status, exit_code, failure_reason, cli_version, os, binary_hash, git_sha FROM runs WHERE id = ?"
   ).get(runId) as RunRecord | undefined
 }
 
 export const listRuns = (db: Database, limit: number) =>
   db.query<RunRecord>(
-    "SELECT id, vm_name, workdir, spec_path, todo_path, repo_url, repo_ref, started_at, status, exit_code, cli_version, os, binary_hash, git_sha FROM runs ORDER BY started_at DESC LIMIT ?"
+    "SELECT id, vm_name, workdir, spec_path, todo_path, repo_url, repo_ref, started_at, status, exit_code, failure_reason, cli_version, os, binary_hash, git_sha FROM runs ORDER BY started_at DESC LIMIT ?"
   ).all(limit) as RunRecord[]
 
 export const findLatestRunForVm = (db: Database, vm: string) =>
   db
     .query<RunRecord>(
-      "SELECT id, vm_name, workdir, spec_path, todo_path, repo_url, repo_ref, started_at, status, exit_code, cli_version, os, binary_hash, git_sha FROM runs WHERE vm_name = ? ORDER BY started_at DESC LIMIT 1"
+      "SELECT id, vm_name, workdir, spec_path, todo_path, repo_url, repo_ref, started_at, status, exit_code, failure_reason, cli_version, os, binary_hash, git_sha FROM runs WHERE vm_name = ? ORDER BY started_at DESC LIMIT 1"
     )
     .get(vm) as RunRecord | undefined
 
 export const findLatestRunForVmSpec = (db: Database, vm: string, spec: string) =>
   db
     .query<RunRecord>(
-      "SELECT id, vm_name, workdir, spec_path, todo_path, repo_url, repo_ref, started_at, status, exit_code, cli_version, os, binary_hash, git_sha FROM runs WHERE vm_name = ? AND spec_path = ? ORDER BY started_at DESC LIMIT 1"
+      "SELECT id, vm_name, workdir, spec_path, todo_path, repo_url, repo_ref, started_at, status, exit_code, failure_reason, cli_version, os, binary_hash, git_sha FROM runs WHERE vm_name = ? AND spec_path = ? ORDER BY started_at DESC LIMIT 1"
     )
     .get(vm, spec) as RunRecord | undefined
 

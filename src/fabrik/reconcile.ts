@@ -7,6 +7,8 @@ type RunRecord = {
   vm: string
   workdir: string
   status: string
+  exitCode: number | null
+  failureReason: string | null
 }
 
 const sshOpts = ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"]
@@ -91,6 +93,31 @@ else:
   return Number.isFinite(parsed) ? parsed : null
 }
 
+const readFailureReason = (vm: string, reportDir: string) => {
+  const script = `
+import os
+path = os.path.join("${reportDir}", "smithers.log")
+if not os.path.exists(path):
+  print('')
+  raise SystemExit(0)
+try:
+  with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+    lines = f.read().splitlines()
+except Exception:
+  print('')
+  raise SystemExit(0)
+window = lines[-80:]
+errors = [line for line in window if '✗' in line or 'ERROR' in line or 'Error:' in line or 'Task failed' in line]
+if not errors:
+  errors = window[-20:]
+text = '\\n'.join(errors).strip()
+if len(text) > 2000:
+  text = text[-2000:]
+print(text)
+`
+  return runRemote(vm, `python3 - <<'PY'\n${script}\nPY`).trim()
+}
+
 const isHeartbeatStale = (ts: string, thresholdSeconds: number) => {
   if (!ts) return true
   const parsed = Date.parse(ts)
@@ -98,9 +125,15 @@ const isHeartbeatStale = (ts: string, thresholdSeconds: number) => {
   return Date.now() - parsed > thresholdSeconds * 1000
 }
 
-const updateRunStatus = (dbPath: string, runId: number, status: string, exitCode: number | null) => {
+const updateRunStatus = (
+  dbPath: string,
+  runId: number,
+  status: string,
+  exitCode: number | null,
+  failureReason?: string | null
+) => {
   const { db } = openRunDb(dbPath)
-  updateRunStatusDb(db, runId, status, exitCode)
+  updateRunStatusDb(db, runId, status, exitCode, failureReason ?? null)
   db.close()
 }
 
@@ -110,11 +143,11 @@ export type ReconcileOptions = {
   heartbeatSeconds?: number
 }
 
-export const reconcileRuns = ({ dbPath, limit = 50, heartbeatSeconds = 60 }: ReconcileOptions) => {
+export const reconcileRuns = ({ dbPath, limit = 50, heartbeatSeconds = 120 }: ReconcileOptions) => {
   const { db } = openRunDb(dbPath)
   const rows = db
-    .query<{ id: number; vm_name: string; workdir: string; status: string }>(
-      "SELECT id, vm_name, workdir, status FROM runs ORDER BY started_at DESC LIMIT ?"
+    .query<{ id: number; vm_name: string; workdir: string; status: string; exit_code: number | null; failure_reason: string | null }>(
+      "SELECT id, vm_name, workdir, status, exit_code, failure_reason FROM runs ORDER BY started_at DESC LIMIT ?"
     )
     .all(limit)
   db.close()
@@ -123,28 +156,43 @@ export const reconcileRuns = ({ dbPath, limit = 50, heartbeatSeconds = 60 }: Rec
     id: row.id,
     vm: row.vm_name,
     workdir: row.workdir,
-    status: row.status
+    status: row.status,
+    exitCode: row.exit_code,
+    failureReason: row.failure_reason
   }))
 
   for (const run of runs) {
-    if (run.status !== "running") continue
     const workBase = run.workdir.split("/").pop() ?? ""
     const controlDir = `/home/ralph/work/${run.vm}/.runs/${workBase}`
+    const reportDir = `${controlDir}/reports`
+
+    if (run.status !== "running") {
+      if (run.status === "failed" && !run.failureReason) {
+        const exitCode = run.exitCode ?? readExitCode(run.vm, controlDir)
+        const failureReason = readFailureReason(run.vm, reportDir)
+        if (exitCode !== null || failureReason) {
+          updateRunStatus(dbPath, run.id, "failed", exitCode ?? 1, failureReason || null)
+        }
+      }
+      continue
+    }
+
     const pid = readPid(run.vm, controlDir)
     const exitCode = readExitCode(run.vm, controlDir)
     if (exitCode !== null) {
-      updateRunStatus(dbPath, run.id, exitCode === 0 ? "done" : "failed", exitCode)
+      const failureReason = exitCode === 0 ? null : readFailureReason(run.vm, reportDir)
+      updateRunStatus(dbPath, run.id, exitCode === 0 ? "done" : "failed", exitCode, failureReason || null)
       continue
     }
     const heartbeatTs = readHeartbeat(run.vm, controlDir)
     const staleHeartbeat = isHeartbeatStale(heartbeatTs, heartbeatSeconds)
     if (!pid && staleHeartbeat) {
-      updateRunStatus(dbPath, run.id, "failed", 1)
+      updateRunStatus(dbPath, run.id, "failed", 1, "stale_process")
       continue
     }
     if (pid && !isProcessAlive(run.vm, pid)) {
       if (staleHeartbeat) {
-        updateRunStatus(dbPath, run.id, "failed", 1)
+        updateRunStatus(dbPath, run.id, "failed", 1, "stale_process")
       }
       continue
     }

@@ -137,6 +137,25 @@ const laosFollowOption = Options.boolean("follow").pipe(
   Options.withDescription("Follow logs")
 )
 
+const workflowHelp = [
+  "Workflow:",
+  "  1) fabrik spec validate",
+  "  2) fabrik run --spec specs/feature.json --vm ralph-1 --project /path/to/repo",
+  "  3) fabrik runs watch --vm ralph-1",
+  "  4) fabrik runs show --id <run-id>",
+  "  5) fabrik feedback --vm ralph-1 --spec specs/feature.json --decision approve --notes \"OK\""
+].join("\n")
+
+const printRunNextSteps = (runId: number, vm: string, specPath: string) => {
+  console.log("")
+  console.log("Next steps:")
+  console.log(`  fabrik runs show --id ${runId}`)
+  console.log(`  fabrik runs watch --vm ${vm}`)
+  console.log(
+    `  fabrik feedback --vm ${vm} --spec ${specPath} --decision approve --notes \"OK\"`
+  )
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const notifyDesktop = (title: string, message: string) => {
@@ -354,8 +373,8 @@ const runDispatchCommand = Command.make(
     }
     const resolvedTodo = todoValue ?? resolveTodoPath(specValue)
     if (process.platform === "darwin" || process.platform === "linux") {
-      return Effect.sync(() =>
-        dispatchRun({
+      return Effect.sync(() => {
+        const result = dispatchRun({
           vm: vmValue,
           spec: specValue,
           todo: resolvedTodo,
@@ -375,7 +394,9 @@ const runDispatchCommand = Command.make(
           reviewMax: reviewMaxValue ?? undefined,
           requireAgents: requireAgentsValue ? requireAgentsValue.split(",") : undefined
         })
-      )
+        printRunNextSteps(result.runId, vmValue, specValue)
+        return result
+      })
     }
     return Effect.fail(new Error(`Unsupported OS: ${process.platform}`))
   }
@@ -545,7 +566,7 @@ const runsReconcileCommand = Command.make(
     limit: Options.integer("limit").pipe(Options.optional, Options.withDescription("Max rows (default 50)")),
     heartbeatSeconds: Options.integer("heartbeat-seconds").pipe(
       Options.optional,
-      Options.withDescription("Seconds before heartbeat is stale (default: 60)")
+      Options.withDescription("Seconds before heartbeat is stale (default: 120)")
     )
   },
   ({ db, limit, heartbeatSeconds }) =>
@@ -559,7 +580,7 @@ const runsReconcileCommand = Command.make(
       reconcileRuns({
         dbPath,
         limit: unwrapOptional(limit) ?? 50,
-        heartbeatSeconds: unwrapOptional(heartbeatSeconds) ?? 60
+        heartbeatSeconds: unwrapOptional(heartbeatSeconds) ?? 120
       })
     }).pipe(Effect.withSpan("runs.reconcile"))
 ).pipe(Command.withDescription("Reconcile run status against VM processes"))
@@ -586,7 +607,7 @@ const runsCommand = Command.make("runs").pipe(
             return
           }
           try {
-            reconcileRuns({ dbPath, limit: limitValue ?? 10, heartbeatSeconds: 60 })
+            reconcileRuns({ dbPath, limit: limitValue ?? 10, heartbeatSeconds: 120 })
           } catch {
             // best-effort
           }
@@ -622,7 +643,7 @@ const runsCommand = Command.make("runs").pipe(
             return
           }
           try {
-            reconcileRuns({ dbPath, limit: 50, heartbeatSeconds: 60 })
+            reconcileRuns({ dbPath, limit: 50, heartbeatSeconds: 120 })
           } catch {
             // best-effort
           }
@@ -643,6 +664,9 @@ const runsCommand = Command.make("runs").pipe(
           console.log(`started_at: ${run.started_at}`)
           console.log(`status: ${run.status}`)
           console.log(`exit_code: ${run.exit_code ?? ""}`)
+          if (run.failure_reason) {
+            console.log(`failure_reason: ${run.failure_reason}`)
+          }
           console.log(`cli_version: ${run.cli_version ?? ""}`)
           console.log(`os: ${run.os ?? ""}`)
           console.log(`binary_hash: ${run.binary_hash ?? ""}`)
@@ -694,7 +718,7 @@ const runsCommand = Command.make("runs").pipe(
             return
           }
           try {
-            reconcileRuns({ dbPath, limit: 50, heartbeatSeconds: 60 })
+            reconcileRuns({ dbPath, limit: 50, heartbeatSeconds: 120 })
           } catch {
             // best-effort
           }
@@ -892,6 +916,7 @@ const orchestrateCommand = Command.make(
 ).pipe(Command.withDescription("Dispatch multiple runs and watch for completion"))
 
 const cli = Command.make("fabrik").pipe(
+  Command.withDescription(`Local Fabrik CLI\n\n${workflowHelp}`),
   Command.withSubcommands([
     runDispatchCommand,
     specsCommand,
