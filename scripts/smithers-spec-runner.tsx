@@ -68,7 +68,7 @@ const todoPath = resolve(env.SMITHERS_TODO_PATH ?? env.TODO_PATH ?? "specs/000-b
 const reportDir = resolve(env.SMITHERS_REPORT_DIR ?? env.REPORT_DIR ?? "reports")
 const promptPath = env.SMITHERS_PROMPT_PATH
 const reviewPromptPath = env.SMITHERS_REVIEW_PROMPT_PATH
-const reviewersDir = env.SMITHERS_REVIEWERS_DIR
+const reviewersDir = env.SMITHERS_REVIEWERS_DIR ?? "prompts/reviewers"
 const reviewModelsPath = env.SMITHERS_REVIEW_MODELS_FILE
 const execCwd = env.SMITHERS_CWD ? resolve(env.SMITHERS_CWD) : process.cwd()
 const agentKind = (env.SMITHERS_AGENT ?? env.RALPH_AGENT ?? "pi").toLowerCase()
@@ -178,12 +178,18 @@ type Reviewer = {
   prompt: string
 }
 
+// Fallback reviewers if prompts/reviewers/ directory doesn't exist or files missing.
+// These are loaded from prompts/reviewers/*.md when available.
+// File naming: prompts/reviewers/{REVIEWER-ID}.md (uppercase with hyphens)
 const defaultReviewers: Reviewer[] = [
   { id: "security", title: "Security", prompt: "" },
   { id: "code-quality", title: "Code Quality", prompt: "" },
   { id: "simplicity", title: "Minimal Simplicity", prompt: "" },
   { id: "test-coverage", title: "Test Coverage", prompt: "" },
-  { id: "maintainability", title: "Maintainability", prompt: "" }
+  { id: "maintainability", title: "Maintainability", prompt: "" },
+  { id: "tigerstyle", title: "Tigerstyle Audit", prompt: "" },
+  { id: "nasa-10-rules", title: "NASA Engineering Principles", prompt: "" },
+  { id: "correctness-guarantees", title: "Correctness & Invariant Validation", prompt: "" }
 ]
 
 const loadReviewers = (): Reviewer[] => {
@@ -369,12 +375,42 @@ export default smithers((ctx) => {
               "Verify:",
               task.verify,
               "",
-              "Version control:",
-              "- Use jj (not git).",
-              "- Create a new change before work: `jj new main`.",
-              "- Update the change description with `jj describe`.",
-              "- Push with `jj git push --change @` when ready.",
-              "- If push fails, set status=failed with details.",
+              "Engineering Standards (MUST comply - NASA/Tigerstyle):",
+              "",
+              "1. Classify Criticality Tier (T1-T4):",
+              "   - T1 (Critical/Money/Auth): Needs ALL 6 layers (L1-L5 + Simulation)",
+              "   - T2 (Important/State): Needs L1-L5, Simulation optional",
+              "   - T3-T4 (Standard/Low): Needs L1-L4",
+              "",
+              "2. Implement Guarantee Layers (Defense in Depth):",
+              "   * L1 (Types): Branded types for domain values (UserId, not string). Phantom types for state machines.",
+              "   * L2 (Runtime): Effect.assert for preconditions/postconditions. Fail fast on violations.",
+              "   * L3 (Persistence): DB constraints (UNIQUE for idempotency, CHECK for valid values).",
+              "   * L4 (Tests): @property TSDoc naming each invariant. Property-based tests for correctness.",
+              "   * L5 (Monitoring): TODOs/alerts for production (e.g., 'detected double X').",
+              "   * L6 (Simulation): T1 only - seed-based 24/7 simulation plan.",
+              "",
+              "3. Tigerstyle Principles:",
+              "   - No primitive obsession (branded types > raw primitives)",
+              "   - Immutable data structures (const > let, avoid mutation)",
+              "   - Explicit dependencies (Effect requirements, not hidden globals)",
+              "   - Fail fast with guard clauses (assert early, assert often)",
+              "",
+              "4. NASA Power of Ten:",
+              "   - Bounded loops (no infinite recursion, fixed upper limits)",
+              "   - Short functions (<60 lines, single responsibility)",
+              "   - Check all return values (Effect error channels handled)",
+              "   - Explicit assertions (pre/postconditions verified)",
+              "",
+              "Version control (GitHub-compatible):",
+              "- Use jj. GitHub requires named branches for PRs; never use anonymous changes.",
+              `- Create branch: \`jj new main && jj bookmark create ${spec.id}-${task.id}\`.`
+              "- Work normally (jj auto-snapshots files).",
+              `- Describe: \`jj describe -m "..."\` (required before push).`,
+              `- Push to GitHub: \`jj git push --branch ${spec.id}-${task.id}\`.`,
+              "  (This creates/updates the branch on origin for PR creation).",
+              "- If push fails (conflict), rebase: `jj rebase -d main` then force-push.",
+              "- If still failing, set status=failed with details.",
               "",
               "Output:",
               "Return a single JSON object that matches this schema:",
@@ -415,12 +451,42 @@ export default smithers((ctx) => {
                       "Verify:",
                       "Update code/tests and verify relevant tests pass.",
                       "",
-                      "Version control:",
-                      "- Use jj (not git).",
-                      "- Create a new change before work: `jj new main`.",
-                      "- Update the change description with `jj describe`.",
-                      "- Push with `jj git push --change @` when ready.",
-                      "- If push fails, set status=failed with details.",
+                      "Engineering Standards (MUST comply - NASA/Tigerstyle):",
+                      "",
+                      "1. Classify Criticality Tier (T1-T4):",
+                      "   - T1 (Critical/Money/Auth): Needs ALL 6 layers (L1-L5 + Simulation)",
+                      "   - T2 (Important/State): Needs L1-L5, Simulation optional",
+                      "   - T3-T4 (Standard/Low): Needs L1-L4",
+                      "",
+                      "2. Implement Guarantee Layers (Defense in Depth):",
+                      "   * L1 (Types): Branded types for domain values (UserId, not string). Phantom types for state machines.",
+                      "   * L2 (Runtime): Effect.assert for preconditions/postconditions. Fail fast on violations.",
+                      "   * L3 (Persistence): DB constraints (UNIQUE for idempotency, CHECK for valid values).",
+                      "   * L4 (Tests): @property TSDoc naming each invariant. Property-based tests for correctness.",
+                      "   * L5 (Monitoring): TODOs/alerts for production (e.g., 'detected double X').",
+                      "   * L6 (Simulation): T1 only - seed-based 24/7 simulation plan.",
+                      "",
+                      "3. Tigerstyle Principles:",
+                      "   - No primitive obsession (branded types > raw primitives)",
+                      "   - Immutable data structures (const > let, avoid mutation)",
+                      "   - Explicit dependencies (Effect requirements, not hidden globals)",
+                      "   - Fail fast with guard clauses (assert early, assert often)",
+                      "",
+                      "4. NASA Power of Ten:",
+                      "   - Bounded loops (no infinite recursion, fixed upper limits)",
+                      "   - Short functions (<60 lines, single responsibility)",
+                      "   - Check all return values (Effect error channels handled)",
+                      "   - Explicit assertions (pre/postconditions verified)",
+                      "",
+                      "Version control (GitHub-compatible):",
+                      "- Use jj. GitHub requires named branches for PRs; never use anonymous changes.",
+                      `- Create branch: \`jj new main && jj bookmark create ${spec.id}-${task.id}\`.`
+                      "- Work normally (jj auto-snapshots files).",
+                      `- Describe: \`jj describe -m "..."\` (required before push).`,
+                      `- Push to GitHub: \`jj git push --branch ${spec.id}-${task.id}\`.`,
+                      "  (This creates/updates the branch on origin for PR creation).",
+                      "- If push fails (conflict), rebase: `jj rebase -d main` then force-push.",
+                      "- If still failing, set status=failed with details.",
                       "",
                       "Output:",
                       "Return a single JSON object that matches this schema:",
