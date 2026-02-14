@@ -1,5 +1,6 @@
 #!/usr/bin/env smithers
 /** @jsxImportSource smithers-orchestrator */
+import * as React from "react"
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, appendFileSync } from "node:fs"
 import { dirname, join, resolve, basename } from "node:path"
 import { z } from "zod"
