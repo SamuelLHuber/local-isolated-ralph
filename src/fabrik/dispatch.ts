@@ -494,8 +494,6 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
   const vmWorkdir = `/home/ralph/work/${options.vm}/${workSubdir}`
   const controlDir = `/home/ralph/work/${options.vm}/.runs/${workSubdir}`
   const reportDir = options.reportDir ?? `${controlDir}/reports`
-  const smithersDbName = specId ? `${specId}.db` : `run-${runId}.db`
-  const smithersDbPath = `${controlDir}/.smithers/${smithersDbName}`
   const projectRelative = projectDir ? (path: string) => relative(projectDir, path) : undefined
   const projectRootInVm = repoUrl ? `${vmWorkdir}/repo` : vmWorkdir
   if (repoUrl && repoRef && !repoRef.length) {
@@ -525,6 +523,8 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
     git_sha: gitSha || null
   })
   db.close()
+  const smithersDbName = specId ? `${specId}.db` : `run-${runId}.db`
+  const smithersDbPath = `${controlDir}/.smithers/${smithersDbName}`
 
   console.log(`[${options.vm}] Dispatching spec: ${specPath}`)
   console.log(`[${options.vm}] Include .git: ${options.includeGit}`)
