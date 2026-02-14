@@ -27,6 +27,8 @@ type DispatchOptions = {
   branch?: string
   requireAgents?: string[]
   follow?: boolean
+  dynamic?: boolean
+  learn?: boolean
 }
 
 export type DispatchResult = {
@@ -51,7 +53,16 @@ const readText = (path?: string) => {
 
 const minifyJson = (path: string) => {
   if (!existsSync(path)) {
-    throw new Error(`Missing JSON file: ${path}`)
+    const isTodo = path.includes(".todo.") || path.endsWith(".todo.json")
+    const fileType = isTodo ? "todo" : "spec"
+    const createCmd = isTodo ? "fabrik todo generate" : "fabrik spec interview"
+    throw new Error(
+      `Missing JSON file: ${path}\n\n` +
+      `To create this ${fileType} file, run:\n` +
+      `  ${createCmd}\n\n` +
+      `This will output a complete guide for generating ${fileType} files. ` +
+      `Save the generated JSON to the path above and retry.`
+    )
   }
   try {
     const raw = readFileSync(path, "utf8")
@@ -148,6 +159,31 @@ const requireFile = (label: string, path: string, hint: string) => {
 const readSpecId = (path: string) => {
   try {
     const raw = readFileSync(path, "utf8")
+    
+    // Handle markdown specs
+    if (path.endsWith(".md") || path.endsWith(".mdx")) {
+      // Try frontmatter
+      const frontmatterMatch = raw.match(/^---\s*\n[\s\S]*?id:\s*(.+?)\s*\n[\s\S]*?---/m)
+      if (frontmatterMatch) return frontmatterMatch[1].trim()
+      
+      // Try filename
+      const base = basename(path).replace(/\.mdx?$/, "").replace(/^spec[-_]/, "")
+      if (base) return base
+      
+      // Try H1
+      const titleMatch = raw.match(/^#\s+(.+)$/m)
+      if (titleMatch) {
+        return titleMatch[1]
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-|-$/g, "")
+          .slice(0, 50)
+      }
+      
+      return ""
+    }
+    
+    // JSON specs
     const parsed = JSON.parse(raw) as { id?: string }
     return typeof parsed.id === "string" ? parsed.id : ""
   } catch {
@@ -428,8 +464,18 @@ const pathWithin = (root: string, target: string) => {
 
 export const dispatchRun = (options: DispatchOptions): DispatchResult => {
   const specPath = safeRealpath(options.spec)!
-  const todoPath = safeRealpath(options.todo)!
-  const workflowPath = safeRealpath(options.workflow ?? "scripts/smithers-spec-runner.tsx")!
+  const isMarkdownSpec = specPath.endsWith(".md") || specPath.endsWith(".mdx")
+  
+  // In dynamic mode, todo is optional (generated at runtime)
+  const todoPath = options.dynamic 
+    ? (options.todo ? safeRealpath(options.todo)! : `${specPath}.dynamic-todo.json`)
+    : safeRealpath(options.todo)!
+  
+  // Use dynamic workflow if --dynamic flag set
+  const defaultWorkflow = options.dynamic
+    ? "scripts/smithers-dynamic-runner.tsx"
+    : "scripts/smithers-spec-runner.tsx"
+  const workflowPath = safeRealpath(options.workflow ?? defaultWorkflow)!
   const workflowSha = sha256(workflowPath)
   const workflowNeeds = workflowAgentNeeds(workflowPath)
   const requiredAgents = options.requireAgents?.map((a) => a.trim().toLowerCase()).filter(Boolean) ?? []
@@ -500,8 +546,15 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
     throw new Error("repo ref provided but empty.")
   }
 
-  const specMinified = minifyJson(specPath)
-  const todoMinified = minifyJson(todoPath)
+  // Handle markdown specs in dynamic mode
+  const specMinified = isMarkdownSpec && options.dynamic
+    ? JSON.stringify({ _type: "markdown", path: specPath, content: readText(specPath) })
+    : minifyJson(specPath)
+  
+  // In dynamic mode, todo may not exist yet (generated at runtime)
+  const todoMinified = options.dynamic && !existsSync(todoPath)
+    ? JSON.stringify({ _type: "dynamic", generated: true, tickets: [] })
+    : minifyJson(todoPath)
 
   const osInfo = `${process.platform}-${process.arch}`
   const binaryHash = getBinaryHash()
@@ -793,6 +846,8 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
     workflowSha ? `export SMITHERS_WORKFLOW_SHA="${workflowSha}"` : "",
     options.model ? `export SMITHERS_MODEL="${options.model}"` : "",
     options.reviewMax ? `export SMITHERS_REVIEW_MAX="${options.reviewMax}"` : "",
+    options.learn ? `export SMITHERS_LEARN="1"` : "",
+    options.dynamic ? `export SMITHERS_DYNAMIC="1"` : "",
     `[ -f "${vmWorkdir}/PROMPT.md" ] && export SMITHERS_PROMPT_PATH="${vmWorkdir}/PROMPT.md" || true`,
     `[ -f "${vmWorkdir}/REVIEW_PROMPT.md" ] && export SMITHERS_REVIEW_PROMPT_PATH="${vmWorkdir}/REVIEW_PROMPT.md" || true`,
     `[ -f "${vmWorkdir}/reviewer-models.json" ] && export SMITHERS_REVIEW_MODELS_FILE="${vmWorkdir}/reviewer-models.json" || true`,
