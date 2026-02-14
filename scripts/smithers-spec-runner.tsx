@@ -275,8 +275,7 @@ const makeAgent = (model?: string) => {
   return new PiAgent({
     model: resolvedModel ?? undefined,
     provider: providerOverride ?? undefined,
-    mode: "text",
-    print: true,
+    mode: "json",
     cwd: execCwd
   })
 }
