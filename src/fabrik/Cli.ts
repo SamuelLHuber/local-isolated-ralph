@@ -56,6 +56,14 @@ const followOption = Options.boolean("follow").pipe(
   Options.withDefault(false),
   Options.withDescription("Stream Smithers output (otherwise detach)")
 )
+const dynamicOption = Options.boolean("dynamic").pipe(
+  Options.withDefault(false),
+  Options.withDescription("Use dynamic ticket discovery (no --todo required, adaptive compound engineering)")
+)
+const learnOption = Options.boolean("learn").pipe(
+  Options.withDefault(false),
+  Options.withDescription("Capture learnings for pattern optimization (requires --dynamic)")
+)
 const branchOption = Options.text("branch").pipe(
   Options.optional,
   Options.withDescription("Branch/bookmark name for this run (default: spec-<specId>)")
@@ -315,7 +323,9 @@ const runDispatchCommand = Command.make(
     reviewPrompt: reviewPromptOption,
     reviewMax: reviewMaxOption,
     reviewModels: reviewModelsOption,
-    requireAgents: requireAgentsOption
+    requireAgents: requireAgentsOption,
+    dynamic: dynamicOption,
+    learn: learnOption
   },
   ({
     ralphHome,
@@ -337,7 +347,9 @@ const runDispatchCommand = Command.make(
     reviewPrompt,
     reviewMax,
     reviewModels,
-    requireAgents
+    requireAgents,
+    dynamic,
+    learn
   }) => {
     const home = resolveRalphHome(ralphHome)
     const specValue = unwrapOptional(spec)
@@ -382,7 +394,9 @@ const runDispatchCommand = Command.make(
           repoUrl: repoValue ?? undefined,
           repoRef: repoRefValue ?? repoBranchValue ?? undefined,
           includeGit,
-          workflow: workflowValue ? resolve(workflowValue) : resolve(home, "scripts/smithers-spec-runner.tsx"),
+          workflow: workflowValue ? resolve(workflowValue) : dynamic 
+            ? resolve(home, "scripts/smithers-dynamic-runner.tsx")
+            : resolve(home, "scripts/smithers-spec-runner.tsx"),
           reportDir: reportDirValue,
           model: modelValue,
           iterations: iterationsValue ?? undefined,
@@ -392,7 +406,9 @@ const runDispatchCommand = Command.make(
           reviewPrompt: reviewPromptValue ? resolve(reviewPromptValue) : undefined,
           reviewModels: reviewModelsValue ? resolve(reviewModelsValue) : undefined,
           reviewMax: reviewMaxValue ?? undefined,
-          requireAgents: requireAgentsValue ? requireAgentsValue.split(",") : undefined
+          requireAgents: requireAgentsValue ? requireAgentsValue.split(",") : undefined,
+          dynamic,
+          learn
         })
         printRunNextSteps(result.runId, vmValue, specValue)
         return result
@@ -1180,6 +1196,66 @@ const todoCommand = Command.make("todo").pipe(
   Command.withSubcommands([todoGenerateCommand])
 )
 
+// =============================================================================
+// PATTERNS COMMAND (Learning Management)
+// =============================================================================
+
+const patternsShowCommand = Command.make(
+  "show",
+  { dir: Options.text("dir").pipe(Options.withDefault("."), Options.withDescription("Repo root directory")) },
+  ({ dir }) =>
+    Effect.sync(() => {
+      const { loadRepoPatterns } = require("./learning.js")
+      const patterns = loadRepoPatterns(resolve(dir))
+      
+      if (patterns.length === 0) {
+        console.log("No patterns learned yet. Run with --dynamic --learn to start capturing learnings.")
+        return
+      }
+      
+      console.log("=== Learned Patterns ===\n")
+      for (const p of patterns) {
+        console.log(`Task Type: ${p.taskType}`)
+        console.log(`  Tier: ${p.tier} (confidence: ${(p.confidence * 100).toFixed(0)}%, n=${p.sampleSize})`)
+        console.log(`  Reviews: [${p.reviews.join(", ") || "none"}]`)
+        console.log(`  Model: ${p.model}`)
+        console.log(`  Gates: [${p.gates.join(", ")}]`)
+        console.log(`  Avg Cost: $${p.avgCostUsd.toFixed(2)}, Avg Hours: ${p.avgHours.toFixed(1)}`)
+        console.log("")
+      }
+    })
+).pipe(Command.withDescription("Show learned patterns for this repo"))
+
+const patternsResetCommand = Command.make(
+  "reset",
+  { dir: Options.text("dir").pipe(Options.withDefault("."), Options.withDescription("Repo root directory")) },
+  ({ dir }) =>
+    Effect.sync(() => {
+      const { rmSync } = require("node:fs")
+      const patternsPath = join(resolve(dir), ".fabrik/patterns.json")
+      const learningsPath = join(resolve(dir), ".fabrik/learnings.jsonl")
+      
+      let removed = 0
+      if (existsSync(patternsPath)) {
+        rmSync(patternsPath)
+        removed++
+      }
+      if (existsSync(learningsPath)) {
+        rmSync(learningsPath)
+        removed++
+      }
+      
+      console.log(removed > 0 
+        ? `Reset ${removed} learning file(s). Patterns will be rebuilt from future runs.`
+        : "No learning files found.")
+    })
+).pipe(Command.withDescription("Reset all learned patterns (irreversible)"))
+
+const patternsCommand = Command.make("patterns").pipe(
+  Command.withDescription("Manage learned patterns for adaptive optimization"),
+  Command.withSubcommands([patternsShowCommand, patternsResetCommand])
+)
+
 const credentialsCommand = Command.make("credentials").pipe(
   Command.withSubcommands([
     Command.make(
@@ -1276,6 +1352,7 @@ const cli = Command.make("fabrik").pipe(
     runDispatchCommand,
     specsCommand,
     todoCommand,
+    patternsCommand,
     feedbackCommand,
     cleanupCommand,
     fleetCommand,

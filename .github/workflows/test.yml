@@ -1,0 +1,37 @@
+name: Test
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+      
+      - name: Install dependencies
+        run: bun install
+      
+      - name: Run workflow compile tests
+        run: bun test src/fabrik/__tests__/workflow-compile.test.ts
+      
+      - name: Run markdown spec tests
+        run: bun test src/fabrik/__tests__/markdown-spec.test.ts
+      
+      - name: Run learning system tests
+        run: bun test src/fabrik/__tests__/learning.test.ts
+      
+      - name: Verify build
+        run: bun run build
+      
+      - name: Test CLI help
+        run: ./dist/fabrik --help
