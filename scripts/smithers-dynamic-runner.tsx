@@ -300,7 +300,7 @@ ${spec.nonGoals.map(g => `- ${g}`).join("\n") || "(none specified)"}
 ${spec.requirements?.api?.map((r: string) => `- API: ${r}`).join("\n") || ""}
 ${spec.requirements?.behavior?.map((r: string) => `- Behavior: ${r}`).join("\n") || ""}
 
-${spec.raw ? `\n**Full Spec**:\n${spec.raw.slice(0, 2000)}...` : ""}
+${spec.raw ? "\\n**Full Spec**:\\n" + spec.raw.slice(0, 2000) + "..." : ""}
 
 ## Completed Tickets
 
