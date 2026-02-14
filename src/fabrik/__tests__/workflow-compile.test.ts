@@ -37,12 +37,9 @@ describe("Dynamic Runner Workflow", () => {
     source = readFileSync(path, "utf8")
   })
   
-  it("imports useCtx from smithers-orchestrator", () => {
-    expect(source).toInclude("useCtx")
-    expect(source).toMatch(/from\s+["']smithers-orchestrator["']/)
-    // Check it's in the import block, not just used
-    const importMatch = source.match(/import\s*\{[^}]*useCtx[^}]*\}/)
-    expect(importMatch).not.toBeNull()
+  it("imports React for JSX", () => {
+    expect(source).toInclude("React")
+    expect(source).toMatch(/import\s+\*?\s*as?\s+React\s+from\s+['"]react['"]/)
   })
   
   it("imports all required smithers components", () => {
@@ -87,20 +84,10 @@ describe("Dynamic Runner Workflow", () => {
     }
   })
   
-  it("has no template literal nesting issues", () => {
-    // Look for patterns like ${${ which indicate nesting
-    const dangerousPatterns = [
-      /\$\{[^}]*\$\{/,  // ${...${
-      /\`[^`]*\`[^`]*\`/,  // nested backticks
-    ]
-    
-    for (const pattern of dangerousPatterns) {
-      const matches = source.match(pattern)
-      if (matches) {
-        console.warn("Potential template literal issue at:", matches[0].slice(0, 50))
-      }
-      // Not a hard fail, just warning - some might be valid
-    }
+  it("uses standard React JSX pragma", () => {
+    // Check for jsxRuntime react (standard React JSX) rather than custom
+    expect(source).toMatch(/@jsxRuntime\s+react/)
+    expect(source).not.toMatch(/@jsxImportSource/)
   })
   
   it("references only defined variables in template literals", () => {

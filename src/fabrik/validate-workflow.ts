@@ -32,12 +32,12 @@ export function validateWorkflow(workflowPath: string): ValidationResult {
 
   const source = readFileSync(workflowPath, "utf8")
 
-  // 2. Check for required pragma
-  if (!source.includes("@jsxImportSource")) {
-    errors.push("Missing @jsxImportSource pragma (required for smithers JSX)")
+  // 2. Check for JSX pragma - either jsxRuntime react or jsxImportSource
+  if (!source.includes("@jsxRuntime") && !source.includes("@jsxImportSource")) {
+    errors.push("Missing JSX pragma (use @jsxRuntime react for standard React JSX)")
   }
 
-  if (!source.includes("@jsxImportSource smithers-orchestrator")) {
+  if (source.includes("@jsxImportSource") && !source.includes("@jsxImportSource smithers-orchestrator")) {
     warnings.push("JSX pragma doesn't point to smithers-orchestrator (may cause runtime issues)")
   }
 
