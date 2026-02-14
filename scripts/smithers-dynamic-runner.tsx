@@ -13,7 +13,6 @@ import {
   PiAgent,
   CodexAgent,
   ClaudeCodeAgent,
-  useCtx,
   type TaskContext
 } from "smithers-orchestrator"
 
@@ -261,9 +260,7 @@ function makeAgent(tier: "cheap" | "standard" | "powerful", model?: string) {
 // DISCOVER COMPONENT
 // =============================================================================
 
-function Discover() {
-  const ctx = useCtx()
-  
+function Discover({ ctx }: { ctx: TaskContext }) {
   // Get previously discovered tickets
   const prevDiscover = ctx.latest(tables.discover, "discover-output")
   const completedTickets = prevDiscover?.tickets?.filter((t: z.infer<typeof Ticket>) => 
@@ -671,9 +668,7 @@ Flag missing layers as changes_requested for T1/T2 code.`
   }
 ]
 
-function FinalReview({ tickets }: { tickets: z.infer<typeof Ticket>[] }) {
-  const ctx = useCtx()
-  
+function FinalReview({ tickets, ctx }: { tickets: z.infer<typeof Ticket>[]; ctx: TaskContext }) {
   // Collect all ticket reports for context
   const ticketReports = tickets.map(t => ({
     id: t.id,
@@ -820,8 +815,7 @@ This is a non-negotiable quality gate. No exceptions.
 // TICKET PIPELINE
 // =============================================================================
 
-function TicketPipeline({ ticket }: { ticket: z.infer<typeof Ticket> }) {
-  const ctx = useCtx()
+function TicketPipeline({ ticket, ctx }: { ticket: z.infer<typeof Ticket>; ctx: TaskContext }) {
   const report = ctx.latest(tables.report, `${ticket.id}:report`)
   const isComplete = report?.status === "done"
   
@@ -935,11 +929,11 @@ export default smithers((ctx) => {
     <Workflow name={`dynamic-${spec.id}`}>
       <Sequence>
         {/* Discovery Phase - runs when needed */}
-        <Branch if={needsDiscovery} then={<Discover />} />
+        <Branch if={needsDiscovery} then={<Discover ctx={ctx} />} />
         
         {/* Implementation Phase - all unfinished tickets */}
         {unfinishedTickets.map((ticket: z.infer<typeof Ticket>) => (
-          <TicketPipeline key={ticket.id} ticket={ticket} />
+          <TicketPipeline key={ticket.id} ticket={ticket} ctx={ctx} />
         ))}
         
         {/* Re-render trigger - if batch done but spec not complete */}
@@ -951,7 +945,7 @@ export default smithers((ctx) => {
         {/* Final Review Gate - ALWAYS runs before spec completion */}
         <Branch
           if={batchComplete && allTicketsDone}
-          then={<FinalReview tickets={tickets} />}
+          then={<FinalReview tickets={tickets} ctx={ctx} />}
         />
         
         {/* Completion marker - only after ALL 8 reviewers approve */}
