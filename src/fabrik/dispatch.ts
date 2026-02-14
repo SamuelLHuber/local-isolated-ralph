@@ -6,6 +6,7 @@ import { ensureAnyCommand, ensureCommands, hasCommand } from "./prereqs.js"
 import { insertRun, openRunDb } from "./runDb.js"
 import { getVmIp } from "./vm-utils.js"
 import { CLI_VERSION } from "./version.js"
+import { validateBeforeDispatch, printValidationResults } from "./validate-workflow.js"
 
 type DispatchOptions = {
   vm: string
@@ -463,6 +464,23 @@ const pathWithin = (root: string, target: string) => {
 }
 
 export const dispatchRun = (options: DispatchOptions): DispatchResult => {
+  // Validate workflow before dispatch
+  const workflowToValidate = options.workflow ?? (options.dynamic 
+    ? "scripts/smithers-dynamic-runner.tsx"
+    : "scripts/smithers-spec-runner.tsx")
+  const workflowPath = safeRealpath(workflowToValidate)!
+  
+  console.log(`[${options.vm}] Validating workflow...`)
+  const validation = validateBeforeDispatch(workflowPath, options.project)
+  printValidationResults(validation)
+  
+  if (!validation.valid) {
+    throw new Error(
+      `Workflow validation failed. Fix errors before dispatching:\n` +
+      validation.errors.map(e => `  - ${e}`).join("\n")
+    )
+  }
+  
   const specPath = safeRealpath(options.spec)!
   const isMarkdownSpec = specPath.endsWith(".md") || specPath.endsWith(".mdx")
   
@@ -475,7 +493,6 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
   const defaultWorkflow = options.dynamic
     ? "scripts/smithers-dynamic-runner.tsx"
     : "scripts/smithers-spec-runner.tsx"
-  const workflowPath = safeRealpath(options.workflow ?? defaultWorkflow)!
   const workflowSha = sha256(workflowPath)
   const workflowNeeds = workflowAgentNeeds(workflowPath)
   const requiredAgents = options.requireAgents?.map((a) => a.trim().toLowerCase()).filter(Boolean) ?? []
