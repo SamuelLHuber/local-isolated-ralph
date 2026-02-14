@@ -404,8 +404,9 @@ export default smithers((ctx) => {
               "",
               "Version control (GitHub-compatible):",
               "- Use jj. GitHub requires named branches for PRs; never use anonymous changes.",
-              `- Create branch: \`jj new main && jj bookmark create ${spec.id}-${task.id}\`.`
+              `- Create branch: \`jj new main && jj bookmark create ${spec.id}-${task.id}\`.`,
               "- Work normally (jj auto-snapshots files).",
+
               `- Describe: \`jj describe -m "..."\` (required before push).`,
               `- Push to GitHub: \`jj git push --branch ${spec.id}-${task.id}\`.`,
               "  (This creates/updates the branch on origin for PR creation).",
@@ -480,8 +481,9 @@ export default smithers((ctx) => {
                       "",
                       "Version control (GitHub-compatible):",
                       "- Use jj. GitHub requires named branches for PRs; never use anonymous changes.",
-                      `- Create branch: \`jj new main && jj bookmark create ${spec.id}-${task.id}\`.`
+                      `- Create branch: \`jj new main && jj bookmark create ${spec.id}-${task.id}\`.`,
                       "- Work normally (jj auto-snapshots files).",
+
                       `- Describe: \`jj describe -m "..."\` (required before push).`,
                       `- Push to GitHub: \`jj git push --branch ${spec.id}-${task.id}\`.`,
                       "  (This creates/updates the branch on origin for PR creation).",
