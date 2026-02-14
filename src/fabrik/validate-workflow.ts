@@ -79,7 +79,9 @@ export function validateWorkflow(workflowPath: string): ValidationResult {
   }
 
   // 6. Check for template literal issues
-  const nestedTemplates = source.match(/\`[^`]*\$\{[^}]*\`[^}]*\}\`/g)
+  // Look for actual nested templates: ${...`...`...} (template inside template expression)
+  // This is different from: `${...".join(`\n`)"}` which is just a string with backticks
+  const nestedTemplates = source.match(/\$\{[^}]*\`[^`]*\`[^}]*\}/g)
   if (nestedTemplates) {
     errors.push("Nested template literals detected (will cause syntax errors)")
   }
