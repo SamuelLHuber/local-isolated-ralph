@@ -78,13 +78,8 @@ export function validateWorkflow(workflowPath: string): ValidationResult {
     warnings.push(`Potentially unclosed JSX tags (open: ${openTags}, close: ${closeTags + selfClosing})`)
   }
 
-  // 6. Check for template literal issues
-  // Look for actual nested templates: ${...`...`...} (template inside template expression)
-  // This is different from: `${...".join(`\n`)"}` which is just a string with backticks
-  const nestedTemplates = source.match(/\$\{[^}]*\`[^`]*\`[^}]*\}/g)
-  if (nestedTemplates) {
-    errors.push("Nested template literals detected (will cause syntax errors)")
-  }
+  // 6. Template literal check removed - regex approach had too many false positives
+  // TypeScript compilation (step 7) will catch actual syntax errors
 
   // 7. Try TypeScript compilation check if tsc is available
   const tsCheck = checkTypeScript(workflowPath)
