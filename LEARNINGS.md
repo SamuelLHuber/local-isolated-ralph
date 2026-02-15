@@ -220,3 +220,36 @@ After human approval, extract to `LEARNINGS.md`:
 1. **Bundle workflows** — Pre-compile `.tsx` → `.js` for faster startup
 2. **Incremental sync** — `rsync --checksum` to skip unchanged files
 3. **Learning synthesis** — Auto-extract patterns from commit history
+
+## Sync Operations (Updated)
+
+### macOS Project Sync Solution
+
+**Problem**: `limactl copy` doesn't support `--exclude` and copies `node_modules`, filling VM disk (30GB limit).
+
+**Solution**: Use `tar` with `--exclude` patterns piped through `limactl shell`:
+
+```bash
+tar -C "${projectDir}" \
+  --exclude='node_modules' \
+  --exclude='.git' \
+  --exclude='.next' \
+  --exclude='.cache' \
+  -cf - . | \
+  limactl shell --workdir /home/ralph ${vm} bash -lc \
+    'mkdir -p "${workdir}" && tar -C "${workdir}" -xf -'
+```
+
+**Excluded**: `node_modules`, `.git`, `.next`, `.cache`, build artifacts, logs, `._*`, `.DS_Store`
+
+**Benefits**:
+- No disk fill (excludes from the start)
+- Single command (no post-copy cleanup needed)
+- Faster (no copying of unnecessary files)
+
+### Cross-Platform Sync Strategy
+
+| Platform | Method | Notes |
+|----------|--------|-------|
+| **macOS + Lima** | tar pipe via limactl shell | Excludes handled at source |
+| **Linux + libvirt** | rsync with SSH | Native --exclude support |
