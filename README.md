@@ -188,6 +188,7 @@ See **[WORKFLOW.md](./WORKFLOW.md)** for detailed patterns.
 | [SETUP-MACOS.md](./SETUP-MACOS.md) | macOS setup with Lima | ❌ (needs Repo) |
 | [SETUP-LINUX.md](./SETUP-LINUX.md) | Linux setup with libvirt | ❌ (needs Repo) |
 | [CI-CD.md](./CI-CD.md) | CI/CD with self-hosted runners | ❌ (needs Repo) |
+| [docs/DEBUGGING-RUNS.md](./docs/DEBUGGING-RUNS.md) | Debug and inspect runs deeply | ❌ (needs Repo) |
 | [dtechvision/laos](https://github.com/dtechvision/laos) | LAOS Observability (external) | N/A |
 
 ## Scripts
