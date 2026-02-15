@@ -1,136 +1,305 @@
-# Fabrik Learnings - Handoff Document
+# Fabrik Learnings
 
-**Date**: 2026-02-15  
-**Status**: ✅ Ready for production use  
-**Last Updated**: After sync fix and credential validation
-
----
-
-## Quick Start for New Developer
-
-### 1. Build the CLI
-
-```bash
-cd ~/git/local-isolated-ralph
-bun install
-bun run build
-
-# Verify
-./dist/fabrik --version
-```
-
-### 2. Validate Your Environment
-
-```bash
-# Check ralph.env is properly configured
-./dist/fabrik credentials validate
-
-# Create ralph.env template (if missing)
-./dist/fabrik credentials init
-
-# Test API keys work in VM
-./dist/fabrik credentials test --vm ralph-1
-
-# Sync to VM
-./dist/fabrik credentials sync --vm ralph-1
-```
-
-### 3. Run a Spec
-
-```bash
-# Default: sequential workflow (small-to-medium specs)
-./dist/fabrik run \
-  --spec specs/feature.md \
-  --project ~/my-app \
-  --vm ralph-1 \
-  --follow
-
-# Dynamic: runtime discovery (large specs >20 tasks)
-./dist/fabrik run \
-  --spec specs/big-prd.md \
-  --project ~/my-app \
-  --vm ralph-1 \
-  --dynamic \
-  --follow
-```
-
----
-
-## Architecture Overview
+## Quick Reference
 
 ### Workflow Selection
 
-| Mode | File | Use Case | Command |
-|------|------|----------|---------|
-| **Sequential** (default) | `workflow.tsx` | 5-20 tasks, clear milestones | `fabrik run --spec ...` |
-| **Dynamic** | `workflow-dynamic.tsx` | >20 tasks, evolving scope | `fabrik run --spec ... --dynamic` |
-| **Custom** | Your file | Special requirements | `fabrik run --workflow ./custom.tsx` |
+| Flag | Workflow | Use Case |
+|------|----------|----------|
+| *(none)* | `workflow.tsx` | Small-to-medium specs (5-20 tasks) with clear milestones |
+| `--dynamic` | `workflow-dynamic.tsx` | Large evolving projects (>20 tasks), discovers tickets at runtime |
+| `--workflow <path>` | Custom | Your own workflow implementation |
 
-### Three-Phase Execution (Both Workflows)
+### Usage
+
+```bash
+# Default: sequential implementation with full review loop
+fabrik run --spec specs/feature.md --project ~/my-app --vm ralph-1
+
+# Dynamic: runtime ticket discovery for large specs
+fabrik run --spec specs/big-prd.md --project ~/my-app --vm ralph-1 --dynamic
+
+# Custom workflow
+fabrik run --spec specs/feature.md --project ~/my-app --vm ralph-1 --workflow ./my-workflow.tsx
+```
+
+---
+
+## Credentials Setup (Critical)
+
+### The `export` Keyword is Required
+
+**Root cause of 401 errors**: Variables in `~/.config/ralph/ralph.env` must use `export` to be inherited by child processes.
+
+```bash
+# ❌ WRONG - variable set but not exported
+FIREWORKS_API_KEY=fw_xxx
+
+# ✅ CORRECT - variable exported to child processes
+export FIREWORKS_API_KEY=fw_xxx
+```
+
+**Why it matters**: PiAgent spawns `pi` CLI as a child process. Without `export`, the child doesn't inherit the variables → "No API key found" → 401 error.
+
+### Validate Your ralph.env
+
+```bash
+# Check if variables are exported
+./scripts/validate-ralph-env.sh
+
+# Manual check
+source ~/.config/ralph/ralph.env
+env | grep -E 'FIREWORKS|MOONSHOT|GITHUB'
+
+# Should show variables. If empty, they're not exported.
+```
+
+### Required Credentials
+
+| Variable | Purpose | Provider |
+|----------|---------|----------|
+| `export GITHUB_TOKEN=ghp_...` | Push to GitHub, create PRs | github.com/settings/tokens (scopes: `repo`, `workflow`) |
+| `export FIREWORKS_API_KEY=fw_...` | Pi agent with Kimi | fireworks.ai |
+| `export API_KEY_MOONSHOT=sk-...` | Pi agent alternative | platform.moonshot.cn |
+| `export ANTHROPIC_API_KEY=...` | Claude agent | console.anthropic.com |
+
+### Dispatch Sourcing
+
+The dispatch script sources `ralph.env` with `set -a` which auto-exports:
+
+```bash
+set -a; source ~/.config/ralph/ralph.env; set +a
+```
+
+This ensures all variables are exported regardless of whether they have the `export` keyword.
+
+---
+
+## Architecture
+
+### Three-Phase Flow (Both Workflows)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │ Phase 1: Task Implementation (Ralph Loop)                       │
-│ Implement → Validate → LightReview → ReviewFix (if issues)      │
+│ Implement → Validate → LightReview → ReviewFix (if issues)     │
 │     ↑__________________________________________↓                │
-│ Loop until CODE-QUALITY + MAINTAINABILITY approve                │
+│ Loop until CODE-QUALITY + MAINTAINABILITY approve              │
 └─────────────────────────────────────────────────────────────────┘
                               ↓ All tasks done
 ┌─────────────────────────────────────────────────────────────────┐
-│ Phase 2: Full Review (Ralph Loop)                                │
-│ All 8 Reviewers (parallel) → ReviewFix → Re-validate             │
-│     ↑______________________________________________↓             │
-│ Loop until ALL reviewers approve, then re-run to validate        │
+│ Phase 2: Full Review (Ralph Loop)                              │
+│ All 8 Reviewers (parallel) → ReviewFix → Re-validate           │
+│     ↑______________________________________________↓           │
+│ Loop until ALL reviewers approve, then re-run to validate       │
 └─────────────────────────────────────────────────────────────────┘
                               ↓ All reviews passed
 ┌─────────────────────────────────────────────────────────────────┐
-│ Phase 3: Human Gate (needsApproval)                              │
-│ Human reviews → Approve (DONE) or Reject → Feedback → Phase 1    │
+│ Phase 3: Human Gate (needsApproval)                            │
+│ Human reviews → Approve (DONE) or Reject → Feedback → Phase 1   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Reviewers
+### Difference: Default vs Dynamic
 
-**Per-Task (Light Review):**
+| Aspect | Default (`workflow.tsx`) | Dynamic (`workflow-dynamic.tsx`) |
+|--------|--------------------------|--------------------------------|
+| **Task discovery** | Upfront (Discover component) | Runtime batch discovery (3-5 at a time) |
+| **Task count** | Best for 5-20 tasks | Best for 20+ tasks |
+| **Scope evolution** | Fixed upfront | Adapts as codebase evolves |
+| **Memory** | Keeps all tasks in context | Bounded (3-5 active at once) |
+
+---
+
+## Smithers Integration
+
+### Critical Setup
+
+1. **Import from local `smithers.ts`** — Never from `smithers-orchestrator` directly
+2. **Import `Task`** — Workflow fails silently without it
+3. **Return agent instances** — `new PiAgent()`, not config objects
+4. **Pi uses env vars** — `API_KEY_MOONSHOT`, `FIREWORKS_API_KEY`, etc.
+5. **JSON mode** — `mode: "json"` forces structured output
+
+### Agent Factory Pattern
+
+```typescript
+function makeAgent(tier: "cheap" | "standard" | "powerful") {
+  const kind = (process.env.RALPH_AGENT || "pi").toLowerCase();
+  const cwd = process.env.SMITHERS_CWD || process.cwd();
+  
+  // Pi with Fireworks (preferred) or Moonshot
+  const fw = process.env.FIREWORKS_API_KEY;
+  const ms = process.env.API_KEY_MOONSHOT;
+  return new PiAgent({
+    cwd,
+    model: fw ? "fireworks/kimi-k2p5" : "kimi-k2.5",
+    provider: fw ? "fireworks" : "moonshot",
+    mode: "json",
+    noSession: true,
+  });
+}
+```
+
+### Model Mapping
+
+| Tier | Fireworks | Moonshot |
+|------|-----------|----------|
+| cheap | `fireworks/kimi-k2p5` | `kimi-k2.5` |
+| standard | `fireworks/kimi-k2p5` | `kimi-k2.5` |
+| powerful | `fireworks/kimi-k2p5` | `kimi-k2.5` |
+
+---
+
+## VCS Integration (JJ)
+
+### Every Commit Must Include
+
+```
+type(scope): brief description
+
+Spec: <spec-id>
+Task: <task-id>
+Reasoning: <why this change was made>
+Review-Feedback: <what issue was being addressed, if fix>
+```
+
+### Workflow
+
+1. **JJ colocated with Git** — `.git` and `.jj` coexist
+2. **Bookmark per spec** — `jj bookmark create <spec-id>`
+3. **GitHub push** — `jj git push` to colocated remote
+4. **Commit on every implement/fix** — Reasoning traces in history
+
+---
+
+## Reviewers
+
+### Per-Task (Light Review)
 - `CODE-QUALITY.md`
 - `MAINTAINABILITY.md`
 
-**Full Review (All 8 in Parallel):**
+### Full Review (All 8 in Parallel)
 - `CODE-QUALITY.md`
 - `MAINTAINABILITY.md`
 - `SECURITY.md`
 - `SIMPLICITY.md`
 - `TIGERSTYLE.md`
+- `CORRECTNESS-GUARANTEES.md`
+- `TEST-COVERAGE.md`
+- `production-monitoring.md`
 
 ---
 
-## VM Management
+## Sync Operations
 
-### List VMs
+### What Changed
+
+| Before | After |
+|--------|-------|
+| `limactl copy --exclude` (broken) | `rsync` with SSH control socket |
+| `tar` pipes | `rsync -avz --delete` |
+
+### Platform-Specific
+
+**macOS + Lima:**
 ```bash
-./dist/fabrik vm list
+rsync -avz --delete -e "ssh -S ~/.lima/<vm>/ssh.sock" src/ ralph@127.0.0.1:dest/
 ```
 
-### Cleanup VMs
+**Linux + libvirt:**
 ```bash
-# Delete specific VMs
-./dist/fabrik vm cleanup --vms ralph-1,ralph-2 --force
-
-# Delete all Ralph VMs
-./dist/fabrik vm cleanup --all --force
+rsync -avz --delete -e "ssh ..." src/ ralph@$IP:dest/
 ```
 
-### Credential Management
-```bash
-# Create ralph.env template
-./dist/fabrik credentials init
+---
 
-# Validate ralph.env format
-./dist/fabrik credentials validate
+## Compound Engineering
 
-# Test API keys in VM
-./dist/fabrik credentials test --vm ralph-1
+### 80/20 Rule
 
-# Sync credentials to VM
-./dist/fabrik credentials sync --vm ralph-1
+- **80% Planning**: Spec interview → Todo generation → Validation
+- **20% Execution**: Ralph loops handle implementation
+- **Compound**: Each completed spec makes next faster (reusable patterns)
+
+### Learnings Capture
+
+After human approval, extract to `LEARNINGS.md`:
+
+```markdown
+## <spec-id> Learnings
+
+**What We Learned:**
+
+1. **<Category>**: <Pattern discovered>
+   - Found by: <reviewer/implementer>
+   - Justification: <from commit/report>
+   - Codified: <how to reuse>
 ```
+
+**Sources:**
+- VCS commit messages (reasoning traces)
+- Reviewer feedback (what was caught)
+- Iteration counts (convergence patterns)
+- Human feedback (judgment)
+
+---
+
+## Common Issues
+
+### `desc.agent.generate is not a function`
+- **Cause**: `makeAgent()` returns config object instead of `new PiAgent()`
+- **Fix**: Return agent class instance
+
+### `No API key found`
+- **Cause**: Pi doesn't use `apiKey` option, reads from env
+- **Fix**: Set `API_KEY_MOONSHOT` or `FIREWORKS_API_KEY` in `~/.config/ralph/ralph.env`
+
+### Workflow exits immediately (exit code 0)
+- **Cause**: `Task` not imported from `./smithers`
+- **Fix**: `import { Task } from "./smithers"`
+
+### Model not found
+- **Cause**: Wrong format (e.g., `kimi-k2-5` vs `kimi-k2.5`)
+- **Fix**: Use provider-specific format
+
+---
+
+## Future Improvements
+
+1. **Bundle workflows** — Pre-compile `.tsx` → `.js` for faster startup
+2. **Incremental sync** — `rsync --checksum` to skip unchanged files
+3. **Learning synthesis** — Auto-extract patterns from commit history
+
+## Sync Operations (Updated)
+
+### macOS Project Sync Solution
+
+**Problem**: `limactl copy` doesn't support `--exclude` and copies `node_modules`, filling VM disk (30GB limit).
+
+**Solution**: Use `tar` with `--exclude` patterns piped through `limactl shell`:
+
+```bash
+tar -C "${projectDir}" \
+  --exclude='node_modules' \
+  --exclude='.git' \
+  --exclude='.next' \
+  --exclude='.cache' \
+  -cf - . | \
+  limactl shell --workdir /home/ralph ${vm} bash -lc \
+    'mkdir -p "${workdir}" && tar -C "${workdir}" -xf -'
+```
+
+**Excluded**: `node_modules`, `.git`, `.next`, `.cache`, build artifacts, logs, `._*`, `.DS_Store`
+
+**Benefits**:
+- No disk fill (excludes from the start)
+- Single command (no post-copy cleanup needed)
+- Faster (no copying of unnecessary files)
+
+### Cross-Platform Sync Strategy
+
+| Platform | Method | Notes |
+|----------|--------|-------|
+| **macOS + Lima** | tar pipe via limactl shell | Excludes handled at source |
+| **Linux + libvirt** | rsync with SSH | Native --exclude support |
