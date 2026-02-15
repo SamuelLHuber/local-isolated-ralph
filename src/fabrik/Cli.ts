@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect"
 import * as Console from "effect/Console"
 import * as Option from "effect/Option"
 import { existsSync, readFileSync } from "node:fs"
-import { resolve, join } from "node:path"
+import { resolve, join, basename } from "node:path"
 import { homedir } from "node:os"
 import { listSpecs } from "./specs.js"
 import { resolveRalphHome } from "./embedded.js"
@@ -354,17 +354,32 @@ const runResumeCommand = Command.make(
         console.log(`[${run.vm_name}] Warning: Could not parse run-context.json`)
       }
 
-      // Extract environment variables from context
+      // Build VM paths from context (host paths need to be converted)
+      // Spec/todo in VM are stored in specs/ dir with .min.json extension
+      const vmSpecPath = context.spec_path 
+        ? `${run.workdir}/specs/${basename(context.spec_path as string).replace(/\.mdx?$/, "").replace(/\.json$/, "").replace(/\.min$/, "")}.min.json`
+        : `${run.workdir}/specs/spec.min.json`
+      const vmTodoPath = context.todo_path
+        ? `${run.workdir}/specs/${basename(context.todo_path as string).replace(/\.json$/, "").replace(/\.min$/, "")}.min.json`
+        : `${vmSpecPath}.todo.min.json`
+      const vmPromptPath = context.prompt_path
+        ? `${run.workdir}/${basename(context.prompt_path as string)}`
+        : undefined
+      const vmReviewPromptPath = context.review_prompt_path
+        ? `${run.workdir}/${basename(context.review_prompt_path as string)}`
+        : undefined
+
+      // Extract environment variables
       const envVars: string[] = []
       const setEnv = (name: string, value: string | null | undefined) => {
         if (value) envVars.push(`export ${name}="${value.replace(/"/g, '\\"')}"`)
       }
 
-      setEnv("SMITHERS_SPEC_PATH", context.spec_path as string)
-      setEnv("SMITHERS_TODO_PATH", context.todo_path as string)
-      setEnv("SMITHERS_PROMPT_PATH", context.prompt_path as string)
-      setEnv("SMITHERS_REVIEW_PROMPT_PATH", context.review_prompt_path as string)
-      setEnv("SMITHERS_REVIEW_MODELS_FILE", context.review_models_path as string)
+      setEnv("SMITHERS_SPEC_PATH", vmSpecPath)
+      setEnv("SMITHERS_TODO_PATH", vmTodoPath)
+      if (vmPromptPath) setEnv("SMITHERS_PROMPT_PATH", vmPromptPath)
+      if (vmReviewPromptPath) setEnv("SMITHERS_REVIEW_PROMPT_PATH", vmReviewPromptPath)
+      if (context.review_models_path) setEnv("SMITHERS_REVIEW_MODELS_FILE", `${run.workdir}/${basename(context.review_models_path as string)}`)
       setEnv("SMITHERS_REPORT_DIR", reportsDir)
       setEnv("SMITHERS_CWD", run.workdir)
       setEnv("SMITHERS_BRANCH", context.branch as string)
