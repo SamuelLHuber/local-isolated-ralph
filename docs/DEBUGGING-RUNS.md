@@ -76,6 +76,24 @@ In dynamic mode, the workflow discovers tasks at runtime from the spec content. 
 
 **Important**: Dynamic mode will **NOT** use an existing `*.todo.json` file. If you previously had an empty todo file, it won't interfere. The workflow generates tasks fresh from the spec content each time.
 
+### Root Cause: The Empty Todo Bug (Fixed)
+
+**Bug**: Runs with `--dynamic` were completing immediately with no work done.
+
+**Root Cause**: 
+1. CLI resolved default todo path: `spec-chinese-readings-n-art.md.todo.json`
+2. Dispatch created empty placeholder: `{"_type":"dynamic","generated":true,"tickets":[]}`
+3. Dynamic workflow saw empty tickets and completed immediately
+4. No actual task discovery happened from the spec content
+
+**Fix** (commit 3fef4f8):
+- Dynamic mode no longer resolves default todo paths
+- If no todo provided in dynamic mode, no placeholder is written
+- Dynamic workflow discovers tasks fresh from spec content
+- Non-dynamic mode validates todo exists and has tickets before dispatch
+
+**After fix**: `--dynamic` runs discover tasks from spec, `--todo` runs use provided todo file.
+
 ## Quick Debug Commands
 
 ### 1. Check Run Status (Host-side)
