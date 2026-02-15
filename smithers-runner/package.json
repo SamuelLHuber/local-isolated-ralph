@@ -7,7 +7,7 @@
     "discover": "bun run discover.ts"
   },
   "dependencies": {
-    "smithers-orchestrator": "github:SamuelLHuber/smithers#fix/truncate-large-responses",
+    "smithers-orchestrator": "github:SamuelLHuber/smithers#341fb2d8",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "zod": "^4.3.6"
