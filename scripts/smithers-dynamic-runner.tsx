@@ -1,6 +1,5 @@
 #!/usr/bin/env smithers
-/** @jsxRuntime react */
-import * as React from "react"
+// Smithers handles JSX internally - no pragma needed
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, appendFileSync } from "node:fs"
 import { dirname, join, resolve, basename } from "node:path"
 import { z } from "zod"
