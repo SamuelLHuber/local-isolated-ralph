@@ -44,13 +44,14 @@ function makeAgent(tier: "cheap" | "standard" | "powerful") {
   switch (kind) {
     case "claude": return new ClaudeCodeAgent({ ...baseOpts, model: "claude-opus-4", dangerouslySkipPermissions: true });
     case "codex": return new CodexAgent({ ...baseOpts, model: "gpt-5.2-codex", sandbox: "danger-full-access" });
-    default: 
+    case "pi":
       const key = process.env.FIREWORKS_API_KEY || process.env.API_KEY_MOONSHOT;
       const provider = process.env.FIREWORKS_API_KEY ? "fireworks" : "moonshot";
       const model = provider === "fireworks" ? "fireworks/kimi-k2p5" : "kimi-k2.5";
-      // mode: "json" tells PiAgent to expect and parse JSON output
-      // noSession: true prevents interactive TUI mode
       return new PiAgent({ ...baseOpts, model, provider, mode: "json", noSession: true });
+    default:
+      // Default to Claude for better JSON handling
+      return new ClaudeCodeAgent({ ...baseOpts, model: "claude-sonnet-4", dangerouslySkipPermissions: true });
   }
 }
 
