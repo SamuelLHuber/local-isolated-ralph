@@ -32,21 +32,24 @@ export function validateWorkflow(workflowPath: string): ValidationResult {
 
   const source = readFileSync(workflowPath, "utf8")
 
-  // 2. Check for JSX pragma - either jsxRuntime react or jsxImportSource
-  if (!source.includes("@jsxRuntime") && !source.includes("@jsxImportSource")) {
-    errors.push("Missing JSX pragma (use @jsxRuntime react for standard React JSX)")
+  // 2. Check for JSX pragma - smithers workflows don't need one (handled by smithers CLI)
+  // Only warn if using custom JSX runtime that might conflict
+  if (source.includes("@jsxImportSource") && !source.includes("@jsxImportSource smithers-orchestrator")) {
+    warnings.push("Custom @jsxImportSource detected - may conflict with smithers CLI")
   }
 
   if (source.includes("@jsxImportSource") && !source.includes("@jsxImportSource smithers-orchestrator")) {
     warnings.push("JSX pragma doesn't point to smithers-orchestrator (may cause runtime issues)")
   }
 
-  // 3. Check for React import (needed for JSX runtime)
+  // 3. React import check - for smithers workflows, React is provided by the framework
+  // Only warn if explicitly using React hooks/context that would need it
   const hasReactImport = /import\s+\*?\s*as?\s+React\s+from\s+['"]react['"]/.test(source) ||
                          /import\s+React\s+from\s+['"]react['"]/.test(source)
+  const usesReactDirectly = /React\.use[A-Z]/.test(source) || /React\.createElement/.test(source)
   
-  if (!hasReactImport && source.includes("<") && source.includes(">")) {
-    warnings.push("JSX detected but no React import found (may cause ReactSharedInternals error)")
+  if (usesReactDirectly && !hasReactImport) {
+    warnings.push("React methods used but no React import found")
   }
 
   // 4. Check for required imports
