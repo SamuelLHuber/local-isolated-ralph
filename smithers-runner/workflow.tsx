@@ -111,8 +111,9 @@ function TaskRalph({ ticket, ctx }: { ticket: Ticket; ctx: TaskContext }) {
   const impl = ctx.latest(tables.report, `${ticket.id}:impl`);
   const val = ctx.latest(tables.gate, `${ticket.id}:val`);
   const reviews = light.map((_, i) => ctx.latest(tables.report, `${ticket.id}:rv-${i}`));
+  const hasReviews = reviews.length > 0;
   const issues = reviews.flatMap((r, i) => r?.status === "changes_requested" ? [{ rev: basename(light[i]), issues: r.issues }] : []);
-  const approved = reviews.every(r => r?.status === "approved");
+  const approved = hasReviews && reviews.every(r => r?.status === "approved");
 
   return (
     <Ralph id={`${ticket.id}:loop`} until={approved} maxIterations={5} onMaxReached="return-last">
@@ -144,8 +145,9 @@ function FullReviewRalph({ ctx }: { ctx: TaskContext }) {
   const all = getReviewers();
   const names = all.map(basename);
   const reviews = names.map((_, i) => ctx.latest(tables.report, `fr-${i}`));
+  const hasReviews = reviews.length > 0;
   const issues = reviews.flatMap((r, i) => r?.status === "changes_requested" ? [{ rev: names[i], issues: r.issues }] : []);
-  const approved = reviews.every(r => r?.status === "approved");
+  const approved = hasReviews && reviews.every(r => r?.status === "approved");
 
   return (
     <Ralph id="full-review" until={approved} maxIterations={5} onMaxReached="return-last">

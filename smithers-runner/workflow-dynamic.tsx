@@ -128,8 +128,9 @@ function TaskPipeline({ ticket, ctx }: { ticket: Ticket; ctx: TaskContext }) {
   const impl = ctx.latest(tables.report, `${ticket.id}:implement`);
   const val = ctx.latest(tables.gate, `${ticket.id}:validate`);
   const reviews = reviewerPaths.map((p, i) => ctx.latest(tables.report, `${ticket.id}:review-${i}`));
+  const hasReviews = reviews.length > 0;
   
-  const allApproved = reviews.every(r => r?.status === "approved");
+  const allApproved = hasReviews && reviews.every(r => r?.status === "approved");
   const issues = reviews.flatMap((r, i) => 
     r?.status === "changes_requested" ? [{ reviewer: lightReviewers[i], issues: r.issues }] : []
   );
@@ -188,7 +189,8 @@ function FullReview({ ctx }: { ctx: TaskContext }) {
   const allReviewers = getReviewers();
   const reviewerNames = allReviewers.map(p => basename(p));
   const reviews = reviewerNames.map((n, i) => ctx.latest(tables.report, `full-review-${i}`));
-  const allApproved = reviews.every(r => r?.status === "approved");
+  const hasReviews = reviews.length > 0;
+  const allApproved = hasReviews && reviews.every(r => r?.status === "approved");
   const issues = reviews.flatMap((r, i) => r?.status === "changes_requested" ? [{ reviewer: reviewerNames[i], issues: r.issues }] : []);
 
   return (

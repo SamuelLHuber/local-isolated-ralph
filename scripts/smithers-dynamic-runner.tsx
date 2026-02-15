@@ -822,7 +822,8 @@ function TicketPipeline({ ticket, ctx }: { ticket: z.infer<typeof Ticket>; ctx: 
   const gateResults = ticket.gates.map(g => 
     ctx.latest(tables.gate, `gate-${ticket.id}-${g}`)
   )
-  const allGatesPassed = gateResults.every(g => g?.passed)
+  const hasGateResults = gateResults.length > 0
+  const allGatesPassed = hasGateResults && gateResults.every(g => g?.passed)
   
   // Adaptive: skip LLM review if T3/T4 and all gates passed
   const needsLLMReview = ticket.reviewsRequired.length > 0 && 
