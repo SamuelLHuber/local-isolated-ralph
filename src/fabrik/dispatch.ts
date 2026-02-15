@@ -275,19 +275,8 @@ const writeFileRemote = (vm: string, dest: string, content: string) => {
 
 const copyDirRemote = (vm: string, srcDir: string, destDir: string) => {
   if (!existsSync(srcDir)) return
-  if (process.platform === "darwin") {
-    const script = `COPYFILE_DISABLE=1 tar -C \"${srcDir}\" -cf - . | limactl shell --workdir /home/ralph \"${vm}\" sudo -u ralph tar --warning=no-unknown-keyword -C \"${destDir}\" -xf -`
-    run("bash", ["-lc", script])
-    return
-  }
-  if (process.platform === "linux") {
-    const ip = getVmIp(vm)
-    if (!ip) throw new Error(`Could not determine IP for VM '${vm}'. Is it running?`)
-    ssh(ip, ["bash", "-lc", `mkdir -p \"${destDir}\"`])
-    scp(["-r", `${srcDir}/.`, `ralph@${ip}:${destDir}/`])
-    return
-  }
-  throw new Error(`Unsupported OS: ${process.platform}`)
+  // Use limactl copy for all platforms (uses rsync when available, falls back to scp)
+  run("limactl", ["copy", "-r", `${srcDir}/`, `${vm}:${destDir}`])
 }
 
 const ensureBunReady = (vm: string) => {
