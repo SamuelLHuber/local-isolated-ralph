@@ -1030,7 +1030,7 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
     `# Run from smithers-runner directory with its own dependencies`,
     `cd "${vmWorkdir}/smithers-runner" && bun install 2>&1 | tail -5`,
     `echo "[${options.vm}] Starting workflow from smithers-runner..."`,
-    `cd "${vmWorkdir}/smithers-runner" && bun run ${workflowFile} &`,
+    `cd "${vmWorkdir}/smithers-runner" && smithers run ${workflowFile} &`,
     "SMITHERS_PID=$!",
     "export SMITHERS_PID",
     "echo \"$SMITHERS_PID\" > \"$PID_FILE\"",
