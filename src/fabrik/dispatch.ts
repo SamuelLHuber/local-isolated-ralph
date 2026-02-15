@@ -256,7 +256,8 @@ const limactlShell = (vm: string, args: string[], input?: string) =>
   run("limactl", ["shell", "--workdir", "/home/ralph", vm, ...args], input)
 
 const writeFileInVm = (vm: string, dest: string, content: string) => {
-  limactlShell(vm, ["bash", "-lc", `sudo -u ralph tee "${dest}" >/dev/null`], content)
+  const parentDir = dest.substring(0, dest.lastIndexOf("/"))
+  limactlShell(vm, ["bash", "-lc", `sudo -u ralph mkdir -p "${parentDir}" && sudo -u ralph tee "${dest}" >/dev/null`], content)
 }
 
 const writeFileRemote = (vm: string, dest: string, content: string) => {
@@ -275,8 +276,21 @@ const writeFileRemote = (vm: string, dest: string, content: string) => {
 
 const copyDirRemote = (vm: string, srcDir: string, destDir: string) => {
   if (!existsSync(srcDir)) return
-  // Use limactl copy for all platforms (uses rsync when available, falls back to scp)
-  run("limactl", ["copy", "-r", `${srcDir}/`, `${vm}:${destDir}`])
+  
+  if (process.platform === "darwin") {
+    // macOS: Use limactl copy
+    run("limactl", ["copy", "-r", `${srcDir}/`, `${vm}:${destDir}`])
+  } else if (process.platform === "linux") {
+    // Linux: Use rsync
+    const ip = getVmIp(vm)
+    if (!ip) throw new Error(`Could not determine IP for VM '${vm}'. Is it running?`)
+    run("rsync", [
+      "-az",
+      "-e", "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
+      `${srcDir}/`,
+      `ralph@${ip}:${destDir}`
+    ])
+  }
 }
 
 const ensureBunReady = (vm: string) => {
@@ -300,13 +314,51 @@ const ensureBunReady = (vm: string) => {
   }
 }
 
+const getRsyncSshOpts = (vm: string): string => {
+  if (process.platform === "darwin") {
+    // macOS + Lima: use SSH control socket (faster, no parsing needed)
+    const socketPath = `${process.env.HOME}/.lima/${vm}/ssh.sock`
+    return `-S ${socketPath}`
+  }
+  // Linux + libvirt: use standard SSH options with IP lookup
+  return "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+}
+
 const syncProject = (vm: string, projectDir: string, workdir: string, includeGit: boolean) => {
   console.log(`[${vm}] Syncing project directory...`)
-  // Use limactl copy for efficient rsync-based transfer
-  const excludes = ["node_modules", ".git", "._*", ".DS_Store"]
-  const excludeArgs = excludes.flatMap(e => ["--exclude", e])
   
-  run("limactl", ["copy", ...excludeArgs, "-r", `${projectDir}/`, `${vm}:${workdir}`])
+  if (process.platform === "darwin") {
+    // macOS: Use limactl copy (doesn't support --exclude, clean up after)
+    run("limactl", ["copy", "-r", `${projectDir}/`, `${vm}:${workdir}`])
+    
+    // Clean up excluded directories after copy
+    const cleanupDirs = ["node_modules", ".next", ".cache", "coverage", ".nyc_output", ".colima"]
+    if (!includeGit) cleanupDirs.push(".git")
+    const cleanupScript = cleanupDirs.map(d => `rm -rf "${workdir}/${d}" 2>/dev/null || true`).join("; ")
+    limactlShell(vm, ["bash", "-lc", cleanupScript])
+  } else if (process.platform === "linux") {
+    // Linux: Use rsync with SSH
+    const ip = getVmIp(vm)
+    if (!ip) throw new Error(`Could not determine IP for VM '${vm}'. Is it running?`)
+    
+    const baseExcludes = [
+      "node_modules", ".git", "._*", ".DS_Store",
+      ".next", ".cache", "coverage", ".nyc_output", "*.log",
+      "dist", "build", "out"
+    ]
+    const excludes = includeGit ? baseExcludes.filter(e => e !== ".git") : baseExcludes
+    const excludeArgs = excludes.flatMap(e => ["--exclude", e])
+    
+    run("rsync", [
+      "-az",
+      "--timeout=300",
+      "--delete",
+      ...excludeArgs,
+      "-e", "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
+      `${projectDir}/`,
+      `ralph@${ip}:${workdir}`
+    ])
+  }
 }
 
 const syncSmithersRunner = (vm: string, ralphHome: string, workdir: string) => {
@@ -317,10 +369,24 @@ const syncSmithersRunner = (vm: string, ralphHome: string, workdir: string) => {
   }
   
   console.log(`[${vm}] Syncing smithers-runner...`)
-  const destDir = `${workdir}/smithers-runner`
   
-  // Use limactl copy (uses rsync when available)
-  run("limactl", ["copy", "-r", `${runnerDir}/`, `${vm}:${destDir}`])
+  if (process.platform === "darwin") {
+    // macOS: Copy to temp location in VM, then mv (avoids limactl copy quirks)
+    const tempDest = `/tmp/smithers-runner-${Date.now()}`
+    run("limactl", ["copy", "-r", runnerDir, `${vm}:${tempDest}`])
+    limactlShell(vm, ["bash", "-lc", `rm -rf "${workdir}/smithers-runner" && mv "${tempDest}" "${workdir}/smithers-runner"`])
+  } else if (process.platform === "linux") {
+    // Linux: Use rsync
+    const ip = getVmIp(vm)
+    if (!ip) throw new Error(`Could not determine IP for VM '${vm}'. Is it running?`)
+    run("rsync", [
+      "-az",
+      "--delete",
+      "-e", "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
+      `${runnerDir}/`,
+      `ralph@${ip}:${workdir}/smithers-runner`
+    ])
+  }
   return true
 }
 
@@ -440,13 +506,23 @@ const pathWithin = (root: string, target: string) => {
 }
 
 export const dispatchRun = (options: DispatchOptions): DispatchResult => {
-  // Validate workflow before dispatch
-  const workflowToValidate = options.workflow ?? (options.dynamic 
-    ? "scripts/smithers-dynamic-runner.tsx"
-    : "scripts/smithers-spec-runner.tsx")
-  const workflowPath = safeRealpath(workflowToValidate)!
+  const specPath = safeRealpath(options.spec)!
+  const isMarkdownSpec = specPath.endsWith(".md") || specPath.endsWith(".mdx")
   
-  console.log(`[${options.vm}] Validating workflow...`)
+  // In dynamic mode, todo is optional (generated at runtime)
+  const todoPath = options.dynamic 
+    ? (options.todo ? safeRealpath(options.todo)! : `${specPath}.dynamic-todo.json`)
+    : safeRealpath(options.todo)!
+  
+  // Determine workflow: custom path, or default from smithers-runner
+  const workflowFile = options.workflow 
+    ? basename(options.workflow)
+    : (options.dynamic ? "workflow-dynamic.tsx" : "workflow.tsx")
+  const workflowPath = options.workflow 
+    ? safeRealpath(options.workflow)!
+    : resolve(resolve(process.env.HOME ?? "", "git/local-isolated-ralph"), "smithers-runner", workflowFile)
+  
+  console.log(`[${options.vm}] Validating workflow: ${workflowPath}...`)
   const validation = validateBeforeDispatch(workflowPath, options.project)
   printValidationResults(validation)
   
@@ -457,18 +533,6 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
     )
   }
   
-  const specPath = safeRealpath(options.spec)!
-  const isMarkdownSpec = specPath.endsWith(".md") || specPath.endsWith(".mdx")
-  
-  // In dynamic mode, todo is optional (generated at runtime)
-  const todoPath = options.dynamic 
-    ? (options.todo ? safeRealpath(options.todo)! : `${specPath}.dynamic-todo.json`)
-    : safeRealpath(options.todo)!
-  
-  // Use dynamic workflow if --dynamic flag set
-  const defaultWorkflow = options.dynamic
-    ? "scripts/smithers-dynamic-runner.tsx"
-    : "scripts/smithers-spec-runner.tsx"
   const workflowSha = sha256(workflowPath)
   const workflowNeeds = workflowAgentNeeds(workflowPath)
   const requiredAgents = options.requireAgents?.map((a) => a.trim().toLowerCase()).filter(Boolean) ?? []
@@ -494,13 +558,13 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
 
   if (process.platform === "darwin") {
     ensureCommands(
-      [{ cmd: "limactl" }, { cmd: "tar" }, { cmd: "bash" }],
-      "dispatch requires limactl on macOS"
+      [{ cmd: "limactl" }, { cmd: "rsync" }, { cmd: "bash" }],
+      "dispatch requires limactl and rsync on macOS"
     )
   } else if (process.platform === "linux") {
     ensureCommands(
-      [{ cmd: "virsh" }, { cmd: "ssh" }, { cmd: "scp" }, { cmd: "tar" }, { cmd: "bash" }],
-      "dispatch requires virsh/ssh/scp on Linux"
+      [{ cmd: "virsh" }, { cmd: "rsync" }, { cmd: "ssh" }, { cmd: "bash" }],
+      "dispatch requires virsh/rsync/ssh on Linux"
     )
   } else {
     throw new Error(`Unsupported OS: ${process.platform}`)
@@ -539,13 +603,13 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
     throw new Error("repo ref provided but empty.")
   }
 
-  // Handle markdown specs in dynamic mode
-  const specMinified = isMarkdownSpec && options.dynamic
+  // Handle specs: markdown gets wrapped, JSON gets minified
+  const specMinified = isMarkdownSpec
     ? JSON.stringify({ _type: "markdown", path: specPath, content: readText(specPath) })
     : minifyJson(specPath)
   
-  // In dynamic mode, todo may not exist yet (generated at runtime)
-  const todoMinified = options.dynamic && !existsSync(todoPath)
+  // Handle todo: in dynamic mode may not exist yet
+  const todoMinified = !existsSync(todoPath)
     ? JSON.stringify({ _type: "dynamic", generated: true, tickets: [] })
     : minifyJson(todoPath)
 
@@ -639,7 +703,8 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
 
   let specInVm = `${vmWorkdir}/specs/${toMinName(specPath)}`
   let todoInVm = `${vmWorkdir}/specs/${toMinName(todoPath)}`
-  let workflowInVm = `${vmWorkdir}/smithers-workflow.tsx`
+  // Workflow file already determined earlier (workflow.tsx or workflow-dynamic.tsx)
+  let workflowInVm = `${vmWorkdir}/smithers-runner/${workflowFile}`
 
   if (projectDir) {
     if (process.platform === "darwin") {
@@ -731,7 +796,7 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
   } else if (process.platform === "linux") {
     const ip = getVmIp(options.vm)
     if (!ip) throw new Error(`Could not determine IP for VM '${options.vm}'. Is it running?`)
-    ssh(ip, ["mkdir", "-p", `${vmWorkdir}/specs`, reportDir])
+    ssh(ip, ["mkdir", "-p", `${vmWorkdir}/specs`, `${vmWorkdir}/smithers-runner`, reportDir])
   }
 
   writeFileRemote(options.vm, specInVm, specMinified)
@@ -887,7 +952,7 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
     `# Run from smithers-runner directory with its own dependencies`,
     `cd "${vmWorkdir}/smithers-runner" && bun install 2>&1 | tail -5`,
     `echo "[${options.vm}] Starting workflow from smithers-runner..."`,
-    `cd "${vmWorkdir}/smithers-runner" && bun run workflow.tsx &`,
+    `cd "${vmWorkdir}/smithers-runner" && bun run ${workflowFile} &`,
     "SMITHERS_PID=$!",
     "export SMITHERS_PID",
     "echo \"$SMITHERS_PID\" > \"$PID_FILE\"",

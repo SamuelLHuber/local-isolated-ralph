@@ -395,8 +395,8 @@ const runDispatchCommand = Command.make(
           repoRef: repoRefValue ?? repoBranchValue ?? undefined,
           includeGit,
           workflow: workflowValue ? resolve(workflowValue) : dynamic 
-            ? resolve(home, "scripts/smithers-dynamic-runner.tsx")
-            : resolve(home, "scripts/smithers-spec-runner.tsx"),
+            ? resolve(home, "smithers-runner/workflow-dynamic.tsx")
+            : resolve(home, "smithers-runner/workflow.tsx"),
           reportDir: reportDirValue,
           model: modelValue,
           iterations: iterationsValue ?? undefined,
@@ -1326,7 +1326,7 @@ const orchestrateCommand = Command.make(
         repoUrl: repoValue ?? undefined,
         repoRef: repoRefValue ?? repoBranchValue ?? undefined,
         includeGit,
-        workflow: workflowValue ? resolve(workflowValue) : resolve(defaultRalphHome, "scripts/smithers-spec-runner.tsx"),
+        workflow: workflowValue ? resolve(workflowValue) : resolve(defaultRalphHome, "smithers-runner/workflow.tsx"),
         prompt: promptValue ? resolve(promptValue) : undefined,
         reviewPrompt: reviewPromptValue ? resolve(reviewPromptValue) : undefined,
         reviewModels: reviewModelsValue ? resolve(reviewModelsValue) : undefined,

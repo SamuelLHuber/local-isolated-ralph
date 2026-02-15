@@ -4,10 +4,15 @@ import { join, resolve } from "node:path"
 type Asset = { path: string; mode?: number }
 
 const assets: Asset[] = [
-  { path: "scripts/smithers-spec-runner.tsx" },
-  { path: "scripts/smithers-reviewer.tsx" },
+  // Workflows
+  { path: "smithers-runner/workflow.tsx" },
+  { path: "smithers-runner/workflow-dynamic.tsx" },
+  { path: "smithers-runner/smithers.ts" },
+  { path: "smithers-runner/package.json" },
+  // Old scripts (for backward compat)
   { path: "scripts/validate-specs.ts" },
   { path: "scripts/minify-specs.ts" },
+  // Prompts
   { path: "prompts/DEFAULT-IMPLEMENTER.md" },
   { path: "prompts/DEFAULT-REVIEWER.md" },
   { path: "prompts/reviewers/SECURITY.md" },
@@ -15,8 +20,15 @@ const assets: Asset[] = [
   { path: "prompts/reviewers/SIMPLICITY.md" },
   { path: "prompts/reviewers/TEST-COVERAGE.md" },
   { path: "prompts/reviewers/MAINTAINABILITY.md" },
+  { path: "prompts/reviewers/TIGERSTYLE.md" },
+  { path: "prompts/reviewers/CORRECTNESS-GUARANTEES.md" },
+  { path: "prompts/reviewers/production-monitoring.md" },
+  { path: "prompts/reviewers/nasa-10-rules.md" },
+  { path: "prompts/reviewers/guarantee-hierarchy.md" },
+  // Docs
   { path: "README.md" },
   { path: "WORKFLOW.md" },
+  { path: "LEARNINGS.md" },
   { path: "OBSERVABILITY.md" },
   { path: "QUICKSTART.md" },
   { path: "specs/README.md" }
