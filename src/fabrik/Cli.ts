@@ -356,12 +356,23 @@ const runResumeCommand = Command.make(
 
       // Build VM paths from context (host paths need to be converted)
       // Spec/todo in VM are stored in specs/ dir with .min.json extension
-      const vmSpecPath = context.spec_path 
-        ? `${run.workdir}/specs/${basename(context.spec_path as string).replace(/\.mdx?$/, "").replace(/\.json$/, "").replace(/\.min$/, "")}.min.json`
+      // For .md files: spec.md -> spec.md.min.json (keep .md in name)
+      // For .json files: spec.json -> spec.min.json
+      const hostSpecPath = context.spec_path as string
+      const specBasename = basename(hostSpecPath)
+      const vmSpecPath = hostSpecPath
+        ? (specBasename.endsWith('.md') || specBasename.endsWith('.mdx')
+            ? `${run.workdir}/specs/${specBasename}.min.json`  // spec.md -> spec.md.min.json
+            : `${run.workdir}/specs/${specBasename.replace(/\.json$/, "").replace(/\.min$/, "")}.min.json`)
         : `${run.workdir}/specs/spec.min.json`
-      const vmTodoPath = context.todo_path
-        ? `${run.workdir}/specs/${basename(context.todo_path as string).replace(/\.json$/, "").replace(/\.min$/, "")}.min.json`
-        : `${vmSpecPath}.todo.min.json`
+      
+      const hostTodoPath = context.todo_path as string
+      const todoBasename = basename(hostTodoPath)
+      const vmTodoPath = hostTodoPath
+        ? (todoBasename.includes('.todo') && (todoBasename.endsWith('.md') || todoBasename.endsWith('.mdx'))
+            ? `${run.workdir}/specs/${todoBasename}.min.json`  // spec.md.todo.json -> spec.md.todo.min.json
+            : `${run.workdir}/specs/${todoBasename.replace(/\.json$/, "").replace(/\.min$/, "")}.min.json`)
+        : `${run.workdir}/specs/${basename(vmSpecPath).replace(/\.min\.json$/, ".todo.min.json")}`
       const vmPromptPath = context.prompt_path
         ? `${run.workdir}/${basename(context.prompt_path as string)}`
         : undefined
@@ -424,10 +435,34 @@ PY`
         runRemote(run.vm_name, fixScript)
       }
 
+      // Fetch the latest smithers run ID from the database (different from fabrik run ID)
+      const getSmithersRunIdScript = `python3 << 'PYSCRIPT'
+import sqlite3
+db_path = "${smithersDbPath}"
+try:
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT run_id FROM _smithers_runs WHERE status IN ('running', 'failed') ORDER BY started_at_ms DESC LIMIT 1")
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        print(row[0])
+    else:
+        print("")
+except:
+    print("")
+PYSCRIPT`
+      const smithersRunId = runRemote(run.vm_name, getSmithersRunIdScript).trim()
+
       // Build resume script
       const workflowFile = existsSync(`${smithersRunnerDir}/workflow-dynamic.tsx`) 
         ? "workflow-dynamic.tsx" 
         : "workflow.tsx"
+
+      // Use smithers resume if we have a run ID, otherwise smithers run
+      const smithersCmd = smithersRunId 
+        ? `smithers resume ${workflowFile} --run-id ${smithersRunId}`
+        : `smithers run ${workflowFile}`
 
       const resumeScript = [
         `cd "${smithersRunnerDir}"`,
@@ -436,7 +471,7 @@ PY`
         "if [ -n \"${GITHUB_TOKEN:-}\" ]; then export GH_TOKEN=\"${GITHUB_TOKEN}\"; fi",
         ...envVars,
         `echo "[${run.vm_name}] Resuming workflow: ${workflowFile}"`,
-        `smithers resume ${workflowFile} 2>&1 | tee -a "${reportsDir}/smithers-resume.log"`,
+        `${smithersCmd} 2>&1 | tee -a "${reportsDir}/smithers-resume.log"`,
         `echo "${run.id}" > "${controlDir}/resumed.run_id"`
       ].join("\n")
 
