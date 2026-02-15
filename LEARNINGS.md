@@ -25,6 +25,56 @@ fabrik run --spec specs/feature.md --project ~/my-app --vm ralph-1 --workflow ./
 
 ---
 
+## Credentials Setup (Critical)
+
+### The `export` Keyword is Required
+
+**Root cause of 401 errors**: Variables in `~/.config/ralph/ralph.env` must use `export` to be inherited by child processes.
+
+```bash
+# ❌ WRONG - variable set but not exported
+FIREWORKS_API_KEY=fw_xxx
+
+# ✅ CORRECT - variable exported to child processes
+export FIREWORKS_API_KEY=fw_xxx
+```
+
+**Why it matters**: PiAgent spawns `pi` CLI as a child process. Without `export`, the child doesn't inherit the variables → "No API key found" → 401 error.
+
+### Validate Your ralph.env
+
+```bash
+# Check if variables are exported
+./scripts/validate-ralph-env.sh
+
+# Manual check
+source ~/.config/ralph/ralph.env
+env | grep -E 'FIREWORKS|MOONSHOT|GITHUB'
+
+# Should show variables. If empty, they're not exported.
+```
+
+### Required Credentials
+
+| Variable | Purpose | Provider |
+|----------|---------|----------|
+| `export GITHUB_TOKEN=ghp_...` | Push to GitHub, create PRs | github.com/settings/tokens (scopes: `repo`, `workflow`) |
+| `export FIREWORKS_API_KEY=fw_...` | Pi agent with Kimi | fireworks.ai |
+| `export API_KEY_MOONSHOT=sk-...` | Pi agent alternative | platform.moonshot.cn |
+| `export ANTHROPIC_API_KEY=...` | Claude agent | console.anthropic.com |
+
+### Dispatch Sourcing
+
+The dispatch script sources `ralph.env` with `set -a` which auto-exports:
+
+```bash
+set -a; source ~/.config/ralph/ralph.env; set +a
+```
+
+This ensures all variables are exported regardless of whether they have the `export` keyword.
+
+---
+
 ## Architecture
 
 ### Three-Phase Flow (Both Workflows)
