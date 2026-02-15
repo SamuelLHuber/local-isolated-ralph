@@ -328,14 +328,25 @@ const syncProject = (vm: string, projectDir: string, workdir: string, includeGit
   console.log(`[${vm}] Syncing project directory...`)
   
   if (process.platform === "darwin") {
-    // macOS: Use limactl copy (doesn't support --exclude, clean up after)
-    run("limactl", ["copy", "-r", `${projectDir}/`, `${vm}:${workdir}`])
+    // macOS: Use tar with excludes piped through limactl shell (avoids disk fill)
+    const excludes = [
+      "node_modules", ".git", "._*", ".DS_Store",
+      ".next", ".cache", "coverage", ".nyc_output", ".colima",
+      "*.log", "dist", "build", "out"
+    ]
+    if (includeGit) {
+      const gitIdx = excludes.indexOf(".git")
+      if (gitIdx > -1) excludes.splice(gitIdx, 1)
+    }
     
-    // Clean up excluded directories after copy
-    const cleanupDirs = ["node_modules", ".next", ".cache", "coverage", ".nyc_output", ".colima"]
-    if (!includeGit) cleanupDirs.push(".git")
-    const cleanupScript = cleanupDirs.map(d => `rm -rf "${workdir}/${d}" 2>/dev/null || true`).join("; ")
-    limactlShell(vm, ["bash", "-lc", cleanupScript])
+    // Build tar command with excludes and pipe through limactl
+    const excludeStr = excludes.map(e => `--exclude='${e}'`).join(" ")
+    const script = [
+      `cd "${projectDir}"`,
+      `tar ${excludeStr} -cf - . | limactl shell --workdir /home/ralph ${vm} bash -lc 'mkdir -p "${workdir}" && tar -C "${workdir}" -xf -'`
+    ].join(" && ")
+    
+    run("bash", ["-c", script])
   } else if (process.platform === "linux") {
     // Linux: Use rsync with SSH
     const ip = getVmIp(vm)
