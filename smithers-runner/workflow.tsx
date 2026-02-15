@@ -1,231 +1,182 @@
 #!/usr/bin/env bun
 /**
- * Fabrik Dynamic Workflow
+ * Fabrik Sequential Workflow (Default)
  * 
- * Self-contained smithers workflow that runs in project context.
- * No JSX pragma needed - smithers handles transformation.
+ * For small-to-medium specs with clear milestones.
+ * Sequential task implementation with full review loop and human gate.
+ * 
+ * Flow:
+ * 1. TaskRalph (per task): Implement → Validate → LightReview → ReviewFix (loop)
+ * 2. FullReviewRalph (all tasks done): AllReviewers → ReviewFix → Re-validate (loop)  
+ * 3. HumanGate (needsApproval): Approve or reject → feedback → TaskRalph if rejected
  */
 
-import { Sequence, Parallel, Branch } from "smithers-orchestrator";
-import { Workflow, smithers, tables, type TaskContext } from "./smithers";
+import { Sequence, Parallel, Branch, Ralph } from "smithers-orchestrator";
+import { Workflow, Task, smithers, tables, createSmithers, type TaskContext } from "./smithers";
+import { PiAgent, CodexAgent, ClaudeCodeAgent } from "smithers-orchestrator";
 import { z } from "zod";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
-import { dirname, join, resolve, basename } from "node:path";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { join, resolve, basename } from "node:path";
 
-// Load spec from environment
+// Config from environment
 const specPath = resolve(process.env.SMITHERS_SPEC_PATH || "specs/spec.md");
 const isMarkdown = specPath.endsWith(".md") || specPath.endsWith(".mdx");
+const reviewersDir = process.env.SMITHERS_REVIEWERS_DIR;
 
-// Parse markdown spec
-function parseMarkdownSpec(path: string) {
+// Parse spec
+function parseSpec(path: string) {
   const raw = readFileSync(path, "utf8");
-  const titleMatch = raw.match(/^#\s+(.+)$/m) || raw.match(/Specification:\s*(.+)$/m);
-  
-  const extractSection = (pattern: RegExp): string[] => {
-    const match = raw.match(pattern);
-    if (!match) return [];
-    const start = match.index! + match[0].length;
-    const remaining = raw.slice(start);
-    const nextSection = remaining.match(/^##?\s/m);
-    const section = nextSection ? remaining.slice(0, nextSection.index) : remaining;
-    return section.split("\n").filter(l => l.match(/^\s*[-*+]/)).map(l => l.replace(/^\s*[-*+]\s*/, "").trim()).filter(Boolean);
-  };
-  
   return {
     id: basename(path).replace(/\.mdx?$/, "").replace(/^spec[-_]/, ""),
-    title: titleMatch?.[1]?.trim() || "Untitled Spec",
-    goals: extractSection(/^##?\s*Goals?/im),
-    nonGoals: extractSection(/^##?\s*Non[- ]?Goals?/im),
-    requirements: {
-      api: extractSection(/^##?\s*(API|Requirements?)/im).filter(r => r.toLowerCase().includes("api")),
-      behavior: extractSection(/^##?\s*(Behavior|Requirements?)/im),
-    },
-    acceptance: extractSection(/^##?\s*Acceptance?/im),
-    assumptions: extractSection(/^##?\s*Assumptions?/im),
-    raw,
+    title: raw.match(/^#\s+(.+)$/m)?.[1]?.trim() || "Untitled",
+    goals: [],
+    raw: raw.slice(0, 3000),
   };
 }
 
-const spec = isMarkdown ? parseMarkdownSpec(specPath) : JSON.parse(readFileSync(specPath, "utf8"));
+const spec = isMarkdown ? parseSpec(specPath) : JSON.parse(readFileSync(specPath, "utf8"));
 
-// Agent factory (simplified - uses env vars)
+// Agent factory - Pi with JSON mode
 function makeAgent(tier: "cheap" | "standard" | "powerful") {
-  const agentKind = (process.env.RALPH_AGENT || "pi").toLowerCase();
-  const model = process.env.SMITHERS_MODEL;
+  const kind = (process.env.RALPH_AGENT || "pi").toLowerCase();
+  const cwd = process.env.SMITHERS_CWD || process.cwd();
+  const base = { cwd };
   
-  // Return agent config - actual agent created by Task
-  return {
-    kind: agentKind,
-    model: model || (tier === "cheap" ? "kimi-k2-5" : tier === "standard" ? "gpt-5" : "opus"),
-    tier,
-  };
+  if (kind === "claude") return new ClaudeCodeAgent({ ...base, model: "claude-opus-4", dangerouslySkipPermissions: true });
+  if (kind === "codex") return new CodexAgent({ ...base, model: "gpt-5.2-codex", sandbox: "danger-full-access" });
+  
+  // Pi: Fireworks preferred, fallback to moonshot
+  const fw = process.env.FIREWORKS_API_KEY;
+  const ms = process.env.API_KEY_MOONSHOT;
+  const provider = fw ? "fireworks" : ms ? "moonshot" : undefined;
+  const model = fw ? "fireworks/kimi-k2p5" : ms ? "kimi-k2.5" : "claude-opus-4";
+  
+  return new PiAgent({ ...base, model, provider, mode: "json", noSession: true });
 }
 
-// Ticket types
-const TicketSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  tier: z.enum(["T1", "T2", "T3", "T4"]),
-  description: z.string(),
-  acceptanceCriteria: z.array(z.string()),
-  dependencies: z.array(z.string()).nullable(),
-  layersRequired: z.array(z.enum(["L1", "L2", "L3", "L4", "L5", "L6"])),
-  reviewsRequired: z.array(z.string()),
-  gates: z.array(z.enum(["lint", "typecheck", "build", "test", "coverage"])),
-  model: z.enum(["cheap", "standard", "powerful"]),
-});
+// Helpers
+const getReviewers = (names?: string[]): string[] => {
+  if (!reviewersDir || !existsSync(reviewersDir)) return [];
+  const all = readdirSync(reviewersDir).filter(f => f.endsWith(".md"));
+  if (!names) return all.map(f => join(reviewersDir, f));
+  return names.map(n => join(reviewersDir, n.replace(/\.md$/, "") + ".md")).filter(existsSync);
+};
 
-type Ticket = z.infer<typeof TicketSchema>;
+const readPrompt = (path: string) => { try { return readFileSync(path, "utf8"); } catch { return ""; } };
 
-// Components
-function Discover({ ctx, spec }: { ctx: TaskContext; spec: any }) {
-  const prevDiscover = ctx.latest(tables.discover, "discover-output");
-  const completedIds = prevDiscover?.tickets?.filter((t: Ticket) => 
-    ctx.latest(tables.report, `${t.id}:report`)?.status === "done"
-  )?.map((t: Ticket) => t.id) || [];
+interface Ticket { id: string; title: string; description: string; tier: "T1" | "T2" | "T3" | "T4"; model: "cheap" | "standard" | "powerful"; }
 
+// Discover tasks from spec
+function Discover({ ctx }: { ctx: TaskContext }) {
   return (
-    <Task
-      id="discover-output"
-      output={tables.discover}
-      agent={makeAgent("powerful")}
-    >
-      {`
-Generate next tickets for spec: ${spec.id}
-Completed: ${completedIds.join(", ") || "none"}
+    <Task id="discover" output={tables.discover} agent={makeAgent("powerful")}>
+      {`DISCOVER TASKS from spec: ${spec.id}
 
-Spec:
-${spec.raw?.slice(0, 2000) || JSON.stringify(spec)}
+Break into sequential implementation tasks (5-10 tasks).
+Each task: coherent, testable, committable.
 
-Output 0-5 tickets as JSON matching the discover schema.
-`}
+OUTPUT JSON:
+{
+  "v": 1,
+  "tickets": [{ "id": "slug", "title": "...", "description": "...", "tier": "T1|T2|T3|T4", "acceptanceCriteria": [], "dependencies": null, "layersRequired": [], "reviewsRequired": [], "gates": ["lint","typecheck","test"], "model": "cheap|standard|powerful" }],
+  "reasoning": "...",
+  "batchComplete": true
+}`}
     </Task>
   );
 }
 
-function TicketPipeline({ ticket, ctx }: { ticket: Ticket; ctx: TaskContext }) {
-  const report = ctx.latest(tables.report, `${ticket.id}:report`);
-  const isComplete = report?.status === "done";
-  
-  const gateResults = ticket.gates.map(g => 
-    ctx.latest(tables.gate, `gate-${ticket.id}-${g}`)
-  );
-  const allGatesPassed = gateResults.every(g => g?.passed);
-  const needsLLMReview = ticket.reviewsRequired.length > 0 && 
-    !(allGatesPassed && (ticket.tier === "T3" || ticket.tier === "T4"));
+// Phase 1: Per-task Ralph loop
+function TaskRalph({ ticket, ctx }: { ticket: Ticket; ctx: TaskContext }) {
+  const light = getReviewers(["CODE-QUALITY.md", "MAINTAINABILITY.md"]);
+  const impl = ctx.latest(tables.report, `${ticket.id}:impl`);
+  const val = ctx.latest(tables.gate, `${ticket.id}:val`);
+  const reviews = light.map((_, i) => ctx.latest(tables.report, `${ticket.id}:rv-${i}`));
+  const issues = reviews.flatMap((r, i) => r?.status === "changes_requested" ? [{ rev: basename(light[i]), issues: r.issues }] : []);
+  const approved = reviews.every(r => r?.status === "approved");
 
   return (
-    <Sequence key={ticket.id} skipIf={isComplete}>
-      <Task id={`implement-${ticket.id}`} output={tables.report} agent={makeAgent(ticket.model)}>
-        {`Implement: ${ticket.title}\n\n${ticket.description}`}
-      </Task>
-      
-      {ticket.gates.map(g => (
-        <Task
-          key={g}
-          id={`gate-${ticket.id}-${g}`}
-          output={tables.gate}
-          agent={makeAgent("cheap")}
-        >
-          {`Run: bun run ${g}\nReturn: { v: 1, passed: boolean, command: "...", output: "...", durationMs: number }`}
-        </Task>
-      ))}
-      
-      {needsLLMReview && ticket.reviewsRequired.map(r => (
-        <Task
-          key={r}
-          id={`review-${ticket.id}-${r}`}
-          output={tables.report}
-          agent={makeAgent(ticket.model)}
-        >
-          {`Review ${r}: ${ticket.title}`}
-        </Task>
-      ))}
-      
-      <Task id={`report-${ticket.id}`} output={tables.report}>
-        {{ v: 1, taskId: ticket.id, tier: ticket.tier, status: "done", work: [], files: [], tests: [], gates: [], issues: [], next: [] }}
-      </Task>
-    </Sequence>
-  );
-}
-
-function FinalReview({ tickets, ctx }: { tickets: Ticket[]; ctx: TaskContext }) {
-  const reviewerIds = ["security", "code-quality", "test-coverage"];
-  
-  return (
-    <Sequence>
-      <Parallel>
-        {reviewerIds.map(id => (
-          <Task
-            key={id}
-            id={`final-review-${id}`}
-            output={tables.finalReview}
-            agent={makeAgent("powerful")}
-          >
-            {`Final review ${id} for ${tickets.length} tickets`}
-          </Task>
-        ))}
-      </Parallel>
-      
-      <Task id="final-review-summary" output={tables.finalReview}>
-        {() => {
-          const reviews = reviewerIds.map(id => 
-            ctx.latest(tables.finalReview, `final-review-${id}`)
-          ).filter(Boolean);
-          
-          return {
-            v: 1,
-            status: reviews.every((r: any) => r.status === "approved") ? "approved" : "changes_requested",
-            reviewers: reviewerIds,
-            approvedBy: reviews.filter((r: any) => r.status === "approved").map((r: any, i: number) => reviewerIds[i]),
-            rejectedBy: reviews.filter((r: any) => r.status === "changes_requested").map((r: any, i: number) => reviewerIds[i]),
-            allIssues: reviews.flatMap((r: any) => r.issues || []),
-            summary: "Final review complete",
-          };
-        }}
-      </Task>
-    </Sequence>
-  );
-}
-
-// Main workflow
-export default smithers((ctx) => {
-  const discoverOutput = ctx.latest(tables.discover, "discover-output");
-  const tickets: Ticket[] = discoverOutput?.tickets || [];
-  const batchComplete = discoverOutput?.batchComplete || false;
-  
-  const unfinishedTickets = tickets.filter((t: Ticket) => {
-    const report = ctx.latest(tables.report, `${t.id}:report`);
-    return !report || report.status !== "done";
-  });
-  
-  const allTicketsDone = tickets.length > 0 && unfinishedTickets.length === 0;
-  const needsDiscovery = !discoverOutput || (allTicketsDone && !batchComplete);
-  
-  const finalReview = ctx.latest(tables.finalReview, "final-review-summary");
-  
-  return (
-    <Workflow name={`dynamic-${spec.id}`}>
+    <Ralph id={`${ticket.id}:loop`} until={approved} maxIterations={5} onMaxReached="return-last">
       <Sequence>
-        <Branch if={needsDiscovery} then={<Discover ctx={ctx} spec={spec} />} />
-        
-        {unfinishedTickets.map((ticket: Ticket) => (
-          <TicketPipeline key={ticket.id} ticket={ticket} ctx={ctx} />
-        ))}
-        
-        <Branch
-          if={batchComplete && allTicketsDone && finalReview?.status !== "approved"}
-          then={<FinalReview tickets={tickets} ctx={ctx} />}
-        />
-        
-        <Branch
-          if={batchComplete && allTicketsDone && finalReview?.status === "approved"}
-          then={
-            <Task id="complete" output={tables.report}>
-              {{ v: 1, taskId: "spec-complete", tier: "T1", status: "done", work: ["Complete"], files: [], tests: [], gates: [], issues: [], next: [] }}
+        <Task id={`${ticket.id}:impl`} output={tables.report} agent={makeAgent(ticket.model)}>
+          {`IMPLEMENT: ${ticket.title}\n${ticket.description}\n${issues.length ? `FEEDBACK:\n${JSON.stringify(issues)}` : ""}\n1. Read spec, study codebase\n2. Implement with tests\n3. Run gates\n4. Commit with reasoning\nOUTPUT: { "v": 1, "taskId": "${ticket.id}", "status": "done", "work": [], "files": [], "tests": [], "issues": [], "next": [] }`}
+        </Task>
+
+        <Task id={`${ticket.id}:val`} output={tables.gate} agent={makeAgent("cheap")}>
+          {`VALIDATE: run lint, typecheck, test\nOUTPUT: { "v": 1, "passed": bool }`}
+        </Task>
+
+        <Branch if={val?.passed !== false} then={
+          <Parallel maxConcurrency={2}>
+            {light.map((p, i) => (
+              <Task key={i} id={`${ticket.id}:rv-${i}`} output={tables.report} agent={makeAgent("standard")} continueOnFail>
+                {`${readPrompt(p)}\nReview: ${ticket.title}\nOUTPUT: { "v": 1, "status": "approved|changes_requested", "issues": [] }`}
+              </Task>
+            ))}
+          </Parallel>
+        } />
+      </Sequence>
+    </Ralph>
+  );
+}
+
+// Phase 2: Full review Ralph loop
+function FullReviewRalph({ ctx }: { ctx: TaskContext }) {
+  const all = getReviewers();
+  const names = all.map(basename);
+  const reviews = names.map((_, i) => ctx.latest(tables.report, `fr-${i}`));
+  const issues = reviews.flatMap((r, i) => r?.status === "changes_requested" ? [{ rev: names[i], issues: r.issues }] : []);
+  const approved = reviews.every(r => r?.status === "approved");
+
+  return (
+    <Ralph id="full-review" until={approved} maxIterations={5} onMaxReached="return-last">
+      <Sequence>
+        <Parallel maxConcurrency={8}>
+          {all.map((p, i) => (
+            <Task key={i} id={`fr-${i}`} output={tables.report} agent={makeAgent("standard")} continueOnFail>
+              {`${readPrompt(p)}\nReview entire implementation.\nOUTPUT: { "v": 1, "status": "approved|changes_requested", "issues": [] }`}
             </Task>
-          }
-        />
+          ))}
+        </Parallel>
+        
+        <Branch if={issues.length > 0} then={
+          <Sequence>
+            <Task id="full-fix" output={tables.report} agent={makeAgent("powerful")}>
+              {`FIX ALL:\n${JSON.stringify(issues)}\nAddress each, re-validate, commit.`}
+            </Task>
+            <Task id="full-reval" output={tables.gate} agent={makeAgent("cheap")}>{`Re-validate`}</Task>
+          </Sequence>
+        } />
+      </Sequence>
+    </Ralph>
+  );
+}
+
+// Phase 3: Human gate
+function HumanGate({ ctx }: { ctx: TaskContext }) {
+  return (
+    <Task id="human-gate" output={tables.report} needsApproval label={`Approve: ${spec.id}`}>
+      {`HUMAN REVIEW: ${spec.id}\n\nAll automated reviews passed.\nReview implementation and VCS history.\nApprove or reject with feedback.`}
+    </Task>
+  );
+}
+
+// Main
+export default smithers((ctx) => {
+  const discover = ctx.latest(tables.discover, "discover");
+  const tickets: Ticket[] = discover?.tickets || [];
+  const allDone = tickets.length > 0 && tickets.every(t => ctx.latest(tables.report, `${t.id}:impl`)?.status === "done");
+  const fullReview = ctx.latest(tables.report, "fr-0") !== undefined;
+  const human = ctx.latest(tables.report, "human-gate");
+
+  return (
+    <Workflow name={spec.id}>
+      <Sequence>
+        <Branch if={!tickets.length} then={<Discover ctx={ctx} />} />
+        {tickets.map(t => <TaskRalph key={t.id} ticket={t} ctx={ctx} />)}
+        <Branch if={allDone && !fullReview} then={<FullReviewRalph ctx={ctx} />} />
+        <Branch if={allDone && fullReview} then={<HumanGate ctx={ctx} />} />
+        <Branch if={human?.status === "approved"} then={<Task id="done" output={tables.report}>{{ v: 1, status: "done", work: ["Complete"] }}</Task>} />
       </Sequence>
     </Workflow>
   );

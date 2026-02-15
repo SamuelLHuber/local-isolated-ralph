@@ -1,3 +1,4 @@
 node_modules/
 dist/
 specs/**/*.min.json
+smitherssample/

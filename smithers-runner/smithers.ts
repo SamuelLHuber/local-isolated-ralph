@@ -69,5 +69,8 @@ export const { Workflow, Task, smithers, tables, db } = createSmithers(
   { dbPath: process.env.SMITHERS_DB_PATH || "./.smithers/workflow.db" }
 );
 
+// Re-export createSmithers for validation
+export { createSmithers };
+
 // Re-export types
 export type { TaskContext } from "smithers-orchestrator";
