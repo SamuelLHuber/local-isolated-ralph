@@ -1262,7 +1262,40 @@ const credentialsCommand = Command.make("credentials").pipe(
       "sync",
       { vm: vmOption },
       ({ vm }) => Effect.sync(() => syncCredentials({ vm }))
-    ).pipe(Command.withDescription("Sync host credentials into a VM"))
+    ).pipe(Command.withDescription("Sync host credentials into a VM")),
+    Command.make(
+      "validate",
+      {},
+      () => Effect.sync(() => {
+        const envPath = join(homedir(), ".config/ralph/ralph.env")
+        if (!existsSync(envPath)) {
+          console.log("❌ ~/.config/ralph/ralph.env not found")
+          console.log("   Run: ./scripts/create-ralph-env.sh")
+          process.exit(1)
+        }
+        
+        const content = readFileSync(envPath, "utf8")
+        const issues: string[] = []
+        const lines = content.split("\n")
+        
+        for (const line of lines) {
+          if (line.trim().startsWith("#") || !line.trim()) continue
+          if (line.match(/^[A-Z_][A-Z0-9_]*=/) && !line.match(/^export\s/)) {
+            const key = line.split("=")[0]
+            issues.push(`  - ${key} (missing 'export' keyword)`)
+          }
+        }
+        
+        if (issues.length > 0) {
+          console.log("⚠️  ralph.env issues found:")
+          issues.forEach(i => console.log(i))
+          console.log("\nRun: ./scripts/validate-ralph-env.sh to fix")
+          process.exit(1)
+        }
+        
+        console.log("✅ ralph.env is valid (all variables exported)")
+      })
+    ).pipe(Command.withDescription("Validate ralph.env has proper exports"))
   ])
 )
 
