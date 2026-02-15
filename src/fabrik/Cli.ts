@@ -31,7 +31,7 @@ const ralphHomeOption = Options.text("ralph-home").pipe(
 )
 
 const specOption = Options.text("spec").pipe(Options.withDescription("Spec JSON path"))
-const todoOption = Options.text("todo").pipe(Options.optional, Options.withDescription("Todo JSON path (optional)"))
+const todoOption = Options.text("todo").pipe(Options.optional, Options.withDescription("Todo JSON path - when provided, uses pre-defined tickets directly (skips discovery phase)"))
 const vmOption = Options.text("vm").pipe(Options.withDescription("VM name (e.g. ralph-1)"))
 const runSpecOption = specOption.pipe(Options.optional)
 const runVmOption = vmOption.pipe(Options.optional)
@@ -59,7 +59,7 @@ const followOption = Options.boolean("follow").pipe(
 )
 const dynamicOption = Options.boolean("dynamic").pipe(
   Options.withDefault(false),
-  Options.withDescription("Use dynamic ticket discovery (no --todo required, adaptive compound engineering)")
+  Options.withDescription("Use batched iterative discovery workflow (discovers tickets in 3-5 ticket batches, runs full review only at end)")
 )
 const learnOption = Options.boolean("learn").pipe(
   Options.withDefault(false),
@@ -149,7 +149,12 @@ const laosFollowOption = Options.boolean("follow").pipe(
 const workflowHelp = [
   "Workflow:",
   "  1) fabrik spec validate",
-  "  2) fabrik run --spec specs/feature.json --vm ralph-1 --project /path/to/repo",
+  "  2a) fabrik run --spec specs/feature.json --todo specs/feature.todo.json --vm ralph-1 --project /path/to/repo",
+  "      (uses pre-defined tickets from todo file - skips discovery)",
+  "  2b) fabrik run --spec specs/feature.md --vm ralph-1 --project /path/to/repo",
+  "      (no todo provided - discovers tickets from spec automatically)",
+  "  2c) fabrik run --spec specs/feature.md --vm ralph-1 --project /path/to/repo --dynamic",
+  "      (batched discovery: discovers 3-5 tickets at a time, iterates until complete)",
   "  3) fabrik runs watch --vm ralph-1",
   "  4) fabrik runs show --id <run-id>",
   "  5) fabrik feedback --vm ralph-1 --spec specs/feature.json --decision approve --notes \"OK\""
