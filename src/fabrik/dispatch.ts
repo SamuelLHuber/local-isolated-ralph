@@ -847,6 +847,7 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
     `  export PATH="${vmWorkdir}/node_modules/.bin:$PATH"`,
     `else`,
     `  echo "[${options.vm}] Using global smithers ($(which smithers))"`,
+      `  export NODE_PATH="$HOME/.bun/install/global/node_modules:$NODE_PATH"`,
     `fi`,
         `cd "${controlDir}"`,
     "if [ -f ~/.config/ralph/ralph.env ]; then set -a; source ~/.config/ralph/ralph.env; set +a; fi",
