@@ -76,23 +76,29 @@ In dynamic mode, the workflow discovers tasks at runtime from the spec content. 
 
 **Important**: Dynamic mode will **NOT** use an existing `*.todo.json` file. If you previously had an empty todo file, it won't interfere. The workflow generates tasks fresh from the spec content each time.
 
-### Root Cause: The Empty Todo Bug (Fixed)
+### Root Cause: The Complete Fix (3 commits)
 
-**Bug**: Runs with `--dynamic` were completing immediately with no work done.
+**Bug**: Runs with `--dynamic` were completing immediately with exit_code 0 and no work done.
 
-**Root Cause**: 
-1. CLI resolved default todo path: `spec-chinese-readings-n-art.md.todo.json`
-2. Dispatch created empty placeholder: `{"_type":"dynamic","generated":true,"tickets":[]}`
-3. Dynamic workflow saw empty tickets and completed immediately
-4. No actual task discovery happened from the spec content
+**Full Root Cause Analysis**:
+1. **CLI bug**: In dynamic mode, CLI still resolved default todo path (`*.todo.json`)
+2. **Dispatch bug**: When todo didn't exist, dispatch created empty placeholder: `{"tickets":[]}`
+3. **Critical bug**: The run script used `bun run workflow.tsx` instead of `smithers run workflow.tsx`
+   - `bun run` only builds the React tree but NEVER executes tasks
+   - `smithers run` is the actual workflow executor that runs tasks
 
-**Fix** (commit 3fef4f8):
-- Dynamic mode no longer resolves default todo paths
-- If no todo provided in dynamic mode, no placeholder is written
-- Dynamic workflow discovers tasks fresh from spec content
-- Non-dynamic mode validates todo exists and has tickets before dispatch
+**The Fix** (3 commits):
+1. **Cli.ts**: Don't resolve default todo path in dynamic mode (prevents empty todo creation)
+2. **dispatch.ts**: 
+   - Don't write empty todo placeholder in dynamic mode
+   - Validate todo has tickets in non-dynamic mode
+   - **CRITICAL**: Change `bun run` to `smithers run` in the generated script
 
-**After fix**: `--dynamic` runs discover tasks from spec, `--todo` runs use provided todo file.
+**Verification**: After fix, workflows show:
+```
+[00:00:00] → discover (attempt 1, iteration 0)
+```
+This means the smithers CLI is actually executing the Discover task.
 
 ## Quick Debug Commands
 
