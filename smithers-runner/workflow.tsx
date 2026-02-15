@@ -40,16 +40,56 @@ function loadPredefinedTickets(): Ticket[] | null {
   }
 }
 
+// Helper to limit output size for SQLite storage (max ~500KB per field to stay well under 1GB limit)
+const MAX_OUTPUT_SIZE = 500000;
+function limitOutputSize(obj: unknown): unknown {
+  if (typeof obj === "string") {
+    if (obj.length > MAX_OUTPUT_SIZE) {
+      return obj.slice(0, MAX_OUTPUT_SIZE) + `\n[TRUNCATED: was ${obj.length} chars]`;
+    }
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    // Limit array items and check total size
+    const limited = obj.slice(0, 1000).map(limitOutputSize);
+    const json = JSON.stringify(limited);
+    if (json.length > MAX_OUTPUT_SIZE) {
+      return limited.slice(0, Math.floor(limited.length / 2));
+    }
+    return limited;
+  }
+  if (obj && typeof obj === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      result[key] = limitOutputSize(value);
+    }
+    // Check final JSON size
+    const json = JSON.stringify(result);
+    if (json.length > MAX_OUTPUT_SIZE) {
+      // Truncate the entire object if too large
+      return { 
+        _truncated: true, 
+        _originalSize: json.length,
+        _message: "Object was too large for storage"
+      };
+    }
+    return result;
+  }
+  return obj;
+}
+
 const predefinedTickets = loadPredefinedTickets();
 
-// Parse spec
+// Parse spec with size limits for SQLite safety
+const MAX_SPEC_SIZE = 100000; // ~100KB max for spec content
 function parseSpec(path: string) {
   const raw = readFileSync(path, "utf8");
   return {
     id: basename(path).replace(/\.mdx?$/, "").replace(/^spec[-_]/, ""),
     title: raw.match(/^#\s+(.+)$/m)?.[1]?.trim() || "Untitled",
     goals: [],
-    raw: raw.slice(0, 3000),
+    raw: raw.slice(0, MAX_SPEC_SIZE),
+    _truncated: raw.length > MAX_SPEC_SIZE ? { was: raw.length, limit: MAX_SPEC_SIZE } : undefined,
   };
 }
 
