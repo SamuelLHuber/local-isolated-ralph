@@ -47,8 +47,10 @@ function makeAgent(tier: "cheap" | "standard" | "powerful") {
     default: 
       const key = process.env.FIREWORKS_API_KEY || process.env.API_KEY_MOONSHOT;
       const provider = process.env.FIREWORKS_API_KEY ? "fireworks" : "moonshot";
+      // Use standard mode (not json mode) to get markdown-wrapped JSON
+      // The smithers Task component will extract JSON from markdown code blocks
       const model = provider === "fireworks" ? "fireworks/kimi-k2p5" : "kimi-k2.5";
-      return new PiAgent({ ...baseOpts, model, provider, mode: "json", noSession: true });
+      return new PiAgent({ ...baseOpts, model, provider, mode: "standard", noSession: true });
   }
 }
 
@@ -91,7 +93,9 @@ Each ticket should be:
 - Testable with clear acceptance criteria  
 - Independent (minimal dependencies on other tickets)
 
-OUTPUT JSON:
+IMPORTANT: Output ONLY a JSON object wrapped in a markdown code block. No other text.
+
+\`\`\`json
 {
   "v": 1,
   "tickets": [
@@ -109,8 +113,9 @@ OUTPUT JSON:
     }
   ],
   "reasoning": "Why these tickets, in this order",
-  "batchComplete": boolean
+  "batchComplete": false
 }
+\`\`\`
 
 Set batchComplete=true when ALL work for this spec is done.`}
     </Task>
