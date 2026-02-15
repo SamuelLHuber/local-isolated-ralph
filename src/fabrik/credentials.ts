@@ -4,6 +4,25 @@ import { join } from "node:path"
 import { runCommand, runCommandOutput } from "./exec.js"
 import { ensureCommands } from "./prereqs.js"
 
+// Validate ralph.env has export keywords
+const validateRalphEnv = (content: string): { valid: boolean; issues: string[] } => {
+  const issues: string[] = []
+  const lines = content.split("\n")
+  
+  for (const line of lines) {
+    // Skip comments and empty lines
+    if (line.trim().startsWith("#") || !line.trim()) continue
+    
+    // Check for KEY=value without export
+    if (line.match(/^[A-Z_][A-Z0-9_]*=/) && !line.match(/^export\s/)) {
+      const key = line.split("=")[0]
+      issues.push(`  - ${key} (missing 'export' keyword)`)
+    }
+  }
+  
+  return { valid: issues.length === 0, issues }
+}
+
 type SyncConfig = {
   vm: string
 }
@@ -120,6 +139,15 @@ const copyCredentialsLima = (vm: string) => {
 
   if (copyFileLima(vm, hostPath(".config/ralph/ralph.env"), `${userHome}/.config/ralph/ralph.env`)) {
     run("limactl", ["shell", "--workdir", "/home/ralph", vm, "sudo", "-u", "ralph", "chmod", "600", `${userHome}/.config/ralph/ralph.env`])
+    
+    // Validate exports after copying
+    const content = readFileSync(hostPath(".config/ralph/ralph.env"), "utf8")
+    const validation = validateRalphEnv(content)
+    if (!validation.valid) {
+      console.log("    ⚠️  Warning: ralph.env has variables without 'export' keyword:")
+      validation.issues.forEach(i => console.log(i))
+      console.log("       This will cause 401 errors. Run: ./scripts/validate-ralph-env.sh")
+    }
   } else {
     console.log("    Note: ~/.config/ralph/ralph.env not found")
   }
@@ -207,6 +235,15 @@ const copyCredentialsLinux = (vm: string) => {
     ssh(ip, ["chmod", "700", "~/.config/ralph"])
     scp([hostPath(".config/ralph/ralph.env"), `ralph@${ip}:~/.config/ralph/`])
     ssh(ip, ["chmod", "600", "~/.config/ralph/ralph.env"])
+    
+    // Validate exports after copying
+    const content = readFileSync(hostPath(".config/ralph/ralph.env"), "utf8")
+    const validation = validateRalphEnv(content)
+    if (!validation.valid) {
+      console.log("    ⚠️  Warning: ralph.env has variables without 'export' keyword:")
+      validation.issues.forEach(i => console.log(i))
+      console.log("       This will cause 401 errors. Run: ./scripts/validate-ralph-env.sh")
+    }
   } else {
     console.log("    Note: ~/.config/ralph/ralph.env not found")
   }
