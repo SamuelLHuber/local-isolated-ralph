@@ -20,8 +20,27 @@ import { join, resolve, basename } from "node:path";
 
 // Config from environment
 const specPath = resolve(process.env.SMITHERS_SPEC_PATH || "specs/spec.md");
+const todoPath = resolve(process.env.SMITHERS_TODO_PATH || `${specPath}.todo.json`);
 const isMarkdown = specPath.endsWith(".md") || specPath.endsWith(".mdx");
 const reviewersDir = process.env.SMITHERS_REVIEWERS_DIR;
+
+// Load pre-defined tickets from todo file if available
+function loadPredefinedTickets(): Ticket[] | null {
+  try {
+    if (!existsSync(todoPath)) return null;
+    const raw = readFileSync(todoPath, "utf8");
+    const json = JSON.parse(raw);
+    if (json.tickets && Array.isArray(json.tickets) && json.tickets.length > 0) {
+      console.log(`[workflow] Using ${json.tickets.length} pre-defined tickets from ${todoPath}`);
+      return json.tickets as Ticket[];
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+const predefinedTickets = loadPredefinedTickets();
 
 // Parse spec
 function parseSpec(path: string) {
@@ -164,7 +183,9 @@ function HumanGate({ ctx }: { ctx: TaskContext }) {
 // Main
 export default smithers((ctx) => {
   const discover = ctx.latest(tables.discover, "discover");
-  const tickets: Ticket[] = discover?.tickets || [];
+  // Use pre-defined tickets if available, otherwise fall back to discovered tickets
+  const tickets: Ticket[] = predefinedTickets ?? discover?.tickets ?? [];
+  const hasPredefinedTickets = predefinedTickets !== null;
   const allDone = tickets.length > 0 && tickets.every(t => ctx.latest(tables.report, `${t.id}:impl`)?.status === "done");
   const fullReview = ctx.latest(tables.report, "fr-0") !== undefined;
   const human = ctx.latest(tables.report, "human-gate");
@@ -172,7 +193,8 @@ export default smithers((ctx) => {
   return (
     <Workflow name={spec.id}>
       <Sequence>
-        <Branch if={!tickets.length} then={<Discover ctx={ctx} />} />
+        {/* Skip discover if we have pre-defined tickets from todo file */}
+        <Branch if={!tickets.length && !hasPredefinedTickets} then={<Discover ctx={ctx} />} />
         {tickets.map(t => <TaskRalph key={t.id} ticket={t} ctx={ctx} />)}
         <Branch if={allDone && !fullReview} then={<FullReviewRalph ctx={ctx} />} />
         <Branch if={allDone && fullReview} then={<HumanGate ctx={ctx} />} />
