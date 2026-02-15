@@ -1,0 +1,15 @@
+{
+  "name": "fabrik-smithers-runner",
+  "type": "module",
+  "scripts": {
+    "start": "bun run workflow.tsx",
+    "resume": "smithers resume workflow.tsx",
+    "discover": "bun run discover.ts"
+  },
+  "dependencies": {
+    "smithers-orchestrator": "github:evmts/smithers#ea5ece3",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "zod": "^4.3.6"
+  }
+}

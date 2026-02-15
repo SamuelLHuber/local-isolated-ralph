@@ -348,6 +348,51 @@ const syncProject = (vm: string, projectDir: string, workdir: string, includeGit
   run(tarArgs[0], tarArgs.slice(1))
 }
 
+const syncSmithersRunner = (vm: string, ralphHome: string, workdir: string) => {
+  const runnerDir = join(ralphHome, "smithers-runner")
+  if (!existsSync(runnerDir)) {
+    console.log(`[${vm}] Warning: smithers-runner directory not found at ${runnerDir}`)
+    return false
+  }
+  
+  console.log(`[${vm}] Syncing smithers-runner...`)
+  const tarArgs = [
+    "bash",
+    "-lc",
+    [
+      "COPYFILE_DISABLE=1",
+      "tar",
+      "-C",
+      `"${runnerDir}"`,
+      "--no-xattrs",
+      "-cf",
+      "-",
+      ".",
+      "|",
+      "limactl",
+      "shell",
+      "--workdir",
+      "/home/ralph",
+      `"${vm}"`,
+      "sudo",
+      "-u",
+      "ralph",
+      "mkdir",
+      "-p",
+      `"${workdir}/smithers-runner"`,
+      "&&",
+      "tar",
+      "--warning=no-unknown-keyword",
+      "-C",
+      `"${workdir}/smithers-runner"`,
+      "-xf",
+      "-"
+    ].join(" ")
+  ]
+  run(tarArgs[0], tarArgs.slice(1))
+  return true
+}
+
 const verifyGitAndInitJj = (vm: string, workdir: string) => {
   console.log(`[${vm}] Verifying git remote access and initializing jj...`)
   limactlShell(vm, [
@@ -668,6 +713,8 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
   if (projectDir) {
     if (process.platform === "darwin") {
       syncProject(options.vm, projectDir, vmWorkdir, options.includeGit)
+      // Sync smithers-runner for self-contained execution
+      syncSmithersRunner(options.vm, ralphHome, vmWorkdir)
       if (options.includeGit && existsSync(join(projectDir, ".git"))) {
         verifyGitAndInitJj(options.vm, vmWorkdir)
       }
@@ -906,7 +953,10 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
     "    rm -f \"$PID_FILE\"",
     "  fi",
     "fi",
-    `smithers run "${workflowInVm}" --run-id "${runId}" --root "${projectRootInVm}" &`,
+    `# Run from smithers-runner directory with its own dependencies`,
+    `cd "${vmWorkdir}/smithers-runner" && bun install 2>&1 | tail -5`,
+    `echo "[${options.vm}] Starting workflow from smithers-runner..."`,
+    `cd "${vmWorkdir}/smithers-runner" && bun run workflow.tsx &`,
     "SMITHERS_PID=$!",
     "export SMITHERS_PID",
     "echo \"$SMITHERS_PID\" > \"$PID_FILE\"",
