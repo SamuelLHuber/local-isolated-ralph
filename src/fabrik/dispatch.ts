@@ -313,39 +313,11 @@ const ensureBunReady = (vm: string) => {
 
 const syncProject = (vm: string, projectDir: string, workdir: string, includeGit: boolean) => {
   console.log(`[${vm}] Syncing project directory...`)
-  const excludes = ["--exclude=node_modules", "--exclude=._*", "--exclude=.DS_Store"]
-  if (!includeGit) excludes.push("--exclude=.git")
-  const tarArgs = [
-    "bash",
-    "-lc",
-    [
-      "COPYFILE_DISABLE=1",
-      "tar",
-      "-C",
-      `"${projectDir}"`,
-      "--no-xattrs",
-      ...excludes.map((x) => x.replace(/=/g, "=")),
-      "-cf",
-      "-",
-      ".",
-      "|",
-      "limactl",
-      "shell",
-      "--workdir",
-      "/home/ralph",
-      `"${vm}"`,
-      "sudo",
-      "-u",
-      "ralph",
-      "tar",
-      "--warning=no-unknown-keyword",
-      "-C",
-      `"${workdir}"`,
-      "-xf",
-      "-"
-    ].join(" ")
-  ]
-  run(tarArgs[0], tarArgs.slice(1))
+  // Use limactl copy for efficient rsync-based transfer
+  const excludes = ["node_modules", ".git", "._*", ".DS_Store"]
+  const excludeArgs = excludes.flatMap(e => ["--exclude", e])
+  
+  run("limactl", ["copy", ...excludeArgs, "-r", `${projectDir}/`, `${vm}:${workdir}`])
 }
 
 const syncSmithersRunner = (vm: string, ralphHome: string, workdir: string) => {
@@ -356,39 +328,10 @@ const syncSmithersRunner = (vm: string, ralphHome: string, workdir: string) => {
   }
   
   console.log(`[${vm}] Syncing smithers-runner...`)
-  const tarArgs = [
-    "bash",
-    "-lc",
-    [
-      "COPYFILE_DISABLE=1",
-      "tar",
-      "-C",
-      `"${runnerDir}"`,
-      "--no-xattrs",
-      "-cf",
-      "-",
-      ".",
-      "|",
-      "limactl",
-      "shell",
-      "--workdir",
-      "/home/ralph",
-      `"${vm}"`,
-      "sudo",
-      "-u",
-      "ralph",
-      "mkdir",
-      "-p",
-      `"${workdir}/smithers-runner"`,
-      "&&",
-      "tar",
-      "-C",
-      `"${workdir}/smithers-runner"`,
-      "-xf",
-      "-"
-    ].join(" ")
-  ]
-  run(tarArgs[0], tarArgs.slice(1))
+  const destDir = `${workdir}/smithers-runner`
+  
+  // Use limactl copy (uses rsync when available)
+  run("limactl", ["copy", "-r", `${runnerDir}/`, `${vm}:${destDir}`])
   return true
 }
 
