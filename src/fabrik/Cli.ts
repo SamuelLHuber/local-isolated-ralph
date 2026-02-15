@@ -307,6 +307,139 @@ const runAttachCommand = Command.make(
     })
 ).pipe(Command.withDescription("Attach to an existing run and stream logs"))
 
+const runResumeCommand = Command.make(
+  "resume",
+  {
+    id: Options.integer("id").pipe(Options.withDescription("Run id")),
+    db: Options.text("db").pipe(
+      Options.optional,
+      Options.withDescription("Path to ralph.db (default: ~/.cache/ralph/ralph.db)")
+    ),
+    fix: Options.boolean("fix").pipe(
+      Options.withDefault(false),
+      Options.withDescription("Attempt to fix 'string or blob too big' errors by truncating large database entries before resuming")
+    )
+  },
+  ({ id, db, fix }) =>
+    Effect.sync(() => {
+      const dbValue = unwrapOptional(db)
+      const dbPath = dbValue ?? resolve(homedir(), ".cache", "ralph", "ralph.db")
+      if (!existsSync(dbPath)) {
+        console.log(`No DB found at ${dbPath}`)
+        return
+      }
+      const { db: dbHandle } = openRunDb(dbPath)
+      const run = findRunById(dbHandle, id)
+      dbHandle.close()
+      if (!run) {
+        console.log("Run not found.")
+        return
+      }
+
+      const workBase = run.workdir.split("/").pop() ?? ""
+      const reportsDir = `/home/ralph/work/${run.vm_name}/.runs/${workBase}/reports`
+      const controlDir = `/home/ralph/work/${run.vm_name}/.runs/${workBase}`
+      const smithersRunnerDir = `${run.workdir}/smithers-runner`
+      const specId = readSpecId(run.spec_path)
+      const dbName = specId ? `${specId}.db` : `run-${run.id}.db`
+      const smithersDbPath = `${controlDir}/.smithers/${dbName}`
+
+      // Read run context from VM to reconstruct environment
+      const contextCmd = `cat "${reportsDir}/run-context.json" 2>/dev/null || echo '{}'`
+      const contextJson = runRemote(run.vm_name, contextCmd)
+      let context: Record<string, unknown> = {}
+      try {
+        context = JSON.parse(contextJson) as Record<string, unknown>
+      } catch {
+        console.log(`[${run.vm_name}] Warning: Could not parse run-context.json`)
+      }
+
+      // Extract environment variables from context
+      const envVars: string[] = []
+      const setEnv = (name: string, value: string | null | undefined) => {
+        if (value) envVars.push(`export ${name}="${value.replace(/"/g, '\\"')}"`)
+      }
+
+      setEnv("SMITHERS_SPEC_PATH", context.spec_path as string)
+      setEnv("SMITHERS_TODO_PATH", context.todo_path as string)
+      setEnv("SMITHERS_PROMPT_PATH", context.prompt_path as string)
+      setEnv("SMITHERS_REVIEW_PROMPT_PATH", context.review_prompt_path as string)
+      setEnv("SMITHERS_REVIEW_MODELS_FILE", context.review_models_path as string)
+      setEnv("SMITHERS_REPORT_DIR", reportsDir)
+      setEnv("SMITHERS_CWD", run.workdir)
+      setEnv("SMITHERS_BRANCH", context.branch as string)
+      setEnv("SMITHERS_RUN_ID", String(run.id))
+      setEnv("SMITHERS_DB_PATH", smithersDbPath)
+      setEnv("RALPH_AGENT", (context.agent as string) || "pi")
+      setEnv("MAX_ITERATIONS", "100")
+
+      // Optionally fix large database entries
+      if (fix) {
+        console.log(`[${run.vm_name}] Attempting to fix large database entries...`)
+        const fixScript = `python3 - <<'PY'
+import sqlite3, json, os
+db_path = "${smithersDbPath}"
+if not os.path.exists(db_path):
+    print("Database not found, skipping fix")
+    raise SystemExit(0)
+conn = sqlite3.connect(db_path)
+try:
+    # Find and truncate large entries in task outputs
+    MAX_SIZE = 500000  # ~500KB limit per field
+    tables_to_check = ['task_report', 'task_output', '_smithers_outputs']
+    for table in tables_to_check:
+        try:
+            cur = conn.execute(f"SELECT name FROM pragma_table_info('{table}')")
+            columns = [row[0] for row in cur.fetchall()]
+            for col in columns:
+                # Truncate text/blob columns that might be too large
+                if col in ['output', 'result', 'data', 'content', 'issues', 'next', 'raw']:
+                    cur = conn.execute(f"SELECT rowid, {col} FROM {table} WHERE LENGTH({col}) > ?", (MAX_SIZE,))
+                    for rowid, val in cur.fetchall():
+                        truncated = val[:MAX_SIZE] + "\\n[TRUNCATED: was " + str(len(val)) + " chars]"
+                        conn.execute(f"UPDATE {table} SET {col} = ? WHERE rowid = ?", (truncated, rowid))
+                        print(f"Truncated {table}.{col} row {rowid}")
+            conn.commit()
+        except Exception as e:
+            print(f"Skipping {table}: {e}")
+finally:
+    conn.close()
+print("Database fix complete")
+PY`
+        runRemote(run.vm_name, fixScript)
+      }
+
+      // Build resume script
+      const workflowFile = existsSync(`${smithersRunnerDir}/workflow-dynamic.tsx`) 
+        ? "workflow-dynamic.tsx" 
+        : "workflow.tsx"
+
+      const resumeScript = [
+        `cd "${smithersRunnerDir}"`,
+        "export PATH=\"$HOME/.bun/bin:$HOME/.bun/install/global/node_modules/.bin:$PATH\"",
+        "if [ -f ~/.config/ralph/ralph.env ]; then set -a; source ~/.config/ralph/ralph.env; set +a; fi",
+        "if [ -n \"${GITHUB_TOKEN:-}\" ]; then export GH_TOKEN=\"${GITHUB_TOKEN}\"; fi",
+        ...envVars,
+        `echo "[${run.vm_name}] Resuming workflow: ${workflowFile}"`,
+        `smithers resume ${workflowFile} 2>&1 | tee -a "${reportsDir}/smithers-resume.log"`,
+        `echo "${run.id}" > "${controlDir}/resumed.run_id"`
+      ].join("\n")
+
+      console.log(`[${run.vm_name}] Resuming run ${run.id}...`)
+      console.log(`[${run.vm_name}] Control dir: ${controlDir}`)
+      console.log(`[${run.vm_name}] Smithers DB: ${smithersDbPath}`)
+      console.log(`[${run.vm_name}] Workflow: ${workflowFile}`)
+      if (fix) {
+        console.log(`[${run.vm_name}] Database fix mode enabled - large entries will be truncated`)
+      }
+      console.log("")
+      console.log("To watch logs:")
+      console.log(`  fabrik run attach --id ${run.id}`)
+
+      runRemoteStream(run.vm_name, resumeScript)
+    })
+).pipe(Command.withDescription("Resume a failed or interrupted Smithers run"))
+
 const runDispatchCommand = Command.make(
   "run",
   {
@@ -426,7 +559,7 @@ const runDispatchCommand = Command.make(
   }
 ).pipe(
   Command.withDescription("Dispatch a Smithers run (immutable workdir)"),
-  Command.withSubcommands([runAttachCommand])
+  Command.withSubcommands([runAttachCommand, runResumeCommand])
 )
 
 const validateCommand = Command.make(

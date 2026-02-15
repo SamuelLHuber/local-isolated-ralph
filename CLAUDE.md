@@ -48,6 +48,32 @@ useEffect(() => {
 - On startup: if stale pid exists (no live process), mark execution as failed and continue
 - This enables host reconciliation without polling VM state
 
+## CRITICAL: SQLite "string or blob too big" Error
+
+### Root Cause
+The smithers-orchestrator uses SQLite via drizzle-orm to store task outputs. SQLite has a maximum string/blob size limit (default ~1GB). When agent outputs exceed this limit during UPDATE operations, the error occurs.
+
+### Common Triggers
+- Very large spec files parsed into discovery output
+- Agent generating massive JSON responses
+- Accumulated error messages or stack traces in retry loops
+
+### Recovery
+Use the resume command with the `--fix` flag to truncate large database entries before resuming:
+
+```bash
+# Find the failed run ID
+fabrik runs list
+
+# Resume with database fix
+fabrik run resume --id <run-id> --fix
+
+# Without fix (if database is not corrupted)
+fabrik run resume --id <run-id>
+```
+
+The `--fix` option runs a Python script in the VM that truncates entries larger than 500KB in the smithers database tables.
+
 ## CRITICAL: VCS Enforcement
 
 ### Every task with changes must push to VCS
