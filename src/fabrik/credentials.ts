@@ -262,3 +262,105 @@ export const syncCredentials = ({ vm }: SyncConfig) => {
   }
   console.log("Credentials copied.")
 }
+
+// Host-side ralph.env validation
+export const validateRalphEnvHost = (): { valid: boolean; issues: string[]; hasRequiredKeys: boolean } => {
+  const envPath = hostPath(".config/ralph/ralph.env")
+  
+  if (!existsSync(envPath)) {
+    return { valid: false, issues: ["~/.config/ralph/ralph.env not found"], hasRequiredKeys: false }
+  }
+  
+  const content = readFileSync(envPath, "utf8")
+  const exportValidation = validateRalphEnv(content)
+  
+  // Check for required keys
+  const requiredPatterns = [
+    { name: "GITHUB_TOKEN", pattern: /export\s+GITHUB_TOKEN=/ },
+    { name: "LLM API Key (FIREWORKS_API_KEY, API_KEY_MOONSHOT, or ANTHROPIC_API_KEY)", 
+      pattern: /export\s+(FIREWORKS_API_KEY|API_KEY_MOONSHOT|ANTHROPIC_API_KEY)=/ }
+  ]
+  
+  const missingKeys: string[] = []
+  for (const { name, pattern } of requiredPatterns) {
+    if (!pattern.test(content)) {
+      missingKeys.push(`  - ${name}`)
+    }
+  }
+  
+  const allIssues = [...exportValidation.issues, ...missingKeys]
+  
+  return {
+    valid: exportValidation.valid && missingKeys.length === 0,
+    issues: allIssues,
+    hasRequiredKeys: missingKeys.length === 0
+  }
+}
+
+// Test API keys in a VM
+export const testApiKeysInVm = (vm: string): { success: boolean; results: Record<string, boolean> } => {
+  const results: Record<string, boolean> = {}
+  
+  const testScript = `
+source ~/.config/ralph/ralph.env 2>/dev/null || exit 1
+
+# Test GitHub token
+if [[ -n "\${GITHUB_TOKEN:-}" ]]; then
+  github_status=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token \$GITHUB_TOKEN" https://api.github.com/user 2>/dev/null)
+  if [[ "$github_status" == "200" ]]; then
+    echo "github:true"
+  else
+    echo "github:false (HTTP $github_status)"
+  fi
+else
+  echo "github:missing"
+fi
+
+# Test Fireworks (optional)
+if [[ -n "\${FIREWORKS_API_KEY:-}" ]]; then
+  echo "fireworks:present"
+else
+  echo "fireworks:missing"
+fi
+
+# Test Moonshot (optional)
+if [[ -n "\${API_KEY_MOONSHOT:-}" ]]; then
+  echo "moonshot:present"
+else
+  echo "moonshot:missing"
+fi
+
+# Test Anthropic (optional)
+if [[ -n "\${ANTHROPIC_API_KEY:-}" ]]; then
+  echo "anthropic:present"
+else
+  echo "anthropic:missing"
+fi
+`
+  
+  try {
+    let output: string
+    if (process.platform === "darwin") {
+      output = runCommandOutput(
+        "limactl",
+        ["shell", "--workdir", "/home/ralph", vm, "bash", "-lc", testScript],
+        { context: `test API keys in ${vm}` }
+      )
+    } else {
+      // For Linux, we'd need the VM IP
+      output = "github:unknown"
+    }
+    
+    for (const line of output.split("\n")) {
+      const [key, value] = line.split(":")
+      if (key && value) {
+        results[key] = value.startsWith("true") || value === "present"
+      }
+    }
+    
+    const success = results.github === true
+    return { success, results }
+  } catch (error) {
+    return { success: false, results: { error: false } }
+  }
+}

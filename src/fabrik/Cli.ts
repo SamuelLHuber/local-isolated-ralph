@@ -9,7 +9,8 @@ import { homedir } from "node:os"
 import { listSpecs } from "./specs.js"
 import { resolveRalphHome } from "./embedded.js"
 import { laosDown, laosLogs, laosStatus, laosUp } from "./laos.js"
-import { syncCredentials } from "./credentials.js"
+import { syncCredentials, validateRalphEnvHost, testApiKeysInVm } from "./credentials.js"
+import { listRalphVms, printVmList, cleanupVms, createRalphEnv } from "./vm.js"
 import { dispatchRun } from "./dispatch.js"
 import { reconcileRuns } from "./reconcile.js"
 import { orchestrateRuns } from "./orchestrate.js"
@@ -1259,6 +1260,11 @@ const patternsCommand = Command.make("patterns").pipe(
 const credentialsCommand = Command.make("credentials").pipe(
   Command.withSubcommands([
     Command.make(
+      "init",
+      {},
+      () => Effect.sync(() => createRalphEnv())
+    ).pipe(Command.withDescription("Create ~/.config/ralph/ralph.env template")),
+    Command.make(
       "sync",
       { vm: vmOption },
       ({ vm }) => Effect.sync(() => syncCredentials({ vm }))
@@ -1267,36 +1273,69 @@ const credentialsCommand = Command.make("credentials").pipe(
       "validate",
       {},
       () => Effect.sync(() => {
-        const envPath = join(homedir(), ".config/ralph/ralph.env")
-        if (!existsSync(envPath)) {
-          console.log("❌ ~/.config/ralph/ralph.env not found")
-          console.log("   Run: ./scripts/create-ralph-env.sh")
+        const result = validateRalphEnvHost()
+        
+        if (!result.valid) {
+          console.log("❌ ralph.env validation failed:")
+          result.issues.forEach(i => console.log(i))
+          console.log("\nRun: fabrik credentials init to create template")
           process.exit(1)
         }
         
-        const content = readFileSync(envPath, "utf8")
-        const issues: string[] = []
-        const lines = content.split("\n")
-        
-        for (const line of lines) {
-          if (line.trim().startsWith("#") || !line.trim()) continue
-          if (line.match(/^[A-Z_][A-Z0-9_]*=/) && !line.match(/^export\s/)) {
-            const key = line.split("=")[0]
-            issues.push(`  - ${key} (missing 'export' keyword)`)
-          }
-        }
-        
-        if (issues.length > 0) {
-          console.log("⚠️  ralph.env issues found:")
-          issues.forEach(i => console.log(i))
-          console.log("\nRun: ./scripts/validate-ralph-env.sh to fix")
-          process.exit(1)
-        }
-        
-        console.log("✅ ralph.env is valid (all variables exported)")
+        console.log("✅ ralph.env is valid")
+        console.log("   - All variables properly exported")
+        console.log("   - Required keys present")
       })
-    ).pipe(Command.withDescription("Validate ralph.env has proper exports"))
+    ).pipe(Command.withDescription("Validate ralph.env has proper exports and required keys")),
+    Command.make(
+      "test",
+      { vm: vmOption },
+      ({ vm }) => Effect.sync(() => {
+        console.log(`Testing API keys in VM: ${vm}`)
+        console.log("")
+        
+        const { success, results } = testApiKeysInVm(vm)
+        
+        for (const [key, value] of Object.entries(results)) {
+          const icon = value ? "✅" : "❌"
+          console.log(`${icon} ${key}: ${value ? "working" : "failed/missing"}`)
+        }
+        
+        console.log("")
+        if (success) {
+          console.log("✅ All required API keys working")
+        } else {
+          console.log("❌ Some API keys not working. Run: fabrik credentials sync --vm " + vm)
+          process.exit(1)
+        }
+      })
+    ).pipe(Command.withDescription("Test API keys are working in a VM"))
   ])
+)
+
+const vmListCommand = Command.make(
+  "list",
+  {},
+  () => Effect.sync(() => printVmList())
+).pipe(Command.withDescription("List all Ralph VMs"))
+
+const vmCleanupCommand = Command.make(
+  "cleanup",
+  {
+    all: Options.boolean("all").pipe(Options.withDefault(false), Options.withDescription("Delete all Ralph VMs")),
+    force: Options.boolean("force").pipe(Options.withDefault(false), Options.withDescription("Confirm deletion without prompt")),
+    vms: Options.text("vms").pipe(Options.optional, Options.withDescription("Comma-separated VM names to delete"))
+  },
+  ({ all, force, vms }) =>
+    Effect.sync(() => {
+      const vmList = vms ? vms.split(",").map(s => s.trim()).filter(Boolean) : undefined
+      cleanupVms({ vms: vmList, all, force })
+    })
+).pipe(Command.withDescription("Cleanup Ralph VMs"))
+
+const vmCommand = Command.make("vm").pipe(
+  Command.withDescription("Manage Ralph VMs"),
+  Command.withSubcommands([vmListCommand, vmCleanupCommand])
 )
 
 const orchestrateCommand = Command.make(
@@ -1395,6 +1434,7 @@ const cli = Command.make("fabrik").pipe(
     runsCommand,
     laosCommand,
     credentialsCommand,
+    vmCommand,
     orchestrateCommand
   ])
 )
