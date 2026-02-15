@@ -11,7 +11,7 @@ import { validateBeforeDispatch, printValidationResults } from "./validate-workf
 type DispatchOptions = {
   vm: string
   spec: string
-  todo: string
+  todo?: string
   project?: string
   repoUrl?: string
   repoRef?: string
@@ -71,6 +71,49 @@ const minifyJson = (path: string) => {
     return JSON.stringify(json)
   } catch (error) {
     throw new Error(`Failed to parse JSON: ${path}\n${String(error)}`)
+  }
+}
+
+const validateTodoHasTickets = (todoPath: string, isDynamic: boolean): void => {
+  // In dynamic mode, todo is generated at runtime - skip validation
+  if (isDynamic) return
+
+  if (!existsSync(todoPath)) {
+    throw new Error(
+      `Missing todo file: ${todoPath}\n\n` +
+      `To create a todo file, run:\n` +
+      `  fabrik todo generate\n\n` +
+      `This outputs a guide. Pipe it to an agent to generate the todo JSON:\n` +
+      `  fabrik todo generate | claude-code  # or pi, codex, etc.\n\n` +
+      `Save the output as ${todoPath} and retry.`
+    )
+  }
+
+  try {
+    const raw = readFileSync(todoPath, "utf8")
+    const json = JSON.parse(raw) as { tickets?: unknown[]; _type?: string }
+
+    // Check for empty tickets array
+    const tickets = json.tickets
+    if (!tickets || !Array.isArray(tickets) || tickets.length === 0) {
+      throw new Error(
+        `Empty todo file: ${todoPath}\n\n` +
+        `The todo file exists but contains no tickets.\n\n` +
+        `To fix this:\n` +
+        `1. Ensure the spec is complete and ready\n` +
+        `2. Run: fabrik todo generate | claude-code\n` +
+        `3. Save the generated todo JSON to: ${todoPath}\n\n` +
+        `Or use dynamic mode to discover tasks at runtime:\n` +
+        `  fabrik run --spec <spec> --vm <vm> --dynamic`
+      )
+    }
+  } catch (error) {
+    // Re-throw our own errors
+    if (error instanceof Error && error.message.startsWith("Empty todo")) {
+      throw error
+    }
+    // Wrap parse errors
+    throw new Error(`Failed to validate todo file: ${todoPath}\n${String(error)}`)
   }
 }
 
@@ -521,9 +564,29 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
   const isMarkdownSpec = specPath.endsWith(".md") || specPath.endsWith(".mdx")
   
   // In dynamic mode, todo is optional (generated at runtime)
-  const todoPath = options.dynamic 
-    ? (options.todo ? safeRealpath(options.todo)! : `${specPath}.dynamic-todo.json`)
-    : safeRealpath(options.todo)!
+  const isDynamic = options.dynamic ?? false
+  let todoPath: string
+  
+  if (isDynamic) {
+    // Dynamic mode: use provided todo or generate a dynamic path
+    todoPath = options.todo ? safeRealpath(options.todo)! : `${specPath}.dynamic-todo.json`
+  } else {
+    // Non-dynamic mode: todo is required
+    if (!options.todo) {
+      throw new Error(
+        `Missing required --todo in non-dynamic mode.\n\n` +
+        `To create a todo file, run:\n` +
+        `  fabrik todo generate | claude-code  # or pi, codex, etc.\n\n` +
+        `Save the output and provide it with:\n` +
+        `  fabrik run --spec <spec> --todo <todo> --vm <vm>\n\n` +
+        `Or use --dynamic to discover tasks at runtime.`
+      )
+    }
+    todoPath = safeRealpath(options.todo)!
+  }
+  
+  // Validate todo has tickets (non-dynamic mode only)
+  validateTodoHasTickets(todoPath, isDynamic)
   
   // Determine workflow: custom path, or default from smithers-runner
   const workflowFile = options.workflow 
@@ -619,10 +682,12 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
     ? JSON.stringify({ _type: "markdown", path: specPath, content: readText(specPath) })
     : minifyJson(specPath)
   
-  // Handle todo: in dynamic mode may not exist yet
-  const todoMinified = !existsSync(todoPath)
-    ? JSON.stringify({ _type: "dynamic", generated: true, tickets: [] })
-    : minifyJson(todoPath)
+  // Handle todo: in dynamic mode, don't create empty placeholder - workflow discovers from spec
+  // In non-dynamic mode, todo is validated to exist before we get here
+  const shouldWriteTodo = !isDynamic || existsSync(todoPath)
+  const todoMinified = shouldWriteTodo
+    ? (existsSync(todoPath) ? minifyJson(todoPath) : JSON.stringify({ _type: "dynamic", generated: true, tickets: [] }))
+    : null  // Don't write anything in dynamic mode when file doesn't exist
 
   const osInfo = `${process.platform}-${process.arch}`
   const binaryHash = getBinaryHash()
@@ -811,7 +876,9 @@ export const dispatchRun = (options: DispatchOptions): DispatchResult => {
   }
 
   writeFileRemote(options.vm, specInVm, specMinified)
-  writeFileRemote(options.vm, todoInVm, todoMinified)
+  if (todoMinified !== null) {
+    writeFileRemote(options.vm, todoInVm, todoMinified)
+  }
   if (!projectDir || !pathWithin(projectDir, workflowPath)) {
     writeFileRemote(options.vm, workflowInVm, readText(workflowPath))
   }

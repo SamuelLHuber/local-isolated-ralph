@@ -384,7 +384,9 @@ const runDispatchCommand = Command.make(
         console.log(`[INFO] No --project provided; using current repo: ${cwd}`)
       }
     }
-    const resolvedTodo = todoValue ?? resolveTodoPath(specValue)
+    // In dynamic mode, don't resolve a default todo path - let dispatch generate one
+    // This prevents accidentally using an existing empty todo file
+    const resolvedTodo = todoValue ?? (dynamic ? undefined : resolveTodoPath(specValue))
     if (process.platform === "darwin" || process.platform === "linux") {
       return Effect.sync(() => {
         const result = dispatchRun({
