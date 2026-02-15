@@ -382,7 +382,6 @@ const syncSmithersRunner = (vm: string, ralphHome: string, workdir: string) => {
       `"${workdir}/smithers-runner"`,
       "&&",
       "tar",
-      "--warning=no-unknown-keyword",
       "-C",
       `"${workdir}/smithers-runner"`,
       "-xf",
