@@ -100,6 +100,25 @@ In dynamic mode, the workflow discovers tasks at runtime from the spec content. 
 ```
 This means the smithers CLI is actually executing the Discover task.
 
+### Known Issue: Dynamic Workflow Output Parsing
+
+**Status**: The dynamic workflow executes but output extraction has issues.
+
+**Problem**: The Discover task runs and completes, but the generated tickets JSON is not being stored in the database. The response contains valid JSON with tickets, but smithers-orchestrator is not extracting it properly from PiAgent's response stream.
+
+**Evidence**:
+- `discover` node shows `state=finished` (no error)
+- Response contains valid JSON with tickets (20MB response, includes `"tickets"`, `"batchComplete"`)
+- But `discover` table shows all NULL values (tickets, reasoning, batch_complete)
+
+**Root Cause**: PiAgent with `mode: "json"` outputs a stream of JSON objects (session metadata, thinking tokens, agent events). The smithers Task component extracts the FIRST JSON object (session metadata) instead of the actual output JSON.
+
+**Workaround**: Use non-dynamic mode with pre-generated todo files:
+```bash
+fabrik todo generate | claude-code  # Generate tickets manually
+fabrik run --spec <spec> --todo <todo> --vm <vm>  # Non-dynamic mode
+```
+
 ## Quick Debug Commands
 
 ### 1. Check Run Status (Host-side)
