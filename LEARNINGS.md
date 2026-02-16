@@ -303,3 +303,149 @@ tar -C "${projectDir}" \
 |----------|--------|-------|
 | **macOS + Lima** | tar pipe via limactl shell | Excludes handled at source |
 | **Linux + libvirt** | rsync with SSH | Native --exclude support |
+
+---
+
+## When to Use limactl vs Fabrik CLI
+
+### The Interplay Problem
+
+There's a critical distinction between **Fabrik CLI commands** (host-side) and **direct VM access** via `limactl shell`:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    HOST (Your Machine)                  │
+│  ┌─────────────┐     ┌─────────────┐     ┌───────────┐ │
+│  │ fabrik CLI  │────→│   run.sh    │────→│  limactl  │ │
+│  │  commands   │     │  (deployed) │     │  shell    │ │
+│  └─────────────┘     └─────────────┘     └─────┬─────┘ │
+│         │                    │                  │       │
+│         └────────────────────┴──────────────────┘       │
+│                           ↓                             │
+│                    VM (ralph-1)                         │
+│              ┌─────────────────────┐                    │
+│              │  smithers workflow  │                    │
+│              │  SQLite database    │                    │
+│              └─────────────────────┘                    │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Use **Fabrik CLI** When:
+
+| Scenario | Command | Why |
+|----------|---------|-----|
+| Quick status check | `fabrik runs show --id 113 --live` | One-liner, formatted output |
+| Watch progress | `fabrik runs watch --vm ralph-1 --run-id 113` | Live updates, notifications |
+| Stream logs | `fabrik run attach --id 113` | Real-time log tailing |
+| Resume workflow | `fabrik run resume --id 113` | Proper environment setup |
+| List runs | `fabrik runs list` | Human-readable table |
+
+### Use **limactl shell** When:
+
+| Scenario | Example | Why Fabrik Can't Do It |
+|----------|---------|------------------------|
+| **Direct DB query** | `sqlite3 run-113.db "SELECT..."` | Needs arbitrary SQL |
+| **Fix stuck tasks** | `UPDATE _smithers_nodes SET state='failed'` | Needs write access to repair data |
+| **Check processes** | `ps aux \| grep smithers` | OS-level process inspection |
+| **Inspect heartbeat** | `cat heartbeat.json` | File access outside Fabrik's scope |
+| **Manual DB fixes** | `VACUUM`, `DELETE`, `INSERT` | Requires admin/repair operations |
+| **Check log files** | `tail -100 smithers.log` | Direct file access |
+| **Debug smithers** | Check installed version | Access to node_modules |
+
+### Critical Example: Stuck Task Detection
+
+**Fabrik CLI shows:**
+```bash
+$ fabrik runs show --id 113
+status: done
+exit_code: 0
+```
+
+**But VM reality (via limactl):**
+```bash
+$ limactl shell ralph-1 -- python3 << 'EOF'
+import sqlite3
+conn = sqlite3.connect('/home/ralph/work/ralph-1/.../.smithers/run-113.db')
+c = conn.cursor()
+c.execute("SELECT node_id, state FROM _smithers_nodes WHERE state='in-progress'")
+print("Stuck tasks:", c.fetchall())
+EOF
+
+# Output: Stuck tasks: [('15:impl', 'in-progress')]
+```
+
+**Why the mismatch?**
+- Host DB says "done" (last known state)
+- VM DB says "in-progress" (actual current state)
+- Heartbeat writer died, so host never got final update
+- Need `limactl` to see truth
+
+### Rule of Thumb
+
+```
+┌────────────────────────────────────────────────────────┐
+│  START with:  fabrik runs show --id 113 --live         │
+│                                                        │
+│  If status looks wrong → use limactl shell             │
+│  If need to fix data   → use limactl shell           │
+│  If just watching      → use fabrik attach/watch     │
+│                                                        │
+│  Fallback always:  limactl shell + Python/SQL          │
+└────────────────────────────────────────────────────────┘
+```
+
+### Common Commands Reference
+
+**Fabrik CLI:**
+```bash
+# Status with live VM query
+fabrik runs show --id 113 --live
+
+# Watch with progress updates
+fabrik runs watch --vm ralph-1 --run-id 113
+
+# Resume after crash
+fabrik run resume --id 113
+```
+
+**limactl shell (direct VM access):**
+```bash
+# Quick process check
+limactl shell ralph-1 -- ps aux | grep smithers
+
+# Database query
+limactl shell ralph-1 -- python3 << 'EOF'
+import sqlite3
+conn = sqlite3.connect('/home/ralph/work/ralph-1/.runs/.../.smithers/run-113.db')
+# ... your query ...
+EOF
+
+# Fix stuck task
+limactl shell ralph-1 -- python3 << 'EOF'
+import sqlite3, time
+conn = sqlite3.connect('/home/ralph/work/ralph-1/.runs/.../.smithers/run-113.db')
+c = conn.cursor()
+c.execute("UPDATE _smithers_nodes SET state='failed' WHERE node_id='15:impl'")
+conn.commit()
+EOF
+```
+
+### The Danger: run.sh Version Mismatch
+
+**Critical finding**: `run.sh` is generated once at dispatch time and contains hardcoded smithers version:
+
+```bash
+# In VM's run.sh - generated Feb 15, NOT updated by fabrik fixes
+bun add smithers-orchestrator@github:evmts/smithers#ea5ece3  # OLD
+```
+
+**Even after global smithers is fixed, attach/resume may use OLD version!**
+
+**Fix via limactl:**
+```bash
+limactl shell ralph-1 -- sed -i \
+  's|github:evmts/smithers#ea5ece3|github:SamuelLHuber/smithers#3e41cf48|g' \
+  /home/ralph/work/ralph-1/.runs/.../run.sh
+```
+
+See full debugging guide: [docs/DEBUGGING-RUNS.md](./docs/DEBUGGING-RUNS.md)
