@@ -214,9 +214,15 @@ function vcsPush(): { success: boolean; output: string } {
         }
       }
     } else if (hasGit) {
-      // Pure git push
-      execSync(`git push origin ${targetBranch} 2>&1`, { cwd, encoding: "utf8", stdio: "pipe" });
-      return { success: true, output: `git push origin ${targetBranch} succeeded` };
+      // Pure git push - set upstream tracking for new branches
+      try {
+        execSync(`git push --set-upstream origin ${targetBranch} 2>&1`, { cwd, encoding: "utf8", stdio: "pipe" });
+        return { success: true, output: `git push --set-upstream origin ${targetBranch} succeeded` };
+      } catch (e) {
+        // If upstream already set, try regular push
+        execSync(`git push origin ${targetBranch} 2>&1`, { cwd, encoding: "utf8", stdio: "pipe" });
+        return { success: true, output: `git push origin ${targetBranch} succeeded` };
+      }
     }
     return { success: false, output: "Unknown VCS state" };
   } catch (e: any) {
