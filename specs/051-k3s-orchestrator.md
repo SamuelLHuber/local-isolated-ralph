@@ -3,9 +3,16 @@
 > Kubernetes-native fabrik execution — Jobs, CronJobs, and resource management
 
 **Status**: draft  
-**Version**: 1.1.0  
+**Version**: 1.2.0  
 **Last Updated**: 2026-02-16  
 **Supersedes**: All VM-based approaches
+
+---
+
+## Changelog
+
+- **v1.2.0** (2026-02-16): Added resilience (resume without progress loss), K8s native cleanup, alerting thresholds
+- **v1.1.0** (2026-02-16): Initial k3s-native spec (Jobs, PVCs, Secrets, annotations)
 
 ---
 
@@ -481,6 +488,123 @@ class RunCache {
 
 ---
 
+## Resilience: Resume Without Losing Progress
+
+When Smithers crashes, times out, or the pod dies, we resume without losing progress.
+
+**Mechanism:**
+
+```
+┌─ Resilience Flow ──────────────────────────────────────────────────────┐
+│                                                                         │
+│  1. Smithers runs in pod with PVC mounted at /workspace/.smithers     │
+│     └─ SQLite DB persists across pod restarts                         │
+│                                                                         │
+│  2. Pod dies (OOM, node failure, spot termination)                    │
+│     └─ Job controller sees pod failed                                │
+│                                                                         │
+│  3. Job creates new pod (same PVC reattached)                        │
+│     └─ Smithers starts, reads SQLite state                            │
+│                                                                         │
+│  4. Smithers resumes from last completed task                         │
+│     └─ No progress lost, continues execution                           │
+│                                                                         │
+│  5. Fabrik detects prolonged failure (>30min stuck)                  │
+│     └─ Alert fired (webhook/email)                                   │
+│     └─ Optional: Auto-deploy "fixer" pod with diagnostic tools       │
+│         to investigate and potentially repair                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Resume Detection:**
+
+```typescript
+// Smithers startup checks SQLite
+const db = new Database('/workspace/.smithers/state.db');
+const lastTask = db.query("SELECT * FROM tasks WHERE status = 'completed' ORDER BY seq DESC LIMIT 1");
+
+if (lastTask) {
+  console.log(`Resuming from task ${lastTask.id}`);
+  // Continue from next task
+} else {
+  console.log("Fresh start");
+  // Start from beginning
+}
+```
+
+**Auto-Healing (Optional):**
+
+```bash
+# When alert fires (via AlertManager in LAOS), deploy fixer
+fabrik run fix --target 01jk7v8x... --spec specs/diagnose-and-repair.json
+
+# Fixer pod has:
+# - kubectl access to target namespace
+# - Access to fabrik repo (this repo) for docs
+# - LLM agent prompted to diagnose and suggest fixes
+```
+
+**Alerting Thresholds:**
+- Pod stuck in `ContainerCreating` > 5 min → Alert
+- Pod running but no annotation updates > 30 min → Alert  
+- Job failed > 3 resume attempts → Alert + manual intervention
+
+---
+
+## Cleanup: K8s Native TTL
+
+We use K8s native mechanisms for cleanup - no custom controller needed.
+
+**Job Cleanup:**
+
+```yaml
+spec:
+  ttlSecondsAfterFinished: 604800  # 7 days
+  activeDeadlineSeconds: 86400     # 24 hour max runtime
+```
+
+**PVC Cleanup:**
+
+```yaml
+# RetainPolicy on StorageClass
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-fabrik
+reclaimPolicy: Delete  # PVC deleted when Job deleted
+# OR: reclaimPolicy: Retain for manual cleanup
+```
+
+**Namespace-Level Cleanup:**
+
+```bash
+# Manual cleanup commands
+fabrik runs cleanup --older-than 7d --status finished
+fabrik runs cleanup --older-than 30d --status failed
+fabrik volumes cleanup --unused  # Delete unbound PVCs
+```
+
+**Resource Quotas (Prevent Cluster Exhaustion):**
+
+```yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: fabrik-runs-quota
+  namespace: fabrik-runs
+spec:
+  hard:
+    jobs: "100"
+    pods: "100"
+    requests.cpu: "100"
+    requests.memory: 200Gi
+    limits.cpu: "200"
+    limits.memory: 400Gi
+    persistentvolumeclaims: "50"
+```
+
+---
+
 ## Acceptance Criteria
 
 - [ ] `fabrik cluster init` creates working k3s cluster with fabrik-system and fabrik-runs namespaces
@@ -506,6 +630,12 @@ class RunCache {
 - [ ] Resource limits enforced (jobs killed if memory > limit)
 - [ ] 24-hour activeDeadlineSeconds enforced (long-running jobs killed)
 - [ ] PVCs deleted 7 days after Job completion (configurable)
+- [ ] Smithers resumes from last completed task after pod restart (no progress loss)
+- [ ] Job `ttlSecondsAfterFinished` cleans up completed jobs after 7 days
+- [ ] ResourceQuota limits prevent cluster exhaustion (100 jobs, 200Gi memory max)
+- [ ] Alert fired when pod stuck > 30 min without annotation updates
+- [ ] `fabrik run resume` deletes stuck pod, Job recreates with same PVC
+- [ ] SQLite state in PVC survives pod restarts and node failures
 
 ---
 

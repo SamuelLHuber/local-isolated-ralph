@@ -3,10 +3,18 @@
 > Mission control dashboards for fabrik — web UI and CLI TUI, both direct K8s access
 
 **Status**: draft  
-**Version**: 2.0.0  
+**Version**: 2.1.0  
 **Last Updated**: 2026-02-16  
 **Depends On**: `051-k3s-orchestrator`  
 **Supersedes**: All previous dashboard approaches. Direct K8s API access only (like kubectl/k9s).
+
+---
+
+## Changelog
+
+- **v2.1.0** (2026-02-16): Added debugging section (kubectl/k9s), clarified log streaming mechanism
+- **v2.0.0** (2026-02-16): Direct K8s API spec, Ink-based TUI, no daemon
+- **v1.1.0** (2026-02-16): First draft with daemon (since removed)
 
 ---
 
@@ -553,6 +561,63 @@ class RunCache {
 - [ ] Direct K8s API access like kubectl/k9s
 - [ ] Optional SQLite cache for performance (not required)
 - [ ] Multi-cluster support via kubeconfig contexts
+
+---
+
+## Debugging with kubectl/k9s
+
+While Fabrik provides dashboards, sometimes you need direct K8s access.
+
+**kubectl (Standard K8s CLI):**
+
+```bash
+# List fabrik jobs
+kubectl get jobs -n fabrik-runs -l fabrik.dev/managed-by=fabrik
+
+# Get run details
+kubectl describe job -n fabrik-runs fabrik-01jk7v8x...
+
+# Stream logs (what Fabrik TUI does)
+kubectl logs -n fabrik-runs -l fabrik.dev/run-id=01jk7v8x... -f
+
+# Execute into running pod
+kubectl exec -n fabrik-runs -it fabrik-01jk7v8x...-abcd -- /bin/sh
+
+# Check pod annotations (Smithers status)
+kubectl get pod -n fabrik-runs fabrik-01jk7v8x...-abcd -o jsonpath='{.metadata.annotations}'
+
+# Port-forward to debug
+kubectl port-forward -n fabrik-runs pod/fabrik-01jk7v8x...-abcd 8080:8080
+```
+
+**k9s (Terminal UI for K8s):**
+
+```bash
+# Install k9s (if not already)
+brew install k9s  # macOS
+nix-shell -p k9s  # NixOS
+
+# Launch (uses current kubeconfig context)
+k9s -n fabrik-runs
+
+# Key bindings in k9s:
+# :jobs       → View jobs
+# /fabrik     → Filter fabrik resources
+# l           → Logs
+# s           → Shell into pod
+# d           → Describe resource
+# Ctrl+C      → Quit
+```
+
+**When to use what:**
+
+| Scenario | Tool | Why |
+|----------|------|-----|
+| Daily monitoring | `fabrik dashboard` | Unified view, progress bars |
+| Quick check | `k9s` | Fast, familiar if you know K8s |
+| Debug stuck pod | `kubectl exec` | Direct access to Smithers DB |
+| Analyze failures | `kubectl describe` | Full event history |
+| Custom queries | `kubectl + jq` | Arbitrary JSON processing |
 
 ---
 

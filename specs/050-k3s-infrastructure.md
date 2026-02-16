@@ -3,9 +3,15 @@
 > Pulumi-based infrastructure provisioning for fabrik k3s clusters — Hetzner Cloud native with NixOS
 
 **Status**: draft  
-**Version**: 1.0.0  
+**Version**: 1.1.0  
 **Last Updated**: 2026-02-16  
 **Provides**: Infrastructure foundation for k3s execution
+
+---
+
+## Changelog
+
+- **v1.1.0** (2026-02-16): Added container build process, Pulumi state backend (S3), clarified no external dependencies
 
 ---
 
@@ -363,7 +369,29 @@ in
 }
 ```
 
-### 4. Pulumi Hetzner Implementation
+### 4. Container Image Build (Nix)
+
+Smithers runs as a container in k3s. We build via Nix for reproducibility.
+
+**Build:**
+```bash
+nix build .#fabrik-smithers-image
+docker load < result
+docker tag fabrik-smithers:latest ghcr.io/fabrik/smithers:v1.2.3
+docker push ghcr.io/fabrik/smithers:v1.2.3
+```
+
+**Image:** ~50-100MB, non-root user (1000:1000), multi-arch support.
+
+### 5. Pulumi State (Self-Hosted)
+
+No Pulumi Cloud. Options:
+- **S3**: `pulumi login s3://fabrik-state?endpoint=minio.internal:9000`
+- **Local**: `pulumi login file:///mnt/shared/pulumi-state`
+
+State encrypted with passphrase, backed up to S3 daily.
+
+### 6. Pulumi Hetzner Implementation
 
 ```typescript
 // pulumi/hetzner/index.ts
@@ -579,7 +607,7 @@ export const workerIps = workers.map(w => w.ipv4Address);
 export const apiEndpoint = lb.ipv4;
 ```
 
-### 5. Manual/SSH Bootstrap
+### 7. Manual/SSH Bootstrap
 
 ```typescript
 // pulumi/manual/index.ts
@@ -693,7 +721,7 @@ const workerInstalls = nodes
 export const kubeconfigCommand = pulumi.interpolate`ssh -i ${firstCp.sshKeyPath} root@${firstCp.host} "cat /etc/rancher/k3s/k3s.yaml" | sed "s/127.0.0.1/${firstCp.host}/g"`;
 ```
 
-### 6. Post-Provisioning: Add-ons
+### 8. Post-Provisioning: Add-ons
 
 ```typescript
 // pulumi/addons/index.ts
