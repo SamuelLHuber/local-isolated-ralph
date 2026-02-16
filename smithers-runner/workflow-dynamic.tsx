@@ -19,26 +19,60 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join, resolve, basename } from "node:path";
 import { execSync } from "node:child_process";
 
-// Checkout the correct branch before any work begins
+// VCS-aware branch setup - supports both jj (Jujutsu) and git
 const targetBranch = process.env.SMITHERS_BRANCH || "master";
 const cwd = process.env.SMITHERS_CWD || process.cwd();
-try {
-  // Check current branch
-  const currentBranch = execSync("git branch --show-current", { cwd, encoding: "utf8" }).trim();
-  if (currentBranch !== targetBranch) {
-    console.log(`[workflow] Switching from ${currentBranch} to ${targetBranch}...`);
-    try {
-      execSync(`git checkout -b ${targetBranch} 2>/dev/null || git checkout ${targetBranch}`, { cwd, stdio: "pipe" });
-      console.log(`[workflow] Now on branch: ${targetBranch}`);
-    } catch (e) {
-      console.warn(`[workflow] Branch checkout failed: ${e}`);
-    }
-  } else {
-    console.log(`[workflow] Already on correct branch: ${targetBranch}`);
+
+function vcsBranchSetup() {
+  // Detect VCS type by checking for .jj or .git directories
+  const hasJj = existsSync(join(cwd, ".jj"));
+  const hasGit = existsSync(join(cwd, ".git"));
+  
+  if (!hasJj && !hasGit) {
+    console.log(`[workflow] No VCS detected (.jj or .git), skipping branch setup`);
+    return;
   }
-} catch (e) {
-  console.warn(`[workflow] Git branch check failed: ${e}`);
+  
+  try {
+    if (hasJj) {
+      // JJ (Jujutsu) workflow - colocated with git
+      // In jj, we use bookmarks for git branch integration
+      try {
+        // Check if we're already on a change with the target bookmark
+        const currentBookmark = execSync("jj bookmark list --current 2>/dev/null || true", { cwd, encoding: "utf8" }).trim();
+        if (currentBookmark.includes(targetBranch)) {
+          console.log(`[workflow] JJ: Already on bookmark ${targetBranch}`);
+        } else {
+          // Create/track bookmark if it doesn't exist
+          console.log(`[workflow] JJ: Setting up bookmark ${targetBranch}...`);
+          execSync(`jj bookmark create ${targetBranch} 2>/dev/null || true`, { cwd, stdio: "pipe" });
+          execSync(`jj bookmark track ${targetBranch} --remote=origin 2>/dev/null || true`, { cwd, stdio: "pipe" });
+          console.log(`[workflow] JJ: Bookmark ${targetBranch} ready`);
+        }
+      } catch (e) {
+        console.warn(`[workflow] JJ bookmark setup failed: ${e}`);
+      }
+    } else if (hasGit) {
+      // Pure Git workflow
+      const currentBranch = execSync("git branch --show-current", { cwd, encoding: "utf8" }).trim();
+      if (currentBranch !== targetBranch) {
+        console.log(`[workflow] Git: Switching from ${currentBranch} to ${targetBranch}...`);
+        try {
+          execSync(`git checkout -b ${targetBranch} 2>/dev/null || git checkout ${targetBranch}`, { cwd, stdio: "pipe" });
+          console.log(`[workflow] Git: Now on branch: ${targetBranch}`);
+        } catch (e) {
+          console.warn(`[workflow] Git branch checkout failed: ${e}`);
+        }
+      } else {
+        console.log(`[workflow] Git: Already on branch: ${targetBranch}`);
+      }
+    }
+  } catch (e) {
+    console.warn(`[workflow] Branch setup failed: ${e}`);
+  }
 }
+
+vcsBranchSetup();
 
 // Config from environment
 const specPath = resolve(process.env.SMITHERS_SPEC_PATH || "specs/spec.md");
@@ -145,6 +179,46 @@ const getReviewers = (names?: string[]): string[] => {
 
 const readPrompt = (path: string) => { try { return readFileSync(path, "utf8"); } catch { return ""; } };
 
+// VCS push helper - enforces push to remote after changes
+function vcsPush(): { success: boolean; output: string } {
+  const hasJj = existsSync(join(cwd, ".jj"));
+  const hasGit = existsSync(join(cwd, ".git"));
+  
+  if (!hasJj && !hasGit) {
+    return { success: true, output: "No VCS detected, skipping push" };
+  }
+  
+  try {
+    if (hasJj) {
+      // JJ push - handles both colocated git and pure jj
+      try {
+        // First try pushing with bookmark
+        execSync(`jj git push --bookmark ${targetBranch} 2>&1`, { cwd, encoding: "utf8", stdio: "pipe" });
+        return { success: true, output: `jj git push --bookmark ${targetBranch} succeeded` };
+      } catch (e) {
+        // If bookmark push fails, try tracking then pushing
+        try {
+          execSync(`jj bookmark track ${targetBranch} --remote=origin 2>/dev/null || true`, { cwd, stdio: "pipe" });
+          execSync(`jj git push --bookmark ${targetBranch} 2>&1`, { cwd, encoding: "utf8", stdio: "pipe" });
+          return { success: true, output: `jj git push --bookmark ${targetBranch} succeeded after track` };
+        } catch (e2) {
+          // Fallback: push current change
+          execSync(`jj git push --change @ 2>&1`, { cwd, encoding: "utf8", stdio: "pipe" });
+          return { success: true, output: "jj git push --change @ succeeded" };
+        }
+      }
+    } else if (hasGit) {
+      // Pure git push
+      execSync(`git push origin ${targetBranch} 2>&1`, { cwd, encoding: "utf8", stdio: "pipe" });
+      return { success: true, output: `git push origin ${targetBranch} succeeded` };
+    }
+    return { success: false, output: "Unknown VCS state" };
+  } catch (e: any) {
+    const error = e?.stderr || e?.message || String(e);
+    return { success: false, output: `Push failed: ${error}` };
+  }
+}
+
 interface Ticket { id: string; title: string; description: string; tier: "T1" | "T2" | "T3" | "T4"; model: "cheap" | "standard" | "powerful"; }
 
 // Discover tasks from spec
@@ -180,8 +254,15 @@ function TaskRalph({ ticket, ctx }: { ticket: Ticket; ctx: TaskContext }) {
   return (
     <Ralph id={`${ticket.id}:loop`} until={approved} maxIterations={5} onMaxReached="return-last">
       <Sequence>
-        <Task id={`${ticket.id}:impl`} output={tables.report} agent={makeAgent(ticket.model)}>
-          {`IMPLEMENT: ${ticket.title}\n${ticket.description}\n${issues.length ? `FEEDBACK:\n${JSON.stringify(issues)}` : ""}\n1. Read spec, study codebase\n2. Implement with tests\n3. Run gates\n4. Commit with reasoning\nOUTPUT: { "v": 1, "taskId": "${ticket.id}", "status": "done", "work": [], "files": [], "tests": [], "issues": [], "next": [] }`}
+        <Task id={`${ticket.id}:impl`} output={tables.report} agent={makeAgent(ticket.model)} onFinished={(output) => {
+          // VCS enforcement: push must succeed before task completes
+          const pushResult = vcsPush();
+          if (!pushResult.success) {
+            throw new Error(`VCS push failed for ${ticket.id}: ${pushResult.output}`);
+          }
+          console.log(`[workflow] VCS push succeeded for ${ticket.id}: ${pushResult.output}`);
+        }}>
+          {`IMPLEMENT: ${ticket.title}\n${ticket.description}\n${issues.length ? `FEEDBACK:\n${JSON.stringify(issues)}` : ""}\n1. Read spec, study codebase\n2. Implement with tests\n3. Run gates\n4. Commit with reasoning\n5. PUSH TO VCS: jj git push --bookmark ${targetBranch} (or git push origin ${targetBranch})\n   - If push fails with "Refusing to create new remote bookmark", run: jj bookmark track ${targetBranch} --remote=origin\n   - Then retry: jj git push --bookmark ${targetBranch}\n   - If still failing: jj git push --change @\n   CRITICAL: Task is NOT complete until push succeeds.\nOUTPUT: { "v": 1, "taskId": "${ticket.id}", "status": "done", "work": [], "files": [], "tests": [], "issues": [], "next": [] }`}
         </Task>
 
         <Task id={`${ticket.id}:val`} output={tables.gate} agent={makeAgent("cheap")}>
@@ -224,8 +305,15 @@ function FullReviewRalph({ ctx }: { ctx: TaskContext }) {
         
         <Branch if={issues.length > 0} then={
           <Sequence>
-            <Task id="full-fix" output={tables.report} agent={makeAgent("powerful")}>
-              {`FIX ALL:\n${JSON.stringify(issues)}\nAddress each, re-validate, commit.`}
+            <Task id="full-fix" output={tables.report} agent={makeAgent("powerful")} onFinished={(output) => {
+              // VCS enforcement: push must succeed before task completes
+              const pushResult = vcsPush();
+              if (!pushResult.success) {
+                throw new Error(`VCS push failed for full-fix: ${pushResult.output}`);
+              }
+              console.log(`[workflow] VCS push succeeded for full-fix: ${pushResult.output}`);
+            }}>
+              {`FIX ALL:\n${JSON.stringify(issues)}\nAddress each issue, re-validate, commit with reasoning.\n\nCRITICAL: After committing, you MUST push to VCS:\n- jj git push --bookmark ${targetBranch} (preferred)\n- If that fails: jj bookmark track ${targetBranch} --remote=origin, then retry push\n- Fallback: jj git push --change @\n- For pure git: git push origin ${targetBranch}\n\nTask is NOT complete until push succeeds.`}
             </Task>
             <Task id="full-reval" output={tables.gate} agent={makeAgent("cheap")}>{`Re-validate`}</Task>
           </Sequence>
