@@ -1,12 +1,12 @@
 # Spec: k3s-orchestrator-dashboard
 
-> Provide a mission control dashboard for managing, dispatching, and monitoring fabrik jobs
+> Provide mission control dashboards for managing, dispatching, and monitoring fabrik jobs — both web UI and CLI TUI
 
 **Status**: draft
-**Version**: 1.0.0
-**Last Updated**: 2026-02-14
+**Version**: 1.1.0
+**Last Updated**: 2026-02-16
 **Depends On**: `050-k3s-orchestrator`
-**Supersedes**: CLI-only interaction model. Dashboard + API server become the canonical control plane.
+**Supersedes**: CLI-only interaction model. Dashboard (Web + TUI) + API server become the canonical control plane.
 
 ---
 
@@ -45,6 +45,222 @@
 - **Building a custom charting/metrics stack** — leverage Grafana (LAOS) for deep metrics; dashboard shows operational state and links to Grafana for drill-down
 - **Offline mode** — dashboard requires connectivity to the cluster
 - **Multi-tenancy** — single-user/team scope for v1; namespace strategy from k3s-orchestrator allows future extension
+
+---
+
+## Requirements: CLI TUI Dashboard (k9s-style)
+
+In addition to the web dashboard, fabrik provides a **terminal UI (TUI) dashboard** inspired by k9s — for power users who prefer keyboard-driven, terminal-based interaction.
+
+### TUI vs Web Dashboard
+
+| Aspect | TUI Dashboard (`fabrik dashboard`) | Web Dashboard (browser) |
+|--------|-----------------------------------|-------------------------|
+| **Interface** | Terminal (keyboard-driven) | Browser (mouse + keyboard) |
+| **Latency** | Lower (direct API/VM queries) | Higher (HTTP + SSR) |
+| **Offline** | Partial (cached host DB) | No (requires connectivity) |
+| **Multi-source** | Yes (VM + K8s side-by-side) | Yes (via API server) |
+| **Use case** | Power users, quick checks, debugging | Detailed views, spec creation, onboarding |
+
+### TUI Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Terminal (iTerm2, Alacritty, etc.)                              │
+│                                                                  │
+│  ┌─ fabrik dashboard ─────────────────────────────────────────┐ │
+│  │  Ink (React for Terminal)                                 │ │
+│  │  ├── Real-time VM/K8s queries (2s polling)                │ │
+│  │  ├── Keyboard shortcuts (vim-style)                      │ │
+│  │  ├── Split panes (runs | logs | details)                  │ │
+│  │  └── Local cache ( SQLite ~/.cache/fabrik/dashboard.db ) │ │
+│  │                                                             │ │
+│  │  Modes:                                                     │ │
+│  │  ├── runs      → List all runs (VM + K8s)                │ │
+│  │  ├── run      → Detail view for selected run             │ │
+│  │  ├── logs      → Stream logs from selected run           │ │
+│  │  ├── specs     → List specs (cluster + local)            │ │
+│  │  ├── dispatch  → Quick dispatch form (TUI-based)         │ │
+│  │  └── admin     → Cluster health (nodes, storage, creds)  │ │
+│  └───────────────────────────────────────────────────────────┘ │
+│       │                                                          │
+│       ├──► limactl shell (VM mode) → VM database               │
+│       └──► kubectl (K8s mode) → API server → K8s resources     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### TUI Tech Stack
+
+| Component | Library | Why |
+|-----------|---------|-----|
+| Framework | **Ink** (React for terminals) | Declarative, component-based, handles rendering |
+| State | **Effect-TS** | Same patterns as rest of fabrik |
+| Keyboard | **ink-use-stdout-dimensions** + custom hooks | Vim-style navigation |
+| Tables | **ink-table** (or custom) | k9s-style resource tables |
+| Spinners | **ink-spinner** | Loading states |
+| Split Panes | **ink-box** + flex layout | Side-by-side panes |
+
+### TUI Commands & Navigation
+
+```bash
+# Start TUI dashboard
+fabrik dashboard                          # Auto-detect sources (VMs + K8s)
+fabrik dashboard --vm ralph-1              # VM mode only
+fabrik dashboard --kubeconfig ~/.kube/prod  # K8s mode only
+
+# Inside TUI (vim-style shortcuts)
+?           Show help / keyboard shortcuts
+g r         Go to "runs" view (list all runs)
+g s         Go to "specs" view
+g a         Go to "admin" view
+d           Dispatch new run (opens form)
+r           Resume selected run
+c           Cancel selected run
+l           Stream logs for selected run
+f           Fast-forward / jump to human gate feedback
+Enter       View run details
+Tab         Switch panes (left ↔ right)
+q / Esc     Quit / go back
+Ctrl+C      Force quit
+```
+
+### TUI Views
+
+#### runs View (Default)
+
+```
+┌─ Fabrik Dashboard ───────────────────────────────────────────────┐
+│ Runs (3 sources)                    [ralph-1] [dev-k3s] [prod]   │
+├──────────────────────────────────────────────────────────────────┤
+│ NAME          │ SOURCE   │ STATUS   │ TASK       │ PROGRESS     │
+├───────────────┼──────────┼──────────┼────────────┼──────────────┤
+│ run-113       │ ralph-1  │ running  │ 16:impl    │ 150/192 78% ▶│
+│ run-114       │ dev-k3s  │ blocked  │ review     │ 88% ⚠️       │
+│ 01jk7v8x...   │ prod     │ finished │ done       │ 100% ✓       │
+│               │          │          │            │              │
+│               │          │          │            │              │
+├──────────────────────────────────────────────────────────────────┤
+│ [r] resume │ [c] cancel │ [l] logs │ [d] dispatch │ [?] help     │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**Columns:**
+- NAME: Run ID (ULID or numeric for VMs)
+- SOURCE: Which VM or K8s cluster
+- STATUS: running | blocked | finished | failed | pending
+- TASK: Current task (e.g., "16:impl", "review-3", "human-gate")
+- PROGRESS: Tasks finished / total + percentage
+- Indicators: ▶ selected, ⚠️ needs attention, ✓ completed
+
+#### run View (Detail)
+
+```
+┌─ Run: run-113 ──────────────────────────────────────────────────┐
+│ From: ralph-1  │ Status: running  │ Task: 16:impl (attempt 1)     │
+├──────────────────────────────────────────────────────────────────┤
+│ Timeline:                                                        │
+│  ✓ 1:impl    2m ago     ✓ 1:val    3m ago                       │
+│  ✓ 2:impl    5m ago     ✓ 2:val    6m ago                       │
+│  → 16:impl   now        ⏳ 16:val   pending                     │
+│                                                                  │
+│ Active Reviewers: 3 of 8 complete                                │
+│  ✓ CODE-QUALITY         ✓ TIGERSTYLE        → SECURITY         │
+│                                                                  │
+│ Last Log Output:                                                 │
+│  [00:03:45] Running typecheck...                                 │
+│  [00:03:52] ✓ Type check passed                                  │
+│                                                                  │
+├──────────────────────────────────────────────────────────────────┤
+│ [l] stream logs │ [r] resume │ [c] cancel │ [f] feedback │ [←] back│
+└──────────────────────────────────────────────────────────────────┘
+```
+
+#### logs View (Streaming)
+
+```
+┌─ Logs: run-113 ─────────────────────────────────────────────────┐
+│ Source: ralph-1 │ Auto-scroll: ON │ Follow: ON                  │
+├──────────────────────────────────────────────────────────────────┤
+│ [00:00:00] → 16:impl (attempt 1, iteration 0)                   │
+│ [00:00:45] ✓ 16:impl (attempt 1)                                │
+│ [00:00:46] → 16:val (attempt 1, iteration 0)                    │
+│ [00:01:02] ✓ 16:val (attempt 1)                                 │
+│ [00:01:03] → 16:impl (attempt 1, iteration 1)                   │
+│ ...                                                              │
+│                                                                  │
+├──────────────────────────────────────────────────────────────────┤
+│ [s] toggle scroll │ [f] toggle follow │ [g] goto line │ [←] back│
+└──────────────────────────────────────────────────────────────────┘
+```
+
+#### admin View (Mission Control)
+
+```
+┌─ Admin: ralph-1 ─────────────────────────────────────────────────┐
+│ Nodes: 1 │ CPU: 45% │ Memory: 62% │ Storage: 12GB/30GB         │
+├──────────────────────────────────────────────────────────────────┤
+│ Active Runs: 3              │ Credentials: Anthropic 2 keys ✓   │
+│ Blocked: 1 (needs feedback) │            OpenAI 1 key ⚠️       │
+│ Finished (24h): 12          │            GitHub 1 key ✓         │
+│                                                              │
+│ Storage:                                                     │
+│  run-113: 72MB  │ run-114: 45MB  │ run-115: 128MB               │
+│                                                              │
+│ LAOS: Connected ✓  │ Last backup: 2h ago                      │
+├──────────────────────────────────────────────────────────────────┤
+│ [b] backup now │ [r] rotate creds │ [c] cleanup old runs        │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### TUI Dispatch Form
+
+Quick TUI-based dispatch (simpler than web wizard):
+
+```
+┌─ Dispatch New Run ──────────────────────────────────────────────┐
+│                                                                  │
+│ Spec: [specs/feature.json      ] [Tab to select]               │
+│ Todo: [specs/feature.todo.json  ] [optional]                    │
+│                                                                     │
+│ Source: ( ) ralph-1  (●) dev-k3s  ( ) prod-k3s               │
+│                                                                     │
+│ Template: (●) coding  ( ) report  ( ) marketing               │
+│                                                                     │
+│ [✓] Include .git                                            │
+│                                                                     │
+│ Resources: CPU [4    ]  Memory [8Gi ]                         │
+│                                                                     │
+│ [Enter] Dispatch  [Esc] Cancel                                 │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### TUI Implementation Notes
+
+**Ink Components Needed:**
+```typescript
+// Key components for TUI dashboard
+import { Box, Text, useInput, useApp } from 'ink';
+import { useState, useEffect } from 'react';
+
+// Custom hooks
+const useFabrikStatus = (source: Source) => {...};  // Poll VM/K8s
+const useKeyboardNav = (items: any[]) => {...};    // vim-style j/k
+const useSplitPane = () => {...};                   // Pane management
+
+// Main views
+const RunsView = () => {...};     // Table of runs
+const RunDetailView = () => {...}; // Single run detail
+const LogsView = () => {...};      // Streaming logs
+const SpecsView = () => {...};     // Spec list
+const DispatchForm = () => {...};  // TUI form
+const AdminView = () => {...};     // Cluster health
+```
+
+**Sync Strategy:**
+- Poll every 2s when TUI is active
+- Maintain local cache (Ink state)
+- Background sync to host DB (when idle)
+- Detect stale data (VM timestamp vs local)
 
 ---
 
@@ -676,13 +892,35 @@ On completion:
 - [ ] `/admin/env` shows environment health overview (missing keys, recent changes)
 - [ ] No dual control plane: CLI and dashboard share the same API server backend
 
+### CLI TUI Dashboard (k9s-style) Acceptance Criteria
+
+- [ ] `fabrik dashboard` launches TUI dashboard in terminal (Ink-based)
+- [ ] TUI shows runs from all sources (VMs + K8s clusters) in unified table view
+- [ ] TUI updates every 2 seconds (configurable) with live status
+- [ ] Keyboard navigation works: j/k (up/down), Enter (select), q (quit), ? (help)
+- [ ] Multiple panes: runs list | run detail | logs (switchable with Tab)
+- [ ] Vim-style shortcuts: g r (go runs), g s (go specs), g a (go admin), d (dispatch)
+- [ ] TUI dispatch form allows quick run creation without web UI
+- [ ] TUI streams logs in real-time from selected run
+- [ ] TUI shows progress bars for task completion
+- [ ] TUI highlights blocked runs with color coding (yellow=attention, red=failed)
+- [ ] TUI works in both VM mode (`--vm`) and K8s mode (`--kubeconfig`)
+- [ ] `fabrik daemon` runs in background, maintains persistent VM/K8s connections
+- [ ] TUI connects to daemon via Unix socket for event streaming
+- [ ] TUI shows "stale" indicator when connection to source is lost
+- [ ] TUI handles terminal resize gracefully ( responsive layout)
+- [ ] TUI uses 256 colors when available, falls back to basic colors
+- [ ] TUI performance: <100ms to render 100 runs on modern hardware
+
 ---
 
 ## Assumptions
 
 - `050-k3s-orchestrator` spec is implemented — the dashboard depends on its namespaces, PVCs, Secrets, and Job/CronJob resources
 - LAOS is running (in-cluster or external) and reachable from the dashboard and API server
-- The `effect-tanstack-start` stack (`~/git/playground/effect-tanstack-start/`) is the reference architecture for the dashboard app: TanStack Start, Effect-TS, @effect/rpc, Tailwind CSS 4, Bun, Vitest
+- The `effect-tanstack-start` stack (`~/git/playground/effect-tanstack-start/`) is the reference architecture for the **web** dashboard app: TanStack Start, Effect-TS, @effect/rpc, Tailwind CSS 4, Bun, Vitest
+- The **TUI** dashboard uses **Ink** (React for terminals) with Effect-TS for state management
+- The **daemon** (`fabrik-daemon`) uses Bun + Effect with async iterators for event streaming
 - The API server uses Bun + Effect with @effect/rpc for type-safe communication
 - `kubectl` is available in the API server pod (or a K8s client library is used)
 - Smithers SQLite DBs in run PVCs are readable by the API server pod (via PVC mount or kubectl cp)
