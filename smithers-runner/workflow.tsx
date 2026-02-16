@@ -17,6 +17,28 @@ import { PiAgent, CodexAgent, ClaudeCodeAgent } from "smithers-orchestrator";
 import { z } from "zod";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join, resolve, basename } from "node:path";
+import { execSync } from "node:child_process";
+
+// Checkout the correct branch before any work begins
+const targetBranch = process.env.SMITHERS_BRANCH || "master";
+const cwd = process.env.SMITHERS_CWD || process.cwd();
+try {
+  // Check current branch
+  const currentBranch = execSync("git branch --show-current", { cwd, encoding: "utf8" }).trim();
+  if (currentBranch !== targetBranch) {
+    console.log(`[workflow] Switching from ${currentBranch} to ${targetBranch}...`);
+    try {
+      execSync(`git checkout -b ${targetBranch} 2>/dev/null || git checkout ${targetBranch}`, { cwd, stdio: "pipe" });
+      console.log(`[workflow] Now on branch: ${targetBranch}`);
+    } catch (e) {
+      console.warn(`[workflow] Branch checkout failed: ${e}`);
+    }
+  } else {
+    console.log(`[workflow] Already on correct branch: ${targetBranch}`);
+  }
+} catch (e) {
+  console.warn(`[workflow] Git branch check failed: ${e}`);
+}
 
 // Config from environment
 const specPath = resolve(process.env.SMITHERS_SPEC_PATH || "specs/spec.md");
