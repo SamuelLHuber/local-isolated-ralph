@@ -839,9 +839,13 @@ const runsCommand = Command.make("runs").pipe(
         db: Options.text("db").pipe(
           Options.optional,
           Options.withDescription("Path to ralph.db (default: ~/.cache/ralph/ralph.db)")
+        ),
+        live: Options.boolean("live").pipe(
+          Options.withDefault(false),
+          Options.withDescription("Query VM directly for real-time status (detects stale host records)")
         )
       },
-      ({ id, db }) =>
+      ({ id, db, live }) =>
         Effect.sync(() => {
           const dbValue = unwrapOptional(db)
           const dbPath = dbValue ?? resolve(homedir(), ".cache", "ralph", "ralph.db")
@@ -861,6 +865,39 @@ const runsCommand = Command.make("runs").pipe(
             console.log("Run not found.")
             return
           }
+          
+          // Live query VM for real-time status if requested
+          let vmStatus: { status?: string; currentTask?: string; taskStatus?: string; taskAttempt?: number; progress?: { finished: number; total: number }; heartbeatAge?: number; stale?: boolean } = {}
+          if (live && (run.status === "running" || run.status === "done")) {
+            try {
+              const workBase = run.workdir.split("/").pop() ?? ""
+              const controlDir = `/home/ralph/work/${run.vm_name}/.runs/${workBase}`
+              const heartbeatCmd = `cat "${controlDir}/heartbeat.json" 2>/dev/null || echo '{}'`
+              const hbJson = runRemote(run.vm_name, heartbeatCmd)
+              const hb = JSON.parse(hbJson)
+              if (hb.v) {
+                const hbTime = Date.parse(hb.ts || "")
+                const now = Date.now()
+                const ageMinutes = hbTime ? Math.floor((now - hbTime) / 60000) : -1
+                vmStatus = {
+                  status: hb.phase,
+                  currentTask: hb.current_task,
+                  taskStatus: hb.task_status,
+                  taskAttempt: hb.task_attempt,
+                  progress: hb.progress,
+                  heartbeatAge: ageMinutes,
+                  stale: ageMinutes > 5 // stale if > 5 minutes old
+                }
+              }
+            } catch {
+              // VM query failed, ignore
+            }
+          }
+          
+          // Detect stale status (host shows "done" but VM shows "running")
+          const staleStatus = run.status === "done" && vmStatus.status && vmStatus.status !== "finished" && vmStatus.status !== "failed"
+          const staleRunning = run.status === "running" && vmStatus.stale
+          
           console.log(`id: ${run.id}`)
           console.log(`vm: ${run.vm_name}`)
           console.log(`workdir: ${run.workdir}`)
@@ -869,11 +906,31 @@ const runsCommand = Command.make("runs").pipe(
           console.log(`repo_url: ${run.repo_url ?? ""}`)
           console.log(`repo_ref: ${run.repo_ref ?? ""}`)
           console.log(`started_at: ${run.started_at}`)
-          console.log(`status: ${run.status}`)
+          console.log(`status: ${run.status}${staleStatus ? " ⚠️ STALE (VM shows: " + vmStatus.status + ")" : ""}${staleRunning ? " ⚠️ STALE HEARTBEAT (>5min old)" : ""}`)
           console.log(`exit_code: ${run.exit_code ?? ""}`)
           if (run.failure_reason) {
             console.log(`failure_reason: ${run.failure_reason}`)
           }
+          
+          // Show live VM status if available
+          if (live && vmStatus.status) {
+            console.log("")
+            console.log("=== Live VM Status ===")
+            console.log(`vm_status: ${vmStatus.status}`)
+            if (vmStatus.currentTask) {
+              console.log(`current_task: ${vmStatus.currentTask}`)
+              console.log(`task_status: ${vmStatus.taskStatus}`)
+              console.log(`task_attempt: ${vmStatus.taskAttempt}`)
+            }
+            if (vmStatus.progress && vmStatus.progress.total > 0) {
+              const pct = Math.floor((vmStatus.progress.finished / vmStatus.progress.total) * 100)
+              console.log(`progress: ${vmStatus.progress.finished}/${vmStatus.progress.total} (${pct}%)`)
+            }
+            if (vmStatus.heartbeatAge !== undefined && vmStatus.heartbeatAge >= 0) {
+              console.log(`heartbeat_age: ${vmStatus.heartbeatAge} minutes`)
+            }
+          }
+          
           console.log(`cli_version: ${run.cli_version ?? ""}`)
           console.log(`os: ${run.os ?? ""}`)
           console.log(`binary_hash: ${run.binary_hash ?? ""}`)
