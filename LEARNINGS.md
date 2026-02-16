@@ -334,104 +334,114 @@ There's a critical distinction between **Fabrik CLI commands** (host-side) and *
 
 | Scenario | Command | Why |
 |----------|---------|-----|
-| Quick status check | `fabrik runs show --id 113` | One-liner, queries VM by default |
-| Watch progress | `fabrik runs watch --vm ralph-1 --run-id 113` | Live updates, notifications |
-| Stream logs | `fabrik run attach --id 113` | Real-time log tailing |
+| Quick status check | `fabrik runs show --id 113` | One-liner, queries daemon cache |
+| Watch progress | `fabrik runs watch --cluster dev-k3s` | Live updates via daemon |
+| Stream logs | `fabrik run attach --id 113` | Real-time log tailing (kubectl exec) |
 | Resume workflow | `fabrik run resume --id 113` | Proper environment setup |
-| List runs | `fabrik runs list` | Human-readable table |
+| List runs | `fabrik runs list` | Human-readable table (all clusters) |
+| TUI Dashboard | `fabrik dashboard` | k9s-style terminal interface |
 
-### Use **limactl shell** When:
+### ⚠️ VM Support Deprecated
 
-| Scenario | Example | Why Fabrik Can't Do It |
-|----------|---------|------------------------|
-| **Direct DB query** | `sqlite3 run-113.db "SELECT..."` | Needs arbitrary SQL |
-| **Fix stuck tasks** | `UPDATE _smithers_nodes SET state='failed'` | Needs write access to repair data |
-| **Check processes** | `ps aux \| grep smithers` | OS-level process inspection |
-| **Inspect heartbeat** | `cat heartbeat.json` | File access outside Fabrik's scope |
-| **Manual DB fixes** | `VACUUM`, `DELETE`, `INSERT` | Requires admin/repair operations |
-| **Check log files** | `tail -100 smithers.log` | Direct file access |
-| **Debug smithers** | Check installed version | Access to node_modules |
+**The VM architecture (ralph-1, limactl, libvirt) is being sunset in favor of k3s-native execution.**
 
-### Critical Example: Stuck Task Detection
+**Migration path:**
+- Use `fabrik cluster init` to create k3s cluster
+- Use `fabrik dashboard` instead of manual VM queries
+- Daemon provides real-time sync (no more stale host DB)
+- All observability is in-cluster (LAOS in k3s, not on host)
+
+### Use **kubectl / fabrik daemon** When:
+
+| Scenario | Example | Why Fabrik Can't Do It Directly |
+|----------|---------|----------------------------------|
+| **Direct DB query** | `kubectl exec pod-xyz -- sqlite3 ...` | Needs pod exec |
+| **Fix stuck tasks** | `kubectl delete pod pod-xyz` | K8s-native recovery |
+| **Check processes** | `kubectl top pod pod-xyz` | Needs metrics API |
+| **Inspect annotations** | `kubectl get pod pod-xyz -o json` | Pod status access |
+| **Manual PVC access** | `kubectl cp ...` | File copy to/from pod |
+| **Check logs** | `kubectl logs pod-xyz -f` | Stream logs |
+| **Debug smithers** | `kubectl describe job job-xyz` | K8s resource inspection |
+
+### Critical Example: Stuck Task Detection (k3s-native)
 
 **Fabrik CLI shows:**
 ```bash
-$ fabrik runs show --id 113
-status: done
-exit_code: 0
+$ fabrik runs show --id 01jk7v8x...
+status: running
+current_task: 16:impl
+heartbeat_age: 2s
 ```
 
-**But VM reality (via limactl):**
+**Behind the scenes (daemon queries K8s):**
 ```bash
-$ limactl shell ralph-1 -- python3 << 'EOF'
-import sqlite3
-conn = sqlite3.connect('/home/ralph/work/ralph-1/.../.smithers/run-113.db')
-c = conn.cursor()
-c.execute("SELECT node_id, state FROM _smithers_nodes WHERE state='in-progress'")
-print("Stuck tasks:", c.fetchall())
-EOF
+$ kubectl get pod -n fabrik-runs -l fabrik.dev/run-id=01jk7v8x...
+NAME                    READY   STATUS    RESTARTS   AGE
+fabrik-01jk7v8x...-abcd   1/1     Running   0          5m
 
-# Output: Stuck tasks: [('15:impl', 'in-progress')]
+$ kubectl get pod fabrik-01jk7v8x...-abcd -n fabrik-runs \
+  -o jsonpath='{.metadata.annotations.fabrik.dev/status}'
+{"phase":"implement","current_task":"16:impl","attempt":1,"progress":{"finished":150,"total":192}}
 ```
 
-**Why the mismatch?**
-- Host DB says "done" (last known state)
-- VM DB says "in-progress" (actual current state)
-- Heartbeat writer died, so host never got final update
-- Need `limactl` to see truth
+**With the daemon:**
+- No dual database (host DB vs VM DB) — single source of truth in cluster
+- No heartbeat fragility — K8s watches are reliable
+- No SSH/exec overhead — persistent K8s API connection
+- If stuck, `kubectl delete pod` lets Job restart with same PVC (Smithers resume)
 
-### Rule of Thumb
+### Rule of Thumb (k3s-native)
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│  START with:  fabrik runs show --id 113              │
-│           (queries VM by default)                     │
+│  START with:  fabrik dashboard                        │
+│           (TUI shows all clusters live)               │
 │                                                        │
-│  If status looks wrong → use limactl shell             │
-│  If need to fix data   → use limactl shell           │
-│  If just watching      → use fabrik attach/watch     │
+│  Or: fabrik runs show --id 01jk7v8x...              │
+│           (queries daemon cache, <10ms)               │
 │                                                        │
-│  Fallback always:  limactl shell + Python/SQL          │
+│  If daemon not running:                               │
+│     fabrik daemon start                               │
+│                                                        │
+│  Fallback: kubectl (standard K8s)                     │
+│     kubectl get jobs -n fabrik-runs                   │
+│     kubectl logs -n fabrik-runs job/...               │
 └────────────────────────────────────────────────────────┘
 ```
 
-### Common Commands Reference
+### Common Commands Reference (k3s-native)
 
 **Fabrik CLI:**
 ```bash
-# Status (queries VM by default, shows mismatches)
-fabrik runs show --id 113
+# Start daemon (auto-starts with dashboard)
+fabrik daemon start
 
-# Skip VM query for fast cached check
-fabrik runs show --id 113 --no-live
+# TUI dashboard (k9s-style)
+fabrik dashboard
 
-# Watch with progress updates
-fabrik runs watch --vm ralph-1 --run-id 113
+# Status (queries daemon cache, fast)
+fabrik runs show --id 01jk7v8x...
+
+# Watch with progress
+fabrik runs watch --cluster dev-k3s
 
 # Resume after crash
-fabrik run resume --id 113
+fabrik run resume --id 01jk7v8x...
 ```
 
-**limactl shell (direct VM access):**
+**kubectl (standard K8s, for power users):**
 ```bash
-# Quick process check
-limactl shell ralph-1 -- ps aux | grep smithers
+# List fabrik jobs
+kubectl get jobs -n fabrik-runs -l app.kubernetes.io/managed-by=fabrik
 
-# Database query
-limactl shell ralph-1 -- python3 << 'EOF'
-import sqlite3
-conn = sqlite3.connect('/home/ralph/work/ralph-1/.runs/.../.smithers/run-113.db')
-# ... your query ...
-EOF
+# Stream logs
+kubectl logs -n fabrik-runs -l fabrik.dev/run-id=01jk7v8x... -f
 
-# Fix stuck task
-limactl shell ralph-1 -- python3 << 'EOF'
-import sqlite3, time
-conn = sqlite3.connect('/home/ralph/work/ralph-1/.runs/.../.smithers/run-113.db')
-c = conn.cursor()
-c.execute("UPDATE _smithers_nodes SET state='failed' WHERE node_id='15:impl'")
-conn.commit()
-EOF
+# Delete stuck pod (Job will recreate with resume)
+kubectl delete pod -n fabrik-runs fabrik-01jk7v8x...-abcd
+
+# Check pod status annotations
+kubectl get pod -n fabrik-runs fabrik-01jk7v8x...-abcd -o yaml
 ```
 
 ### The Danger: run.sh Version Mismatch
