@@ -5,7 +5,6 @@
 **Status**: draft  
 **Version**: 1.0.0  
 **Last Updated**: 2026-02-16  
-**Depends On**: `050-k3s-orchestrator`  
 **Provides**: Infrastructure foundation for k3s execution
 
 ---

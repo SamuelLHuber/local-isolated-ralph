@@ -5,7 +5,7 @@
 **Status**: draft  
 **Version**: 2.0.0  
 **Last Updated**: 2026-02-16  
-**Depends On**: `050-k3s-orchestrator`  
+**Depends On**: `051-k3s-orchestrator`  
 **Supersedes**: All previous dashboard approaches. Direct K8s API access only (like kubectl/k9s).
 
 ---
