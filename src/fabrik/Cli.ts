@@ -1013,15 +1013,21 @@ const runsCommand = Command.make("runs").pipe(
           console.log(`[${vmName}] Watching Smithers DB for run ${rid}`)
 
           while (true) {
+            // Query for blocked/failed tasks
             const script = `
 import json, os, sqlite3
 path = "${smithersDbPath}"
 run_id = "${rid}"
 items = []
+current_task = ""
+current_status = ""
+progress_finished = 0
+progress_total = 0
 if not os.path.exists(path):
   raise SystemExit(0)
 conn = sqlite3.connect(path)
 try:
+  # Get blocked/failed tasks
   cur = conn.execute(
     "SELECT task_id, node_id, status, issues, next FROM task_report WHERE run_id = ? AND status IN ('blocked','failed') ORDER BY node_id",
     (run_id,)
@@ -1042,21 +1048,64 @@ try:
           return [raw]
       return []
     items.append((str(task_id or node_id or ""), str(status or ""), "; ".join(parse_list(issues_raw)), "; ".join(parse_list(next_raw))))
+  
+  # Get current task progress
+  cur = conn.execute("SELECT node_id, state FROM _smithers_nodes WHERE state IN ('in-progress', 'running') ORDER BY updated_at_ms DESC LIMIT 1")
+  row = cur.fetchone()
+  if row:
+    current_task = str(row[0])
+    current_status = str(row[1])
+  
+  # Get progress stats
+  cur = conn.execute("SELECT COUNT(*), SUM(CASE WHEN state='finished' THEN 1 ELSE 0 END) FROM _smithers_nodes")
+  row = cur.fetchone()
+  if row:
+    progress_total = int(row[0] or 0)
+    progress_finished = int(row[1] or 0)
 finally:
   conn.close()
+
+# Output format: blocked tasks + current progress
+print(f\"PROGRESS|{current_task}|{current_status}|{progress_finished}|{progress_total}\")
 for task_id, status, issues, nxt in items:
   print(task_id + "|" + status + "|" + issues + "|" + nxt)
 `
             const output = runRemote(vmName, `python3 - <<'PY'\n${script}\nPY`).trim()
+            
+            // Parse output
+            let currentTask = ""
+            let currentStatus = ""
+            let progressFinished = 0
+            let progressTotal = 0
+            
             if (output) {
               for (const line of output.split("\n")) {
-                const [taskId, status, issues, next] = line.split("|")
-                const key = `${taskId}:${status}`
-                if (seen.has(key)) continue
-                seen.add(key)
-                const msg = `Blocked (${status}): ${taskId}\n${issues}\nNext: ${next}`
-                console.log(`[${vmName}] ${msg}`)
-                if (notifyEnabled) notifyDesktop("fabrik", msg)
+                if (line.startsWith("PROGRESS|")) {
+                  const parts = line.split("|")
+                  currentTask = parts[1] || ""
+                  currentStatus = parts[2] || ""
+                  progressFinished = parseInt(parts[3] || "0", 10)
+                  progressTotal = parseInt(parts[4] || "0", 10)
+                } else {
+                  // Blocked task
+                  const [taskId, status, issues, next] = line.split("|")
+                  const key = `${taskId}:${status}`
+                  if (seen.has(key)) continue
+                  seen.add(key)
+                  const msg = `Blocked (${status}): ${taskId}\n${issues}\nNext: ${next}`
+                  console.log(`[${vmName}] ${msg}`)
+                  if (notifyEnabled) notifyDesktop("fabrik", msg)
+                }
+              }
+              
+              // Show progress if changed
+              if (currentTask) {
+                const progressKey = `progress:${currentTask}:${progressFinished}`
+                if (!seen.has(progressKey)) {
+                  seen.add(progressKey)
+                  const pct = progressTotal > 0 ? Math.floor((progressFinished / progressTotal) * 100) : 0
+                  console.log(`[${vmName}] → ${currentTask} (${progressFinished}/${progressTotal}, ${pct}%)`)
+                }
               }
             }
             if (onceValue) return
