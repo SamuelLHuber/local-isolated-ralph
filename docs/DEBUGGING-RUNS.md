@@ -43,7 +43,8 @@ Run not behaving as expected?
 
 | Command | Purpose | When to Use |
 |---------|---------|-------------|
-| `fabrik runs show --id 113 --live` | Check current status with VM query | Quick status check, detect stale records |
+| `fabrik runs show --id 113` | Check current status (queries VM by default) | Quick status check, detect stale records |
+| `fabrik runs show --id 113 --no-live` | Check cached host status only | Fast check when VM is down |
 | `fabrik runs watch --vm ralph-1 --run-id 113` | Watch live progress | Monitor active workflow progress |
 | `fabrik run attach --id 113` | Stream logs | Watch real-time log output |
 | `fabrik run resume --id 113` | Resume failed/stopped run | After fixing stuck tasks or crashes |
@@ -75,13 +76,18 @@ exit_code: 0
 
 **Diagnosis:**
 ```bash
-# Check live VM status
-$ fabrik runs show --id 113 --live
-=== Live VM Status ===
+# Check status (now queries VM by default)
+$ fabrik runs show --id 113
+status: done ⚠️  (VM shows: running)
+effective_status: running
+
+=== VM Status (Source of Truth) ===
 vm_status: running
+current_task: 15:impl
+progress: 142/184 (77%)
 heartbeat_age: 45 minutes  # <-- STALE
 
-# Or query directly
+# Or query directly if needed
 $ limactl shell ralph-1 -- python3 << 'EOF'
 import sqlite3
 conn = sqlite3.connect('/home/ralph/work/ralph-1/.runs/.../.smithers/run-113.db')
@@ -214,21 +220,30 @@ $ limactl shell ralph-1 -- sed -i 's|github:evmts/smithers#ea5ece3|github:Samuel
 
 ## Debugging Checklist
 
-### 1. Process Check
+### Quick Status (Single Command)
+```bash
+# Recommended: Uses VM as source of truth
+fabrik runs show --id 113
+```
+**Shows:** Host status, VM status, current task, progress, mismatch warnings
+
+### Detailed Checks (When Needed)
+
+#### 1. Process Check
 ```bash
 limactl shell ralph-1 -- ps aux | grep -E 'smithers|bun' | grep -v grep
 ```
 **Expected:** Shows bun/smithers processes
 **If empty:** Workflow crashed, needs resume
 
-### 2. Heartbeat Check
+#### 2. Heartbeat Check
 ```bash
 limactl shell ralph-1 -- cat /home/ralph/work/ralph-1/.runs/.../heartbeat.json
 ```
 **Expected:** Recent timestamp (< 2 min old)
 **If old:** Heartbeat writer failed, but main process may still run
 
-### 3. Database Check
+#### 3. Database Check
 ```bash
 limactl shell ralph-1 -- python3 << 'EOF'
 import sqlite3
@@ -242,12 +257,12 @@ conn.close()
 EOF
 ```
 
-### 4. Log Check
+#### 4. Log Check
 ```bash
 limactl shell ralph-1 -- tail -20 /home/ralph/work/ralph-1/.runs/.../reports/smithers.log
 ```
 
-### 5. Exit Code Check
+#### 5. Exit Code Check
 ```bash
 limactl shell ralph-1 -- cat /home/ralph/work/ralph-1/.runs/.../exit_code 2>/dev/null || echo "Still running"
 ```
@@ -291,18 +306,20 @@ WHERE state='in-progress' ORDER BY updated_at_ms DESC;
 
 ## Prevention Best Practices
 
-1. **Always use `--live` flag** for status checks
+1. **`runs show` now queries VM by default** - no need for `--live` flag
    ```bash
-   fabrik runs show --id 113 --live
+   fabrik runs show --id 113  # Automatically gets truth from VM
    ```
 
-2. **Watch for stale heartbeats** - if > 5 min old, investigate
+2. **Watch for mismatch warnings** - if you see "⚠️ (VM shows: X)", investigate
 
-3. **Monitor database size** - should stay < 100MB with truncation fix
+3. **Watch for stale heartbeats** - if > 10 min old, workflow may be stuck
 
-4. **Check smithers version** in run.sh matches expected fix version
+4. **Monitor database size** - should stay < 100MB with truncation fix
 
 5. **Use `runs watch` for active monitoring** instead of repeated `show`
+
+6. **Check smithers version** in run.sh if errors persist after fixes
 
 ---
 

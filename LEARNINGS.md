@@ -334,7 +334,7 @@ There's a critical distinction between **Fabrik CLI commands** (host-side) and *
 
 | Scenario | Command | Why |
 |----------|---------|-----|
-| Quick status check | `fabrik runs show --id 113 --live` | One-liner, formatted output |
+| Quick status check | `fabrik runs show --id 113` | One-liner, queries VM by default |
 | Watch progress | `fabrik runs watch --vm ralph-1 --run-id 113` | Live updates, notifications |
 | Stream logs | `fabrik run attach --id 113` | Real-time log tailing |
 | Resume workflow | `fabrik run resume --id 113` | Proper environment setup |
@@ -384,7 +384,8 @@ EOF
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│  START with:  fabrik runs show --id 113 --live         │
+│  START with:  fabrik runs show --id 113              │
+│           (queries VM by default)                     │
 │                                                        │
 │  If status looks wrong → use limactl shell             │
 │  If need to fix data   → use limactl shell           │
@@ -398,8 +399,11 @@ EOF
 
 **Fabrik CLI:**
 ```bash
-# Status with live VM query
-fabrik runs show --id 113 --live
+# Status (queries VM by default, shows mismatches)
+fabrik runs show --id 113
+
+# Skip VM query for fast cached check
+fabrik runs show --id 113 --no-live
 
 # Watch with progress updates
 fabrik runs watch --vm ralph-1 --run-id 113
