@@ -327,3 +327,116 @@ WHERE state='in-progress' ORDER BY updated_at_ms DESC;
 
 - [LEARNINGS.md](./LEARNINGS.md) - General architectural learnings
 - Smithers truncation fix: `github:SamuelLHuber/smithers#3e41cf48`
+
+---
+
+## Critical Bug: Resume Creates New Runs (FIXED in v0.1.1)
+
+### The Bug (Historical)
+
+**Affected versions:** v0.1.0 and earlier
+
+**Symptoms:**
+```bash
+# Resume appears to work...
+$ fabrik run resume --id 113
+[ralph-1] Resuming run 113...
+
+# But starts from Task 1 instead of Task 16!
+[00:00:00] → 1:impl (attempt 1, iteration 0)  # ← Wrong! Should be Task 16
+```
+
+**Root Cause:**
+The original implementation used `smithers resume` command:
+```typescript
+// BUGGY CODE (old):
+const smithersCmd = smithersRunId 
+  ? `smithers resume ${workflowFile} --run-id ${smithersRunId}`  // ← Bug!
+  : `smithers run ${workflowFile}`
+```
+
+**Why it failed:**
+1. `smithers resume` treats `--run-id` as a **file path**, not an ID
+2. Module loader tries to `require("/path/to/run-id")` → fails silently
+3. Creates **new run entry** in `_smithers_runs` table instead of continuing
+4. All previous progress (Tasks 1-15) is ignored
+5. Workflow starts from Task 1, wasting hours of compute
+
+### The Fix (v0.1.1+)
+
+**New implementation:**
+```typescript
+// FIXED CODE (new):
+// 1. Analyze existing state
+const state = await analyzeRunState(vmName, smithersDbPath, smithersRunId)
+
+// 2. Reset only stuck tasks (preserve finished work)
+await resetStuckTasks(vmName, smithersDbPath, smithersRunId)
+
+// 3. Use 'smithers run' which reads from existing DB
+const smithersCmd = `smithers run ${workflowFile}`  // ← Fixed!
+
+// 4. Same database file = state preservation
+export SMITHERS_DB_PATH="/same/path/to/run-113.db"
+```
+
+**Key changes:**
+- Uses `smithers run` (not `smithers resume`) - reads existing DB state
+- Resets only `in-progress` tasks to `pending` (preserves `finished`)
+- Reports progress: `"Completed: 15/18 tasks"`
+- Continues from first pending task
+
+### Prevention (Tests Added)
+
+**Test file:** `src/fabrik/__tests__/resume.test.ts`
+
+Critical regression tests:
+```typescript
+it("NEVER uses 'smithers resume' command (the bug)", () => {
+  const script = buildResumeScript(config, "existing-run", state)
+  
+  // CRITICAL: Must use 'smithers run' not 'smithers resume'
+  expect(script).toInclude("smithers run workflow.tsx")
+  expect(script).not.toInclude("smithers resume")  // ← Regression test
+})
+
+it("preserves task completion state (doesn't start from task 1)", () => {
+  const state = { completedTasks: 15, totalTasks: 18, ... }
+  const script = buildResumeScript(config, "existing-run", state)
+  
+  expect(script).toInclude("Completed: 15/18 tasks")
+  expect(script).toInclude("Continuing from: 16:impl")  // ← Progress preserved
+})
+```
+
+### Verification
+
+**Check your version:**
+```bash
+$ fabrik --version
+fabrik 0.1.1+  # Fixed version
+
+# Check resume script generation
+$ fabrik run resume --id 113 --dry-run 2>&1 | grep "smithers"
+[ralph-1] smithers run workflow.tsx  # Should say "run", not "resume"
+```
+
+### Manual Workaround (if stuck on old version)
+
+```bash
+# Direct VM execution with state preservation:
+limactl shell ralph-1 -- bash << 'EOF'
+export SMITHERS_DB_PATH="/home/ralph/work/ralph-1/.runs/.../.smithers/run-113.db"
+cd /home/ralph/work/ralph-1/.../smithers-runner
+
+# Reset stuck tasks only
+python3 << 'PY'
+import sqlite3
+conn = sqlite3.connect(os.environ['SMITHERS_DB_PATH'])
+conn.execute("UPDATE _smithers_nodes SET state='pending' WHERE state='in-progress'")
+conn.commit()
+conn.close()
+PY
+
+# Run (NOT resume) - reads existing state
+smithers run workflow.tsx

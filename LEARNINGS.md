@@ -463,3 +463,112 @@ limactl shell ralph-1 -- sed -i \
 ```
 
 See full debugging guide: [docs/DEBUGGING-RUNS.md](./docs/DEBUGGING-RUNS.md)
+
+---
+
+## Resume System Bug & Fix (Critical Learning)
+
+### The Bug
+
+**Discovery:** 2026-02-16  
+**Impact:** All runs before v0.1.1  
+**Severity:** Critical - wasted compute, lost progress
+
+**Symptom:**
+```bash
+$ fabrik run resume --id 113
+[ralph-1] Resuming run 113...
+[00:00:00] → 1:impl (attempt 1)  # ← BUG: Should continue from Task 16!
+```
+
+**Root Cause Analysis:**
+
+1. **Wrong command used:** `smithers resume` instead of `smithers run`
+2. **smithers CLI bug:** `--run-id` flag treated as file path, not ID
+3. **Result:** New run created, all progress lost
+
+### The Fix
+
+**Implementation:** New `resume.ts` module with state preservation
+
+```typescript
+// OLD (buggy):
+const smithersCmd = `smithers resume ${workflowFile} --run-id ${runId}`
+
+// NEW (fixed):
+const smithersCmd = `smithers run ${workflowFile}`  // Reads existing DB
+
+// Plus: Reset stuck tasks before running
+python3 << 'PY'
+conn.execute("UPDATE _smithers_nodes SET state='pending' WHERE state='in-progress'")
+PY
+```
+
+**Key Insight:**
+- `smithers run` with same `SMITHERS_DB_PATH` = continues existing state
+- `smithers resume` = broken, creates new runs
+
+### Prevention
+
+**33 regression tests** added:
+
+```typescript
+describe("Critical Bug Prevention", () => {
+  it("NEVER uses 'smithers resume' command", () => {
+    const script = buildResumeScript(config, runId, state)
+    expect(script).not.toInclude("smithers resume")
+    expect(script).toInclude("smithers run")
+  })
+  
+  it("preserves task completion state", () => {
+    const state = { completedTasks: 15, totalTasks: 18 }
+    const script = buildResumeScript(config, runId, state)
+    expect(script).toInclude("Completed: 15/18 tasks")
+  })
+})
+```
+
+### When Resume Works vs Doesn't
+
+| Scenario | Expected | Bug Behavior | Fixed Behavior |
+|----------|----------|--------------|----------------|
+| Resume after crash | Continue from stuck task | Restart from Task 1 | ✅ Continue |
+| Resume after timeout | Continue from stuck task | Restart from Task 1 | ✅ Continue |
+| Resume with --fix | Fix DB, then continue | Restart from Task 1 | ✅ Fix & continue |
+| Multiple resumes | Same run, more progress | New run each time | ✅ Same run |
+
+### Testing Resume
+
+```bash
+# 1. Start run, let it complete some tasks
+fabrik run --spec specs/test.md --vm ralph-1
+
+# 2. Stop it (Ctrl+C)
+
+# 3. Resume and verify continuation (not restart)
+$ fabrik run resume --id <run-id>
+[ralph-1] Progress: 5/10 tasks completed  # ← Shows progress!
+[ralph-1] Continuing from: 6:impl        # ← Correct task!
+
+# NOT: "→ 1:impl" (that would be the bug)
+```
+
+### Files
+
+- **Fix:** `src/fabrik/resume.ts` - New module
+- **Tests:** `src/fabrik/__tests__/resume.test.ts` - 33 tests
+- **Integration:** `src/fabrik/Cli.ts` - Uses new module
+- **Docs:** `docs/RESUME-BUG-FIX.md` - Detailed documentation
+
+### Lesson Learned
+
+> **Don't trust external CLI commands without testing.**
+> 
+> The `smithers resume` command *sounded* correct but was fundamentally broken.
+> Only integration testing with real database state revealed the bug.
+> 
+> **Always verify:**
+> 1. Command actually does what you expect
+> 2. State is preserved (database entries not duplicated)
+> 3. Progress continues (not restarts)
+

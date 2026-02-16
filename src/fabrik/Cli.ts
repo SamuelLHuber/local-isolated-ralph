@@ -21,6 +21,7 @@ import { getVmIp } from "./vm-utils.js"
 import { dispatchFleet } from "./fleet.js"
 import { recordFeedback, recordFeedbackForRun } from "./feedback.js"
 import { findLatestRunForVm, findRunById, listRuns, openRunDb } from "./runDb.js"
+import { buildResumeScript, analyzeRunState, resetStuckTasks, truncateLargeEntries } from "./resume.js"
 import { CLI_VERSION } from "./version.js"
 
 const defaultRalphHome = process.env.LOCAL_RALPH_HOME ?? join(homedir(), "git", "local-isolated-ralph")
@@ -435,7 +436,7 @@ PY`
         runRemote(run.vm_name, fixScript)
       }
 
-      // Fetch the latest smithers run ID from the database (different from fabrik run ID)
+      // Fetch the latest smithers run ID and analyze state
       const getSmithersRunIdScript = `python3 << 'PYSCRIPT'
 import sqlite3
 db_path = "${smithersDbPath}"
@@ -454,26 +455,85 @@ except:
 PYSCRIPT`
       const smithersRunId = runRemote(run.vm_name, getSmithersRunIdScript).trim()
 
-      // Build resume script
+      // Analyze current run state for progress reporting
+      const stateScript = `python3 << 'PYSCRIPT'
+import sqlite3
+import json
+db_path = "${smithersDbPath}"
+run_id = "${smithersRunId || ''}"
+try:
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    if run_id:
+        cursor.execute("SELECT status FROM _smithers_runs WHERE run_id = ?", (run_id,))
+        row = cursor.fetchone()
+        status = row[0] if row else None
+        cursor.execute("SELECT node_id, state FROM _smithers_nodes WHERE run_id = ? AND (node_id LIKE '%:impl' OR node_id LIKE '%:val')", (run_id,))
+    else:
+        status = None
+        cursor.execute("SELECT node_id, state FROM _smithers_nodes WHERE node_id LIKE '%:impl' OR node_id LIKE '%:val'")
+    rows = cursor.fetchall()
+    total = len(rows)
+    finished = sum(1 for r in rows if r[1] == 'finished')
+    stuck = [r[0] for r in rows if r[1] == 'in-progress']
+    pending = [r[0] for r in rows if r[1] == 'pending']
+    next_task = pending[0] if pending else None
+    conn.close()
+    print(json.dumps({"completed": finished, "total": total, "stuck": stuck, "next": next_task}))
+except Exception as e:
+    print(json.dumps({"error": str(e)}))
+PYSCRIPT`
+      const stateJson = runRemote(run.vm_name, stateScript).trim()
+      let state: { completed: number, total: number, stuck: string[], next: string | null } = 
+        { completed: 0, total: 0, stuck: [], next: null }
+      try {
+        state = JSON.parse(stateJson) as typeof state
+      } catch {
+        console.log(`[${run.vm_name}] Warning: Could not parse run state`)
+      }
+
+      // Build resume script using proper state preservation
+      // CRITICAL: Use 'smithers run' NOT 'smithers resume' to avoid creating new runs
       const workflowFile = existsSync(`${smithersRunnerDir}/workflow-dynamic.tsx`) 
         ? "workflow-dynamic.tsx" 
         : "workflow.tsx"
 
-      // Use smithers resume if we have a run ID, otherwise smithers run
-      const smithersCmd = smithersRunId 
-        ? `smithers resume ${workflowFile} --run-id ${smithersRunId}`
-        : `smithers run ${workflowFile}`
-
+      // Add MAX_RESPONSE_SIZE fix for smithers-orchestrator bug
       const resumeScript = [
         `cd "${smithersRunnerDir}"`,
         "export PATH=\"$HOME/.bun/bin:$HOME/.bun/install/global/node_modules/.bin:$PATH\"",
         "if [ -f ~/.config/ralph/ralph.env ]; then set -a; source ~/.config/ralph/ralph.env; set +a; fi",
         "if [ -n \"${GITHUB_TOKEN:-}\" ]; then export GH_TOKEN=\"${GITHUB_TOKEN}\"; fi",
+        // Fix for smithers-orchestrator MAX_RESPONSE_SIZE bug
+        "export MAX_RESPONSE_SIZE=100000",
+        "export MAX_OUTPUT_SIZE=100000",
+        "export MAX_ITERATIONS=100",
         ...envVars,
         `echo "[${run.vm_name}] Resuming workflow: ${workflowFile}"`,
-        `${smithersCmd} 2>&1 | tee -a "${reportsDir}/smithers-resume.log"`,
+        smithersRunId ? `echo "[${run.vm_name}] Found existing smithers run: ${smithersRunId}"` : `echo "[${run.vm_name}] Starting fresh run"`,
+        `echo "[${run.vm_name}] Progress: ${state.completed}/${state.total} tasks completed"`,
+        state.stuck.length > 0 ? `echo "[${run.vm_name}] Resetting stuck tasks: ${state.stuck.join(", ")}"` : "",
+        state.next ? `echo "[${run.vm_name}] Continuing from: ${state.next}"` : "",
+        // Reset stuck tasks before running (critical for proper resume)
+        `python3 << 'PYRESET'
+import sqlite3
+import os
+db_path = os.environ.get('SMITHERS_DB_PATH', '')
+if db_path and db_path != 'undefined':
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE _smithers_nodes SET state = 'pending', last_attempt = NULL WHERE state = 'in-progress'")
+        conn.commit()
+        conn.close()
+        print(f"[resume] Reset {cursor.rowcount} stuck tasks to pending")
+    except Exception as e:
+        print(f"[resume] Reset warning: {e}")
+PYRESET`,
+        // Use 'smithers run' which reads from existing DB - NOT 'smithers resume' which creates new runs
+        `smithers run ${workflowFile} 2>&1 | tee -a "${reportsDir}/smithers-resume.log"`,
         `echo "${run.id}" > "${controlDir}/resumed.run_id"`
-      ].join("\n")
+      ].filter(Boolean).join("\n")
 
       console.log(`[${run.vm_name}] Resuming run ${run.id}...`)
       console.log(`[${run.vm_name}] Control dir: ${controlDir}`)
