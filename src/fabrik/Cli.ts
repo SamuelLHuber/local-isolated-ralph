@@ -840,12 +840,12 @@ const runsCommand = Command.make("runs").pipe(
           Options.optional,
           Options.withDescription("Path to ralph.db (default: ~/.cache/ralph/ralph.db)")
         ),
-        live: Options.boolean("live").pipe(
+        noLive: Options.boolean("no-live").pipe(
           Options.withDefault(false),
-          Options.withDescription("Query VM directly for real-time status (detects stale host records)")
+          Options.withDescription("Skip live VM query, show cached host status only")
         )
       },
-      ({ id, db, live }) =>
+      ({ id, db, noLive }) =>
         Effect.sync(() => {
           const dbValue = unwrapOptional(db)
           const dbPath = dbValue ?? resolve(homedir(), ".cache", "ralph", "ralph.db")
@@ -853,11 +853,7 @@ const runsCommand = Command.make("runs").pipe(
             console.log(`No DB found at ${dbPath}`)
             return
           }
-          try {
-            reconcileRuns({ dbPath, limit: 50, heartbeatSeconds: 120 })
-          } catch {
-            // best-effort
-          }
+          
           const { db: dbHandle } = openRunDb(dbPath)
           const run = findRunById(dbHandle, id)
           dbHandle.close()
@@ -866,37 +862,98 @@ const runsCommand = Command.make("runs").pipe(
             return
           }
           
-          // Live query VM for real-time status if requested
-          let vmStatus: { status?: string; currentTask?: string; taskStatus?: string; taskAttempt?: number; progress?: { finished: number; total: number }; heartbeatAge?: number; stale?: boolean } = {}
-          if (live && (run.status === "running" || run.status === "done")) {
+          // ALWAYS query VM for real-time status (unless --no-live)
+          let vmStatus: { 
+            status?: string; 
+            currentTask?: string; 
+            taskStatus?: string; 
+            taskAttempt?: number; 
+            progress?: { finished: number; total: number }; 
+            heartbeatAge?: number; 
+            stale?: boolean;
+            error?: string;
+          } = {}
+          
+          if (!noLive) {
             try {
               const workBase = run.workdir.split("/").pop() ?? ""
               const controlDir = `/home/ralph/work/${run.vm_name}/.runs/${workBase}`
-              const heartbeatCmd = `cat "${controlDir}/heartbeat.json" 2>/dev/null || echo '{}'`
-              const hbJson = runRemote(run.vm_name, heartbeatCmd)
-              const hb = JSON.parse(hbJson)
-              if (hb.v) {
-                const hbTime = Date.parse(hb.ts || "")
-                const now = Date.now()
-                const ageMinutes = hbTime ? Math.floor((now - hbTime) / 60000) : -1
-                vmStatus = {
-                  status: hb.phase,
-                  currentTask: hb.current_task,
-                  taskStatus: hb.task_status,
-                  taskAttempt: hb.task_attempt,
-                  progress: hb.progress,
-                  heartbeatAge: ageMinutes,
-                  stale: ageMinutes > 5 // stale if > 5 minutes old
-                }
+              const smithersDbName = readSpecId(run.spec_path) ? `${readSpecId(run.spec_path)}.db` : `run-${run.id}.db`
+              const smithersDbPath = `${controlDir}/.smithers/${smithersDbName}`
+              
+              // Query VM database directly for truth
+              const vmQueryScript = `python3 << 'PY'
+import sqlite3, json, os, time
+from datetime import datetime, timezone
+
+db_path = "${smithersDbPath}"
+result = {"error": None, "status": None, "current_task": None, "task_status": None, "progress": None}
+
+try:
+    if not os.path.exists(db_path):
+        result["error"] = "Database not found"
+    else:
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+        
+        # Get latest run status
+        c.execute("SELECT run_id, status FROM _smithers_runs ORDER BY started_at_ms DESC LIMIT 1")
+        row = c.fetchone()
+        if row:
+            result["run_id"] = row[0]
+            result["status"] = row[1]
+        
+        # Get current in-progress task
+        c.execute("SELECT node_id, state, last_attempt FROM _smithers_nodes WHERE state IN ('in-progress', 'running') ORDER BY updated_at_ms DESC LIMIT 1")
+        row = c.fetchone()
+        if row:
+            result["current_task"] = row[0]
+            result["task_status"] = row[1]
+            result["task_attempt"] = row[2]
+        
+        # Get progress
+        c.execute("SELECT COUNT(*), SUM(CASE WHEN state='finished' THEN 1 ELSE 0 END) FROM _smithers_nodes")
+        row = c.fetchone()
+        if row:
+            result["progress"] = {"total": row[0], "finished": row[1] or 0}
+        
+        # Check heartbeat
+        hb_path = os.path.join(os.path.dirname(db_path), "..", "heartbeat.json")
+        if os.path.exists(hb_path):
+            with open(hb_path) as f:
+                hb = json.load(f)
+            hb_time = datetime.fromisoformat(hb.get("ts", "").replace("Z", "+00:00"))
+            now = datetime.now(hb_time.tzinfo)
+            result["heartbeat_age_minutes"] = int((now - hb_time).total_seconds() / 60)
+        
+        conn.close()
+except Exception as e:
+    result["error"] = str(e)
+
+print(json.dumps(result))
+PY`
+              const vmJson = runRemote(run.vm_name, vmQueryScript).trim()
+              const vmData = JSON.parse(vmJson)
+              
+              if (vmData.error) {
+                vmStatus.error = vmData.error
+              } else {
+                vmStatus.status = vmData.status
+                vmStatus.currentTask = vmData.current_task
+                vmStatus.taskStatus = vmData.task_status
+                vmStatus.taskAttempt = vmData.task_attempt
+                vmStatus.progress = vmData.progress
+                vmStatus.heartbeatAge = vmData.heartbeat_age_minutes
+                vmStatus.stale = (vmData.heartbeat_age_minutes || 999) > 10
               }
-            } catch {
-              // VM query failed, ignore
+            } catch (e) {
+              vmStatus.error = `VM query failed: ${e}`
             }
           }
           
-          // Detect stale status (host shows "done" but VM shows "running")
-          const staleStatus = run.status === "done" && vmStatus.status && vmStatus.status !== "finished" && vmStatus.status !== "failed"
-          const staleRunning = run.status === "running" && vmStatus.stale
+          // Determine effective status (VM wins if available)
+          const effectiveStatus = vmStatus.status || run.status
+          const statusMismatch = run.status !== vmStatus.status && vmStatus.status
           
           console.log(`id: ${run.id}`)
           console.log(`vm: ${run.vm_name}`)
@@ -906,28 +963,48 @@ const runsCommand = Command.make("runs").pipe(
           console.log(`repo_url: ${run.repo_url ?? ""}`)
           console.log(`repo_ref: ${run.repo_ref ?? ""}`)
           console.log(`started_at: ${run.started_at}`)
-          console.log(`status: ${run.status}${staleStatus ? " ⚠️ STALE (VM shows: " + vmStatus.status + ")" : ""}${staleRunning ? " ⚠️ STALE HEARTBEAT (>5min old)" : ""}`)
+          
+          // Show status with mismatch warning
+          if (statusMismatch && !noLive) {
+            console.log(`status: ${run.status} ⚠️  (VM shows: ${vmStatus.status})`)
+            console.log(`effective_status: ${effectiveStatus}`)
+          } else {
+            console.log(`status: ${effectiveStatus}`)
+          }
+          
           console.log(`exit_code: ${run.exit_code ?? ""}`)
           if (run.failure_reason) {
             console.log(`failure_reason: ${run.failure_reason}`)
           }
           
-          // Show live VM status if available
-          if (live && vmStatus.status) {
+          // Always show VM status details when available
+          if (!noLive && (vmStatus.status || vmStatus.error)) {
             console.log("")
-            console.log("=== Live VM Status ===")
-            console.log(`vm_status: ${vmStatus.status}`)
-            if (vmStatus.currentTask) {
-              console.log(`current_task: ${vmStatus.currentTask}`)
-              console.log(`task_status: ${vmStatus.taskStatus}`)
-              console.log(`task_attempt: ${vmStatus.taskAttempt}`)
-            }
-            if (vmStatus.progress && vmStatus.progress.total > 0) {
-              const pct = Math.floor((vmStatus.progress.finished / vmStatus.progress.total) * 100)
-              console.log(`progress: ${vmStatus.progress.finished}/${vmStatus.progress.total} (${pct}%)`)
-            }
-            if (vmStatus.heartbeatAge !== undefined && vmStatus.heartbeatAge >= 0) {
-              console.log(`heartbeat_age: ${vmStatus.heartbeatAge} minutes`)
+            console.log("=== VM Status (Source of Truth) ===")
+            
+            if (vmStatus.error) {
+              console.log(`error: ${vmStatus.error}`)
+            } else {
+              console.log(`vm_status: ${vmStatus.status}`)
+              
+              if (vmStatus.currentTask) {
+                console.log(`current_task: ${vmStatus.currentTask}`)
+                console.log(`task_status: ${vmStatus.taskStatus}`)
+                console.log(`task_attempt: ${vmStatus.taskAttempt}`)
+              }
+              
+              if (vmStatus.progress && vmStatus.progress.total > 0) {
+                const pct = Math.floor((vmStatus.progress.finished / vmStatus.progress.total) * 100)
+                console.log(`progress: ${vmStatus.progress.finished}/${vmStatus.progress.total} (${pct}%)`)
+              }
+              
+              if (vmStatus.heartbeatAge !== undefined) {
+                if (vmStatus.heartbeatAge > 60) {
+                  console.log(`heartbeat_age: ${vmStatus.heartbeatAge} min ⚠️ STALE`)
+                } else {
+                  console.log(`heartbeat_age: ${vmStatus.heartbeatAge} min`)
+                }
+              }
             }
           }
           
@@ -935,8 +1012,15 @@ const runsCommand = Command.make("runs").pipe(
           console.log(`os: ${run.os ?? ""}`)
           console.log(`binary_hash: ${run.binary_hash ?? ""}`)
           console.log(`git_sha: ${run.git_sha ?? ""}`)
+          
+          // Summary for common issues
+          if (!noLive && vmStatus.status === "running" && !vmStatus.currentTask && (vmStatus.heartbeatAge || 0) > 60) {
+            console.log("")
+            console.log("⚠️  WARNING: VM shows 'running' but no current task and heartbeat is stale.")
+            console.log("   The workflow may have crashed. Try: fabrik run resume --id 113")
+          }
         }).pipe(Effect.withSpan("runs.show"))
-    ).pipe(Command.withDescription("Show run details")),
+    ).pipe(Command.withDescription("Show run details (queries VM for real-time status)")),
     Command.make(
       "feedback",
       {
