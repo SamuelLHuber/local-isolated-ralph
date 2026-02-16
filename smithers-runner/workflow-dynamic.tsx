@@ -43,11 +43,17 @@ function vcsBranchSetup() {
         if (currentBookmark.includes(targetBranch)) {
           console.log(`[workflow] JJ: Already on bookmark ${targetBranch}`);
         } else {
-          // Create/track bookmark if it doesn't exist
+          // Create/track bookmark if it doesn't exist, and start new change on it
           console.log(`[workflow] JJ: Setting up bookmark ${targetBranch}...`);
+          // First, create a new change on top of the target bookmark (or create it)
+          try {
+            execSync(`jj new ${targetBranch} 2>/dev/null || jj new`, { cwd, stdio: "pipe" });
+          } catch (e) {
+            // If targetBranch doesn't exist as a rev, just use current
+          }
           execSync(`jj bookmark create ${targetBranch} 2>/dev/null || true`, { cwd, stdio: "pipe" });
           execSync(`jj bookmark track ${targetBranch} --remote=origin 2>/dev/null || true`, { cwd, stdio: "pipe" });
-          console.log(`[workflow] JJ: Bookmark ${targetBranch} ready`);
+          console.log(`[workflow] JJ: Bookmark ${targetBranch} ready and working on new change`);
         }
       } catch (e) {
         console.warn(`[workflow] JJ bookmark setup failed: ${e}`);
