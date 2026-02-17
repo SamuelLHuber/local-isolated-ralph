@@ -572,3 +572,170 @@ $ fabrik run resume --id <run-id>
 > 2. State is preserved (database entries not duplicated)
 > 3. Progress continues (not restarts)
 
+---
+
+## Memory Requirements for L4+ Integration Tests (2026-02-16)
+
+**Run:** ombruja-miniapp Task 16 - "L4: Add integration tests for complete user flows"  
+**VM:** ralph-1 (5.8GB RAM)  
+**Status:** ❌ Failed - OOM (Out of Memory)
+
+### The Problem
+
+L4 integration tests spawn a full application stack that exhausts 5.8GB RAM:
+- Next.js application server
+- Supabase local stack
+- Vitest test runner
+- Chromium headless browser
+- Effect library runtime
+- TypeScript compilation
+
+**Peak memory:** ~5GB+ (3GB smithers + 2GB test infrastructure)
+
+### Sequential Mode Test
+
+Even running **single task** (Task 16 only) failed:
+- Iteration 0: 16:impl ✓, 16:val ✓ (succeeded)
+- Iteration 1: Process killed by OOM
+
+**Memory didn't free between iterations** - Chromium processes (~180MB) and test runners accumulated.
+
+### VM Memory Sizing Guide
+
+| Workload Type | Minimum RAM | Recommended |
+|---------------|-------------|-------------|
+| L1-L2 (Unit tests) | 4GB | 6GB |
+| L3 (API tests) | 6GB | 8GB |
+| **L4-L5 (Integration/E2E)** | **8GB** | **12GB** |
+| Multi-task parallel | 12GB | 16GB |
+
+### The Solution
+
+**Immediate:**
+1. Increase VM memory to 8GB+ (`limactl` edit lima.yaml)
+2. Or skip to Task 17 (milestone work, less memory intensive)
+
+**Long-term:**
+1. Add memory requirements to TODO spec format
+2. Implement pre-flight memory check in workflow
+3. Auto-scale VM memory based on task tier detection
+4. Add swap space to base image (emergency overflow)
+
+### Code Work Preserved
+
+Task 16 core work committed to `feat/chinese-readings-n-art`:
+```
+ba55455 feat(test): L4 integration tests with Effect mocking and vitest scripts
+487335e chore(config): exclude smithers-runner from TypeScript compilation
+efd5cf5 feat: add Match.exhaustive for ChineseZodiacSign branded types
+```
+
+### Monitoring Memory
+
+```bash
+# Check for OOM conditions
+limactl shell ralph-1 -- bash -c '
+  free -h
+  ps aux | grep -E "bun|smithers|chromium" | grep -v grep
+  dmesg | grep -i "killed process" | tail -5
+'
+```
+
+### Lesson Learned
+
+> **Memory is a first-class resource constraint.**
+>
+> L4+ tasks need explicit memory requirements in specs.
+> Sequential mode helps but can't overcome hardware limits.
+> Always size VMs for peak memory, not average.
+
+---
+
+## Check for Uncommitted Work Before VM Shutdown (2026-02-16)
+
+**Context:** Shutting down ralph-1 VM after run failures  
+**Discovery:** 1,400+ lines of uncommitted work in failed run directory  
+**Status:** ⚠️ Almost lost valuable code
+
+### The Problem
+
+After run failures on Task 17, assumed all work was committed. However:
+
+```bash
+# In VM work directory
+git status --short | grep "^ M"
+ M src/app/collection/app.tsx          # 376 lines changed
+ M src/client/types/client.types.ts     # 245 lines changed  
+ M src/server/lib/notification.ts     # 135 lines changed
+ M src/server/services/alchemy/alchemy.service.ts  # 63 lines changed
+ M tests/integration/user-flow.test.ts # 580 lines changed
+```
+
+**Total: ~1,400 lines of uncommitted work from failed iterations**
+
+### Root Cause
+
+Failed runs (OOM) leave modified files that:
+- Never went through full Ralph loop (no VCS commit)
+- Contain partial implementation from iteration attempts
+- Are invisible to "git log" (not committed)
+
+### The Solution
+
+**Always run this before shutting down a VM:**
+
+```bash
+# Check for uncommitted work
+limactl shell ralph-1 -- bash -c '
+  cd /home/ralph/work/ralph-1/ombruja-miniapp-*/
+  echo "Modified files: $(git status --short | grep "^ M" | wc -l)"
+  echo "New files: $(git status --short | grep "^??" | wc -l)"
+  
+  # Show line counts for modified files
+  git status --short | grep "^ M" | while read line; do
+    file=$(echo "$line" | cut -c4-)
+    changes=$(git diff --numstat "$file" | awk "{print \$1+\$2}")
+    echo "  $file: $changes lines"
+  done
+'
+```
+
+### Recovery Options
+
+**If uncommitted work found:**
+
+1. **Copy to local for review:**
+   ```bash
+   # Archive modified files
+   limactl shell ralph-1 -- tar -C /home/ralph/work/ralph-1/ombruja-miniapp-XXXX -czf - \
+     $(git status --short | grep "^ M" | cut -c4-) \
+     > ~/vm-uncommitted-work.tar.gz
+   ```
+
+2. **Stash on VM:**
+   ```bash
+   git stash push -m "WIP before shutdown $(date)"
+   ```
+
+3. **Quick commit:**
+   ```bash
+   git add -A
+   git commit -m "WIP: Task X uncommitted work [ci skip]"
+   git push origin feat/branch
+   ```
+
+### Checklist Before VM Shutdown
+
+- [ ] `git status` - any modified files?
+- [ ] `git diff --stat` - how many lines changed?
+- [ ] `git stash list` - any stashes?
+- [ ] `git log --oneline -3` - confirm expected commits present
+- [ ] `jj status` (if using jujutsu) - any uncommitted changes?
+- [ ] Check `.runs/` directories - any run logs worth saving?
+
+### Lesson Learned
+
+> **Failed runs != committed work.**
+>
+> Always verify git status before shutdown. The Ralph loop only commits on successful iterations. Failed iterations (OOM, crashes) leave modified files in working directory that are invisible to remote repo.
+
