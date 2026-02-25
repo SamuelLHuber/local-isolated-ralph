@@ -42,6 +42,13 @@
 
 ---
 
+## Design Principles
+
+This spec follows the design principles defined in `specs/051-k3s-orchestrator.md`.
+Monitoring must read run metadata from the shared labels/annotations schema.
+
+---
+
 ## Non-Goals
 
 - Complex job dependencies ("Job A must finish before Job B")
@@ -60,7 +67,7 @@
 │  │  Kubernetes CronJob API (via @kubernetes/client-node)              │ │
 │  │  └── Lists CronJobs, checks status.lastScheduleTime vs now         │ │
 │  │                                                                          │ │
-│  ├─ SQLite State (~/.cache/fabrik/cron-monitor.db)                     │ │
+│  ├─ SQLite State (~/.cache/fabrik/state.db)                            │ │
 │  │  ├─ monitors: CronJob name, schedule, expected duration            │ │
 │  │  ├─ history: Last run start/end time, status                       │ │
 │  │  └─ alerts: Missed runs, duration violations                        │ │

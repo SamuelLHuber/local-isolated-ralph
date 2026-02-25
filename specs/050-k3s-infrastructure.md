@@ -46,6 +46,12 @@
 
 ---
 
+## Design Principles
+
+This spec follows the design principles defined in `specs/051-k3s-orchestrator.md`.
+
+---
+
 ## Non-Goals
 
 - Multi-cloud abstraction (start with Hetzner, add others later)
@@ -296,8 +302,8 @@ in
       type = lib.types.attrsOf lib.types.str;
       default = {};
       example = {
-        "fabrik.dev/role" = "worker";
-        "fabrik.dev/cost-center" = "team-a";
+        "fabrik.sh/role" = "worker";
+        "fabrik.sh/cost-center" = "team-a";
       };
     };
   };
@@ -856,7 +862,7 @@ fabrik infra init manual-cluster --provider manual --nodes-file nodes.yaml
 - [ ] Workers join cluster automatically using k3s token
 - [ ] Longhorn deployed as default storage class
 - [ ] `fabrik infra kubeconfig` outputs valid kubeconfig for kubectl
-- [ ] Nodes labeled with `fabrik.dev/role` and other configured labels
+- [ ] Nodes labeled with `fabrik.sh/role` and other configured labels
 - [ ] Manual provider works with existing servers via SSH + nixos-anywhere
 - [ ] Pulumi state stored in configured backend (S3, Pulumi Cloud, local)
 - [ ] `fabrik infra destroy` cleanly removes all cloud resources

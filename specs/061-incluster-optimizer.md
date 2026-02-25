@@ -120,7 +120,7 @@
 // From analytics: p95 memory is 3.2Gi, current limit is 2Gi
 const candidate = {
   type: 'resource',
-  target: { kind: 'Job', labelSelector: 'fabrik.dev/spec-type=impl' },
+  target: { kind: 'Job', labelSelector: 'fabrik.sh/spec-type=impl' },
   change: { memoryLimit: '4Gi' },  // Was 2Gi
   reason: '75% OOM rate, p95 memory 3.2Gi',
   confidence: 0.92,
@@ -258,7 +258,7 @@ Proposed → Safety Check → Deployed → Running → Analyzed → Decided
 ### **Change Request CRD**
 
 ```yaml
-apiVersion: fabrik.dev/v1
+apiVersion: fabrik.sh/v1
 kind: OptimizationChange
 metadata:
   name: memory-4gi-for-impl-specs
@@ -267,7 +267,7 @@ spec:
   type: resource
   target:
     labelSelector:
-      fabrik.dev/spec-type: impl
+      fabrik.sh/spec-type: impl
   change:
     memoryLimit: 4Gi
   rationale: |

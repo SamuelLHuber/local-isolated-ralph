@@ -44,6 +44,13 @@
 
 ---
 
+## Design Principles
+
+This spec follows the design principles defined in `specs/051-k3s-orchestrator.md`.
+Dashboard views and filters must read run metadata from the shared labels/annotations schema.
+
+---
+
 ## Non-Goals
 
 - Separate API server (K8s API is our API)
@@ -218,7 +225,7 @@ Ctrl+C      Force quit
 - NAME: Run ID (ULID, truncated)
 - STATUS: running | blocked | finished | failed | pending (from label)
 - PHASE: interview | implement | review | gate | done (from label)
-- TASK: Current task from `fabrik.dev/task` label
+- TASK: Current task from `fabrik.sh/task` label
 - AGE: Job creation time
 
 ### Run Detail View
@@ -246,7 +253,7 @@ Ctrl+C      Force quit
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**Progress bar**: From `fabrik.dev/progress` annotation (JSON parsed).
+**Progress bar**: From `fabrik.sh/progress` annotation (JSON parsed).
 
 ### Logs View
 
@@ -400,19 +407,19 @@ class FabrikK8sClient {
       const jobs = await this.batchApi.listNamespacedJob(
         'fabrik-runs',
         undefined, undefined, undefined, undefined,
-        'fabrik.dev/managed-by=fabrik'
+        'fabrik.sh/managed-by=fabrik'
       );
       
       for (const job of jobs.body.items) {
-        const runId = job.metadata?.labels?.['fabrik.dev/run-id'];
+        const runId = job.metadata?.labels?.['fabrik.sh/run-id'];
         if (!runId) continue;
         
         runs.push({
           id: runId,
           context: ctx,
           status: this.getStatus(job),
-          phase: job.metadata?.labels?.['fabrik.dev/phase'] || 'unknown',
-          task: job.metadata?.labels?.['fabrik.dev/task'] || 'unknown',
+          phase: job.metadata?.labels?.['fabrik.sh/phase'] || 'unknown',
+          task: job.metadata?.labels?.['fabrik.sh/task'] || 'unknown',
           progress: this.parseProgress(job),
           age: job.metadata?.creationTimestamp,
         });
@@ -429,7 +436,7 @@ class FabrikK8sClient {
     
     const req = watch.watch(
       '/apis/batch/v1/namespaces/fabrik-runs/jobs',
-      { labelSelector: 'fabrik.dev/managed-by=fabrik' },
+      { labelSelector: 'fabrik.sh/managed-by=fabrik' },
       (type, obj) => {
         callback({ type, run: this.parseJob(obj) });
       },
@@ -472,14 +479,14 @@ class FabrikK8sClient {
     if (job.status?.succeeded) return 'finished';
     if (job.status?.failed) return 'failed';
     if (job.status?.active) {
-      const phase = job.metadata?.labels?.['fabrik.dev/phase'];
+      const phase = job.metadata?.labels?.['fabrik.sh/phase'];
       return phase === 'gate' ? 'blocked' : 'running';
     }
     return 'pending';
   }
   
   private parseProgress(job: V1Job): Progress | undefined {
-    const annotation = job.metadata?.annotations?.['fabrik.dev/progress'];
+    const annotation = job.metadata?.annotations?.['fabrik.sh/progress'];
     if (!annotation) return undefined;
     try {
       return JSON.parse(annotation);
@@ -551,7 +558,7 @@ class RunCache {
 - [ ] `c` key cancels job (kubectl delete job)
 - [ ] `r` key resumes job (delete pod, Job recreates)
 - [ ] Project ID validated in dispatch form (live feedback)
-- [ ] Progress bar renders from `fabrik.dev/progress` annotation
+- [ ] Progress bar renders from `fabrik.sh/progress` annotation
 - [ ] Works without cache (direct K8s), faster with cache
 
 ### Both
@@ -572,13 +579,13 @@ While Fabrik provides dashboards, sometimes you need direct K8s access.
 
 ```bash
 # List fabrik jobs
-kubectl get jobs -n fabrik-runs -l fabrik.dev/managed-by=fabrik
+kubectl get jobs -n fabrik-runs -l fabrik.sh/managed-by=fabrik
 
 # Get run details
 kubectl describe job -n fabrik-runs fabrik-01jk7v8x...
 
 # Stream logs (what Fabrik TUI does)
-kubectl logs -n fabrik-runs -l fabrik.dev/run-id=01jk7v8x... -f
+kubectl logs -n fabrik-runs -l fabrik.sh/run-id=01jk7v8x... -f
 
 # Execute into running pod
 kubectl exec -n fabrik-runs -it fabrik-01jk7v8x...-abcd -- /bin/sh
@@ -664,23 +671,23 @@ current-context: dev-k3s
 ```typescript
 interface RunStatus {
   // From Job metadata
-  id: string;              // labels['fabrik.dev/run-id']
+  id: string;              // labels['fabrik.sh/run-id']
   context: string;         // kubeconfig context name
   
   // From Job status + labels
   status: 'pending' | 'running' | 'blocked' | 'finished' | 'failed';
   phase: 'interview' | 'implement' | 'review' | 'gate' | 'done' | 'unknown';
-  task: string;            // labels['fabrik.dev/task']
+  task: string;            // labels['fabrik.sh/task']
   
   // From annotations
   progress?: {
     finished: number;
     total: number;
-  };  // JSON.parse(annotations['fabrik.dev/progress'])
+  };  // JSON.parse(annotations['fabrik.sh/progress'])
   
   // From metadata
   age: string;             // creationTimestamp
-  updatedAt?: string;       // annotations['fabrik.dev/updated']
+  updatedAt?: string;       // annotations['fabrik.sh/updated']
 }
 ```
 

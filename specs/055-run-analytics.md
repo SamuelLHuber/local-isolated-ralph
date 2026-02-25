@@ -43,6 +43,13 @@
 
 ---
 
+## Design Principles
+
+This spec follows the design principles defined in `specs/051-k3s-orchestrator.md`.
+Analytics must read run metadata from the shared labels/annotations schema.
+
+---
+
 ## Non-Goals
 
 - Complex ML pipelines (start with SQL aggregations)
@@ -65,7 +72,7 @@
 │  │  ├── Prometheus metrics (memory, CPU usage)                             │ │
 │  │  └── Loki logs (errors, completion status)                             │ │
 │  │                                                                        │ │
-│  │  Storage: SQLite ~/.cache/fabrik/analytics.db                         │ │
+│  │  Storage: SQLite ~/.cache/fabrik/state.db                             │ │
 │  │  ├─ runs: Full run record (id, spec, outcome, duration, cost)         │ │
 │  │  ├─ tasks: Per-task breakdown (type, model, tokens, success)        │ │
 │  │  ├─ resources: Memory/CPU peaks per run                               │ │
