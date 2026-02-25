@@ -1,5 +1,5 @@
 {
-  "name": "local-ralph",
+  "name": "fabrik",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,12 +7,11 @@
     "fabrik": "dist/fabrik"
   },
   "scripts": {
-    "build": "bun run scripts/embed-assets.ts && bun build src/fabrik/bin.ts --compile --outfile dist/fabrik",
+    "build": "bun build src/fabrik/bin.ts --compile --outfile dist/fabrik",
     "cli": "bun run src/fabrik/bin.ts",
     "changeset-version": "changeset version && node scripts/version.mjs",
     "changeset-publish": "bun run build && node scripts/publish.mjs",
     "test": "bun test src/fabrik/__tests__",
-    "test:workflows": "bun test src/fabrik/__tests__/workflow-compile.test.ts",
     "test:markdown": "bun test src/fabrik/__tests__/markdown-spec.test.ts",
     "test:learning": "bun test src/fabrik/__tests__/learning.test.ts",
     "hooks:install": "git config core.hooksPath .githooks && chmod +x .githooks/pre-commit"
@@ -20,8 +19,7 @@
   "dependencies": {
     "@effect/cli": "latest",
     "@effect/platform-node": "latest",
-    "effect": "latest",
-    "smithers-orchestrator": "github:evmts/smithers#ea5ece3b156ebd32990ec9c528f9435c601a0403"
+    "effect": "latest"
   },
   "devDependencies": {
     "@changesets/changelog-github": "latest",

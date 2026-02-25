@@ -5,7 +5,7 @@ It lets agents and developers run performance-aware checks and get a single, sco
 
 Version: v0.1.0 (draft)
 Date: 2026-02-11
-Author: Fabrik/Ralph
+Author: Fabrik
 Stakeholders: Agent operators, app devs
 Refs: LAOS (https://github.com/dtechvision/laos)
 
@@ -14,8 +14,8 @@ Refs: LAOS (https://github.com/dtechvision/laos)
 ## 1) Overview (Plain Language)
 We are adding a “performance linter” to Fabrik that queries LAOS (Loki/Tempo/Prometheus/Pyroscope/Sentry/PostHog) and returns a compact, actionable report. It must support both full test runs (k6/autocannon/wrk + telemetry) and ad‑hoc checks (e.g. “did the expected error show up?”). All results must be scoped to a unique run identifier so multiple agents can operate concurrently without noise.
 
-This spec is designed to stand alone for readers unfamiliar with Ralph/Smithers:
-- **Ralph** is the iterative agent loop (spec → tasks → reports).
+This spec is designed to stand alone for readers unfamiliar with Fabrik/Smithers:
+- **Fabrik** is the iterative agent loop (spec → tasks → reports).
 - **Smithers** is the workflow engine that runs tasks, reviewers, and writes reports.
 - **LAOS** is the shared observability stack (logs/traces/metrics/profiles/errors).
 
@@ -77,9 +77,9 @@ service: effect-tanstack-start
 window: 10m
 
 scope:
-  run_id: "${RalphRunId}"
+  run_id: "${FabrikRunId}"
   env: "local"
-  agent: "${RalphAgent}"
+  agent: "${FabrikAgent}"
 
 thresholds:
   latency_ms:
@@ -175,7 +175,7 @@ Example:
   },
   "window":"10m",
   "service":"effect-tanstack-start",
-  "run_id":"ralph-1-20260211T101500Z"
+  "run_id":"fabrik-20260211T101500Z"
 }
 ```
 

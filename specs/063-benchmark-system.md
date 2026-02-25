@@ -1,4 +1,4 @@
-# PRD: Fabrik LLM Benchmark & Tribunal System
+# Spec: Fabrik Benchmark & Tribunal System (k3s-native)
 
 ## Overview
 
@@ -7,7 +7,7 @@ Add comprehensive metrics collection and benchmarking capabilities to Fabrik/Smi
 ## User Stories
 
 ### As a Platform Engineer (Infrastructure)
-**I want to** know how many concurrent Ralph agents my infrastructure can support  
+**I want to** know how many concurrent Fabrik Jobs my infrastructure can support  
 **So that** I can provision appropriate resources and avoid overloading providers  
 **Acceptance:** Can run load tests with increasing concurrency (1, 2, 4, 8, ... 100) and measure throughput degradation
 
@@ -52,7 +52,7 @@ Add comprehensive metrics collection and benchmarking capabilities to Fabrik/Smi
 ### Implicit Goals (Now Explicit)
 
 **Infrastructure Capacity Planning**
-Measure concurrent execution capacity at different loads (1, 2, 4, 8, ... 1000 parallel calls) to determine infrastructure limits. Answer: "How many parallel Ralph agents can this provider/infrastructure support?"
+Measure concurrent execution capacity at different loads (1, 2, 4, 8, ... 1000 parallel calls) to determine infrastructure limits. Answer: "How many parallel Fabrik Jobs can this provider/infrastructure support?"
 
 **Cache Effectiveness Optimization**
 Track cache hit/miss rates over time to optimize prompt caching strategies. Identify which prompts benefit from caching and optimal cache sizes.
@@ -107,6 +107,12 @@ This enables analysis like:
 - Write metrics to existing SQLite DB (new tables)
 - Export metrics JSON alongside existing reports
 - Benchmark spec schema for multi-scenario runs
+
+## k3s Integration
+
+- Benchmarks run as Fabrik Jobs/CronJobs (see `051-k3s-orchestrator`).
+- Job metadata uses the shared `fabrik.sh/*` labels/annotations schema.
+- Aggregated metrics persist to `~/.cache/fabrik/state.db` (single local DB).
 
 ## Metrics to Collect
 
@@ -380,7 +386,7 @@ Add optional `benchmarks` array to any spec:
 # Core configuration
 DISABLE_METRICS=1              # Opt-out of metrics collection
 BENCHMARK_RETENTION_DAYS=90    # How long to keep JSONL files
-METRICS_DB_PATH=./reports/metrics.db  # SQLite path (default: same as Smithers)
+METRICS_DB_PATH=~/.cache/fabrik/state.db  # Single local SQLite db
 
 # Provider detection (existing)
 SMITHERS_MODEL=gpt-4
@@ -397,32 +403,19 @@ BENCHMARK_ITERATION=0           # Current iteration number
 ## File Locations
 
 ```
-local-isolated-ralph/
-├── scripts/
-│   └── smithers-spec-runner.tsx     # MODIFY: Add metrics collection
+fabrik/
 ├── benchmark/
-│   ├── smithers-benchmark.tsx       # NEW: Benchmark workflow
-│   └── prompts/                     # EXISTING: Tribunal prompts
+│   └── prompts/                     # Tribunal prompts
 ├── specs/
-│   └── 030-benchmark-system.md      # This spec
-└── reports/
-    ├── <run-id>/
-    │   ├── .smithers/
-    │   │   └── <spec-id>.db          # task_report/review_summary rows
-    │   └── metrics.json              # NEW: Run metrics export
-    └── benchmark-<name>-<ts>/
-        ├── report/
-        │   └── benchmark-report.json
-        └── runs/
-            └── <scenario>-run-0/
-                └── metrics.json
+│   └── 063-benchmark-system.md      # This spec
+└── ~/.cache/fabrik/state.db         # Single local SQLite db
 ```
 
 ## Implementation Approach
 
-### Phase 1: Metrics in Smithers Core
+### Phase 1: Metrics in Smithers Core (k3s Jobs)
 
-**File: `scripts/smithers-spec-runner.tsx`**
+**Location**: Smithers runtime inside the Fabrik Job container
 
 Add at top of file:
 
@@ -852,76 +845,8 @@ fabrik benchmark \
 
 ## Database Migration
 
-**Migration script: `scripts/migrate-metrics-db.ts`**
-
-```typescript
-#!/usr/bin/env bun
-import Database from "better-sqlite3";
-
-const db = new Database(process.argv[2] || "./reports/state.db");
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS inference_metrics (
-    id TEXT PRIMARY KEY,
-    run_id TEXT NOT NULL,
-    timestamp TEXT NOT NULL,
-    harness TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    model TEXT NOT NULL,
-    phase TEXT NOT NULL,
-    task_id TEXT,
-    iteration INTEGER DEFAULT 0,
-    duration_ms INTEGER,
-    input_tokens INTEGER DEFAULT 0,
-    cache_read_tokens INTEGER DEFAULT 0,
-    cache_write_tokens INTEGER DEFAULT 0,
-    output_tokens INTEGER DEFAULT 0,
-    reasoning_tokens INTEGER DEFAULT 0,
-    total_tokens INTEGER DEFAULT 0,
-    billed_tokens INTEGER DEFAULT 0,
-    status TEXT,
-    error TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS run_metrics (
-    run_id TEXT PRIMARY KEY,
-    spec_id TEXT NOT NULL,
-    harness TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    model TEXT NOT NULL,
-    started_at TEXT,
-    completed_at TEXT,
-    duration_ms INTEGER,
-    total_tasks INTEGER DEFAULT 0,
-    tasks_completed INTEGER DEFAULT 0,
-    total_iterations INTEGER DEFAULT 0,
-    total_input_tokens INTEGER DEFAULT 0,
-    total_cache_read_tokens INTEGER DEFAULT 0,
-    total_cache_write_tokens INTEGER DEFAULT 0,
-    total_output_tokens INTEGER DEFAULT 0,
-    total_reasoning_tokens INTEGER DEFAULT 0,
-    total_billed_tokens INTEGER DEFAULT 0,
-    avg_tokens_per_second REAL DEFAULT 0,
-    avg_ttft_ms REAL DEFAULT 0,
-    tribunal_scores TEXT
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_inference_run ON inference_metrics(run_id);
-  CREATE INDEX IF NOT EXISTS idx_inference_provider ON inference_metrics(provider, model);
-  CREATE INDEX IF NOT EXISTS idx_inference_harness ON inference_metrics(harness);
-  CREATE INDEX IF NOT EXISTS idx_inference_timestamp ON inference_metrics(timestamp);
-  CREATE INDEX IF NOT EXISTS idx_run_spec ON run_metrics(spec_id);
-  CREATE INDEX IF NOT EXISTS idx_run_provider ON run_metrics(provider, model);
-`);
-
-console.log("Metrics tables created successfully");
-db.close();
-```
-
-**Run migration:**
-```bash
-bun run scripts/migrate-metrics-db.ts ./reports/state.db
-```
+- Metrics tables are created automatically on first write to `~/.cache/fabrik/state.db`.
+- Schema changes are handled by the analytics/benchmark writer (no separate migration script).
 
 ## Testing Strategy
 
@@ -965,7 +890,7 @@ describe("extractTokens", () => {
 describe("Metrics Integration", () => {
   it("run completes successfully with metrics enabled", async () => {
     const result = await runSmithers({
-      spec: "specs/000-base.json",
+      spec: "specs/051-k3s-orchestrator.md",
       enableMetrics: true
     });
     expect(result.status).toBe("complete");
@@ -975,7 +900,7 @@ describe("Metrics Integration", () => {
   it("run completes successfully with metrics disabled", async () => {
     process.env.DISABLE_METRICS = "1";
     const result = await runSmithers({
-      spec: "specs/000-base.json"
+      spec: "specs/051-k3s-orchestrator.md"
     });
     expect(result.status).toBe("complete");
     expect(result.metricsFile).not.toExist();
@@ -984,7 +909,7 @@ describe("Metrics Integration", () => {
   it("handles provider errors gracefully", async () => {
     // Mock provider returning malformed response
     const result = await runSmithers({
-      spec: "specs/000-base.json",
+      spec: "specs/051-k3s-orchestrator.md",
       mockProvider: "malformed"
     });
     expect(result.status).toBe("complete");
@@ -1022,8 +947,8 @@ describe("Performance", () => {
 ### Workarounds
 - TTFT: Use total duration as proxy, actual TTFT in Phase 2
 - Cache: Track cache hits manually via provider-specific logs
-- Quality: Run `smithers-reviewer.tsx` separately
-- Concurrency: Run multiple benchmark commands in parallel
+- Quality: Use the standard Fabrik review pipeline as a separate Job
+- Concurrency: Run multiple benchmark Jobs in parallel
 
 ## Troubleshooting
 
@@ -1032,8 +957,8 @@ describe("Performance", () => {
 **Fix**: Ensure metrics writes happen in `onFinished` callbacks, not during component render
 
 ### SQLite "table does not exist"
-**Cause**: Migration not run  
-**Fix**: Run `bun run scripts/migrate-metrics-db.ts`
+**Cause**: Metrics writer not initialized  
+**Fix**: Ensure the benchmark writer runs once to initialize tables in `~/.cache/fabrik/state.db`
 
 ### Missing token data
 **Cause**: Provider doesn't expose usage in response  

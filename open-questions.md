@@ -8,6 +8,6 @@ WIe verbessert sich das System selbst dadruch? zB durch lernen aus Reviews wie v
 
 Wie viele Reviews brauchen wir wirklich? NIcht jedes TODO braucht direkt die volle Review Pipeline. Wie finden wir die Balance so, dass Kosten und Garantien balancieren?
 
-Wie maximieren wir deterministische Backpressure pro Ralph Iteration (lint, build/compile, formatter, tests,....) und LLM als Judge?
+Wie maximieren wir deterministische Backpressure pro Fabrik Iteration (lint, build/compile, formatter, tests,....) und LLM als Judge?
 
 Wann brauchen wir welches Model? wann können wir auf kostengünstigere Modelle zurückgreifen?

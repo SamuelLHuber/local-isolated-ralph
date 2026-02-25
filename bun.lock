@@ -3,12 +3,11 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "local-ralph",
+      "name": "fabrik",
       "dependencies": {
         "@effect/cli": "latest",
         "@effect/platform-node": "latest",
         "effect": "latest",
-        "smithers-orchestrator": "github:evmts/smithers#ea5ece3b156ebd32990ec9c528f9435c601a0403",
       },
       "devDependencies": {
         "@changesets/changelog-github": "latest",
@@ -576,7 +575,6 @@
 
     "slash": ["slash@3.0.0", "", {}, "sha512-g9Q1haeby36OSStwb4ntCGGGaKsaVSjQ68fBxoQcutl5fS1vuY18H3wSt3jFyFtrkx+Kz0V1G85A4MyAdDMi2Q=="],
 
-    "smithers-orchestrator": ["smithers-orchestrator@github:evmts/smithers#ea5ece3", { "dependencies": { "@ai-sdk/anthropic": "^3.0.36", "@mdx-js/esbuild": "^3.1.1", "ai": "^6.0.69", "diff": "^5.2.0", "drizzle-orm": "^0.45.1", "drizzle-zod": "^0.8.3", "react": "^19.2.4", "react-dom": "^19.2.4", "react-reconciler": "^0.31.0", "zod": "^4.3.6" }, "peerDependencies": { "typescript": "^5" }, "bin": { "smithers": "src/cli/index.ts" } }, "evmts-smithers-ea5ece3"],
 
     "source-map": ["source-map@0.7.6", "", {}, "sha512-i5uvt8C3ikiWeNZSVZNWcfZPItFQOsYTUAOkcUPGd8DqDy1uOUikjt5dG+uRlwyvR108Fb9DOd4GvXfT0N2/uQ=="],
 
