@@ -739,3 +739,11 @@ limactl shell ralph-1 -- bash -c '
 >
 > Always verify git status before shutdown. The Ralph loop only commits on successful iterations. Failed iterations (OOM, crashes) leave modified files in working directory that are invisible to remote repo.
 
+
+### Need live status showcase somewhere
+
+the user is always complaining they don't know what the current status is and want to see it.
+
+mission control, tui and cli need to have an easy way to show current progress fine grained from the execution step. potentially streaming the agent transcripts as well or logs as they come in.
+
+at least render a prgoress bar that moves so the human can see that it's working 
