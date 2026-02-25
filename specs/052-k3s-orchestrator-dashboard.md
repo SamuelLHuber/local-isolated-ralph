@@ -706,15 +706,6 @@ interface RunStatus {
 
 ---
 
-## Migration from VM (Notes)
-
-- VM dashboards (ralph-1, limactl) → `fabrik dashboard` TUI
-- `fabrik runs show --vm ralph-1` → `fabrik runs show --context dev-k3s`
-- Host DB sync issues → No more host DB, query K8s directly
-- SSH/limactl shell → `kubectl exec` or `fabrik run attach`
-
----
-
 ## Changelog
 
 - **v2.0.0** (2026-02-16):

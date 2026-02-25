@@ -1,57 +1,21 @@
-# Specs Workflow (Human Guide)
+# Specs (Kubernetes-First)
 
-This repo follows a strict, test-driven flow for all features.
+This repo is now Kubernetes-first. Active specs start at 05X and later.
 
-## Flow
-1) **PRD → Spec**
-   - Human drafts `PRD.md` using `specs/templates/PRD.template.md`.
-   - Human verifies PRD with `specs/PRD-GUIDE.md`.
-   - Agent drafts `spec.json` from the approved PRD.
-   - Human reviews and edits `spec.json`.
+## Active Specs
+- `050-k3s-infrastructure`
+- `051-k3s-orchestrator`
+- `052-k3s-orchestrator-dashboard`
+- `054-cron-monitoring`
+- `055-run-analytics`
+- `056-cost-management`
+- `057-k3s-local-testing`
+- `060-security-hardening`
+- `061-incluster-optimizer`
+- `062-fabrik-laos-lint`
+- `063-benchmark-system`
 
-2) **Spec → TODO**
-   - Agent generates `todo.json` from the approved spec.
-
-3) **TODO → Implementation (Smithers)**
-   - Smithers runs tasks in order with tests first.
-   - Write `task_report` rows per task in the Smithers db (includes root-cause fields).
-
-4) **Manual Review Checkpoints**
-   - Review after each spec before proceeding to the next.
-
-## Diagram
-
-```
-PRD.md → spec.json → todo.json → fabrik dispatch (minify) → Smithers workflow → task_report rows
-                               (token-efficient input)    (per task)
-```
-
-## Files
-- Specs (human): `specs/*.json`
-- TODOs (human): `specs/*.todo.json`
-- Minified inputs: generated in the run workdir (gitignored)
-
-## Current Specs
-- `000-base`
-- `020-fabrik-v0-2-0`
-- `021-fabrik-run-persistence`
-- `022-fabrik-doctor`
-
-## Report Format (per task)
-`task_report` rows include:
-- `status`, `work`, `files`, `tests`, `issues`, `next`
-- `rootCause`, `reasoning`, `fix`, `error`, `commit`
-
-## Minified Inputs (Smithers)
-- `fabrik run` minifies spec/todo JSON on dispatch and writes the minified copies into the run workdir.
-- Minified files are **not** tracked in git.
-
-## Testing Requirements
-- TDD is mandatory.
-- Use `@effect/vitest` and Effect DI for external services.
-- Definition of Done: `bun test`, `bun run typecheck`.
-
-## Start Here
-- Read `specs/templates/PRD.template.md` and `specs/PRD-GUIDE.md`.
-- Read `specs/000-base.md`, `specs/000-base.json`, and `specs/000-base.todo.json`.
-- Implement in order, with tests first.
+## Notes
+- Specs earlier than 04X have been retired.
+- All local/CI testing is k3d-based (see `057-k3s-local-testing`).
+- Labels/annotations use the `fabrik.sh` domain (see `051-k3s-orchestrator`).

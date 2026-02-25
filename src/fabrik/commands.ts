@@ -19,15 +19,10 @@ type CommandSpec = {
 }
 
 const COMMAND_HINTS: Record<string, string> = {
-  limactl: "Install Lima: `brew install lima` (then `limactl start`)",
-  virsh: "Install libvirt tools: `sudo apt install libvirt-clients`",
   jj: "Install Jujutsu: https://github.com/martinvonz/jj",
   git: "Install Git (e.g. `brew install git` or `sudo apt install git`)",
   docker: "Install Docker Desktop or Docker Engine: https://docs.docker.com/get-docker/",
-  ssh: "Install OpenSSH client (e.g. `sudo apt install openssh-client`)",
-  scp: "Install OpenSSH client (e.g. `sudo apt install openssh-client`)",
-  tar: "Install tar (e.g. `sudo apt install tar`)",
-  bash: "Install bash (e.g. `sudo apt install bash`)"
+  kubectl: "Install kubectl: https://kubernetes.io/docs/tasks/tools/"
 }
 
 const formatArg = (arg: string) => (/\s|["']/.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg)

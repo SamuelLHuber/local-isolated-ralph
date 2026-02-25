@@ -10,7 +10,6 @@ type Manifest = {
 
 const repoRoot = process.cwd()
 const packageJsonPath = resolve(repoRoot, "package.json")
-const nixModulePath = resolve(repoRoot, "nix/modules/ralph.nix")
 const allowNewDeps = process.env.ALLOW_NEW_DEPENDENCIES === "1"
 const baseRef = process.env.DEPENDENCY_BASE_REF ?? "origin/master"
 
@@ -73,23 +72,6 @@ if (baseManifest && !allowNewDeps) {
       "Policy blocks adding direct deps by default. Re-run with ALLOW_NEW_DEPENDENCIES=1 if explicitly approved."
     )
   }
-}
-
-if (!existsSync(nixModulePath)) {
-  fail(`Missing ${nixModulePath}`)
-}
-const nixSource = readFileSync(nixModulePath, "utf8")
-const latestMatches = nixSource.match(/"[A-Za-z0-9@/.-]+@latest"/g) ?? []
-if (latestMatches.length > 0) {
-  fail(
-    `Disallowed @latest usage in nix/modules/ralph.nix: ${latestMatches.join(", ")}. ` +
-    "Pin global agent/mcp package versions."
-  )
-}
-
-const smithersGithubMatch = nixSource.match(/github:evmts\/smithers#[A-Za-z0-9._/-]+/)
-if (!smithersGithubMatch) {
-  fail("Smithers must be installed from GitHub as github:evmts/smithers#<ref>.")
 }
 
 console.log("[deps-policy] OK")

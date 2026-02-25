@@ -17,18 +17,17 @@
 
 ## Identity
 
-**What**: Infrastructure-as-code for k3s clusters using Pulumi with NixOS. Supports:
+**What**: Infrastructure-as-code for k3s clusters using Pulumi or Terraform with NixOS. Supports:
 1. **Hetzner Cloud** - Native provider, optimal price/performance
 2. **Manual bootstrap** - Existing servers via SSH + NixOS
-3. **Extensible** - AWS, GCP, Azure via Pulumi providers
+3. **Extensible** - AWS, GCP, Azure via Pulumi or Terraform providers
 
-**Why Pulumi + NixOS**:
-- Pulumi: Real programming language (TypeScript), state management, drift detection
+**Why Pulumi/Terraform + NixOS**:
+- Pulumi or Terraform: State management, drift detection, infra as code
 - NixOS: Declarative, reproducible, atomic upgrades, perfect for k3s nodes
 - Hetzner: Best price/performance for compute in EU, native IPv6, no egress charges
 
 **Not**: 
-- Terraform (HCL limitations, less flexible)
 - Container-based nodes (we want k3s on proper VMs)
 - Managed Kubernetes (EKS/GKE/AKS) - we want k3s for control and cost
 
@@ -43,12 +42,22 @@
 5. **GitOps ready**: Pulumi state can be stored in S3, GitLab, or Pulumi Cloud
 6. **Multi-region**: Support multiple Hetzner locations (nbg1, fsn1, hel1)
 7. **Disaster recovery**: Backup/restore etcd, PVC snapshots via Longhorn
+8. **Terraform compatibility**: Support Hetzner Terraform + SSH for single-node and multi-node bootstrap
 
 ---
 
 ## Design Principles
 
 This spec follows the design principles defined in `specs/051-k3s-orchestrator.md`.
+
+---
+
+## Determinism Rules (Required)
+
+- **NixOS everywhere**: All nodes are built from a pinned Nix flake + lockfile.
+- **Pinned k3s**: k3s version is explicitly pinned (no floating latest).
+- **Pinned providers**: Terraform/Pulumi providers must be version-pinned.
+- **Immutable artifacts**: Any image or binary used in bootstrap must be referenced by digest or fixed version.
 
 ---
 
@@ -62,6 +71,22 @@ This spec follows the design principles defined in `specs/051-k3s-orchestrator.m
 ---
 
 ## Requirements
+
+### 0. Bootstrap Modes (Required)
+
+**Single-node (Hetzner Terraform + SSH)**:
+- Terraform provisions one NixOS node (Hetzner).
+- SSH bootstrap installs k3s server (single-node control plane).
+- Suitable for single-node Hetzner Terraform setups.
+
+**Multi-node (Hetzner Terraform + SSH)**:
+- Terraform provisions NixOS control plane + workers.
+- SSH bootstrap installs k3s server on control plane, agents join via token.
+- Default path for production multi-node clusters.
+
+**Manual SSH (No Terraform/Pulumi)**:
+- Existing servers via SSH + `nixos-anywhere`.
+- Same join logic as above.
 
 ### 1. Architecture Overview
 
@@ -856,6 +881,11 @@ fabrik infra init manual-cluster --provider manual --nodes-file nodes.yaml
 
 ## Acceptance Criteria
 
+- [ ] Single-node k3s cluster can be bootstrapped via SSH (Terraform-provisioned Hetzner node).
+- [ ] Multi-node k3s cluster can be bootstrapped via Terraform + SSH (Hetzner focus).
+- [ ] Workers join cluster automatically using k3s token.
+- [ ] Nodes can be added/removed cleanly (Terraform apply/destroy) without breaking the cluster.
+- [ ] Autoscaling use case supported by Terraform-managed node pool (join/remove via SSH bootstrap).
 - [ ] `fabrik infra init --provider hetzner` creates Pulumi project with Hetzner config
 - [ ] `fabrik infra up` provisions NixOS servers with k3s installed
 - [ ] Control plane accessible via load balancer on port 6443
@@ -923,3 +953,8 @@ fabrik infra init manual-cluster --provider manual --nodes-file nodes.yaml
   - Pulumi-based IaC
   - Longhorn storage
   - LAOS in-cluster deployment
+### 7.1 Node Join / Remove (Required)
+
+- **Join**: Workers join using the k3s token from the control plane.
+- **Remove**: Terraform destroy removes worker nodes cleanly; cluster remains healthy.
+- **Autoscaling**: Node pool scaling is done via Terraform (or provider API), and new nodes join via the same SSH bootstrap flow.

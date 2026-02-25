@@ -27,14 +27,14 @@ Commit message rules:
   - Preferred: `jj describe -m "$(cat <<'EOF'\n<subject>\n\n<trailers>\nEOF\n)"`
   - Or: `printf '%s\n\n%s\n' "<subject>" "<trailers>" | jj describe -m -`
 - Example:
-  feat(spec-020-fabrik-v0-2-0): implement dispatch auth
+  feat(spec-051-k3s-orchestrator): implement dispatch auth
   
   todo: git-credentials-vm
-  spec: 020-fabrik-v0-2-0
+  spec: 051-k3s-orchestrator
   run: 20260203T120945Z
-  cause: GH auth relied on host keychain; VM had no token
-  reasoning: VM needs env-based auth; ralph.env already contains GITHUB_TOKEN
-  fix: source ralph.env and export GH_TOKEN during dispatch
+  cause: GH auth relied on host keychain; cluster had no token
+  reasoning: env-based auth is required; use cluster Secret injection
+  fix: use K8s Secret injection for GITHUB_TOKEN
   error: gh auth status -> "token in default is invalid"
 
 Update the TODO.md file noting what has been done, attach a screenshot of the UI confirming it's done for frontend changes.
