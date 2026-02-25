@@ -41,6 +41,55 @@
 
 ---
 
+## Design Principles
+
+- **K8s is the source of truth**: Runtime state comes from K8s Jobs/CronJobs, not a separate scheduler.
+- **One execution model**: All runs are Jobs or CronJobs, no alternative orchestrators.
+- **Direct K8s API**: CLI/TUI/Web talk to the K8s API, no daemon or extra API server.
+- **Minimal persistence**: Only derived data (analytics, cron health history, cost cache) is stored outside K8s.
+- **Single local DB**: If local persistence is required, use a single SQLite DB file with multiple tables.
+- **No cache unless required**: Avoid optional caches unless they materially improve performance.
+- **Single metadata schema**: Labels and annotations are the canonical run metadata for all tools.
+- **Explicit health contracts**: Healthy/degraded/unhealthy states are defined once and reused everywhere.
+- **No custom schedulers**: Scheduling is exclusively K8s Jobs/CronJobs.
+- **Immutable images**: Jobs must use image digests or pinned tags to avoid drift.
+- **Resume consistency**: Resume must use the same image digest as the original run.
+
+---
+
+## Shared Metadata Schema
+
+All fabrik Jobs/CronJobs must include these labels/annotations. Other specs and tools must read from these keys.
+
+**Required labels**:
+- `fabrik.sh/run-id`
+- `fabrik.sh/spec`
+- `fabrik.sh/project`
+- `fabrik.sh/phase` (e.g., `plan`, `run`, `review`, `complete`)
+
+**Required annotations**:
+- `fabrik.sh/status` (JSON: phase, current_task, attempt, progress)
+- `fabrik.sh/started-at` (ISO 8601)
+- `fabrik.sh/finished-at` (ISO 8601, when complete)
+- `fabrik.sh/outcome` (`succeeded`, `failed`, `cancelled`)
+
+**Optional annotations**:
+- `fabrik.sh/model`
+- `fabrik.sh/cost-usd`
+- `fabrik.sh/tokens-input`
+- `fabrik.sh/tokens-output`
+- `fabrik.sh/progress` (JSON summary if not embedded in status)
+
+---
+
+## Image Pinning
+
+- Jobs must use immutable image references (digest or pinned tag).
+- Resume uses the exact same image digest as the original run.
+- Image updates require a new run (do not mutate existing Jobs).
+
+---
+
 ## Non-Goals
 
 - VM lifecycle management (sunset)
@@ -146,16 +195,16 @@ metadata:
   name: fabrik-01jk7v8x...
   namespace: fabrik-runs
   labels:
-    fabrik.dev/run-id: "01jk7v8x..."
-    fabrik.dev/spec-id: "feature-x"
-    fabrik.dev/project: "myapp"
-    fabrik.dev/phase: "implement"  # Updated by Smithers
-    fabrik.dev/status: "running"     # Updated by Smithers
-    fabrik.dev/task: "16:impl"       # Updated by Smithers
+    fabrik.sh/run-id: "01jk7v8x..."
+    fabrik.sh/spec-id: "feature-x"
+    fabrik.sh/project: "myapp"
+    fabrik.sh/phase: "implement"  # Updated by Smithers
+    fabrik.sh/status: "running"     # Updated by Smithers
+    fabrik.sh/task: "16:impl"       # Updated by Smithers
   annotations:
-    fabrik.dev/progress: '{"finished":150,"total":192}'  # JSON
-    fabrik.dev/started: "2026-02-16T20:00:00Z"
-    fabrik.dev/spec-url: "https://github.com/.../specs/feature-x.json"
+    fabrik.sh/progress: '{"finished":150,"total":192}'  # JSON
+    fabrik.sh/started: "2026-02-16T20:00:00Z"
+    fabrik.sh/spec-url: "https://github.com/.../specs/feature-x.json"
 spec:
   ttlSecondsAfterFinished: 604800  # 7 days
   activeDeadlineSeconds: 86400     # 24 hour max
@@ -163,7 +212,7 @@ spec:
   template:
     metadata:
       labels:
-        fabrik.dev/run-id: "01jk7v8x..."
+        fabrik.sh/run-id: "01jk7v8x..."
     spec:
       restartPolicy: Never
       initContainers:
@@ -259,15 +308,15 @@ class K8sStatusReporter {
       {
         metadata: {
           labels: {
-            'fabrik.dev/phase': phase,
-            'fabrik.dev/status': this.getStatusFromPhase(phase),
-            'fabrik.dev/task': currentTask,
+            'fabrik.sh/phase': phase,
+            'fabrik.sh/status': this.getStatusFromPhase(phase),
+            'fabrik.sh/task': currentTask,
           },
           annotations: {
-            'fabrik.dev/progress': JSON.stringify(progress),
-            'fabrik.dev/updated': new Date().toISOString(),
-            'fabrik.dev/attempt': String(attempt),
-            'fabrik.dev/iteration': String(iteration),
+            'fabrik.sh/progress': JSON.stringify(progress),
+            'fabrik.sh/updated': new Date().toISOString(),
+            'fabrik.sh/attempt': String(attempt),
+            'fabrik.sh/iteration': String(iteration),
           },
         },
       },
@@ -430,7 +479,7 @@ class FabrikK8sClient {
         undefined,  // allowWatchBookmarks
         undefined,  // continue
         undefined,  // fieldSelector
-        `fabrik.dev/run-id=${runId}`  // labelSelector
+        `fabrik.sh/run-id=${runId}`  // labelSelector
       );
       
       if (jobs.body.items.length > 0) {
@@ -440,9 +489,9 @@ class FabrikK8sClient {
         return {
           id: runId,
           status: this.extractStatus(pod),
-          phase: pod.metadata?.labels?.['fabrik.dev/phase'] || 'unknown',
-          task: pod.metadata?.labels?.['fabrik.dev/task'] || 'unknown',
-          progress: JSON.parse(pod.metadata?.annotations?.['fabrik.dev/progress'] || '{}'),
+          phase: pod.metadata?.labels?.['fabrik.sh/phase'] || 'unknown',
+          task: pod.metadata?.labels?.['fabrik.sh/task'] || 'unknown',
+          progress: JSON.parse(pod.metadata?.annotations?.['fabrik.sh/progress'] || '{}'),
           cluster: cluster.name,
         };
       }
@@ -457,7 +506,7 @@ class FabrikK8sClient {
     
     yield* watch.watch(
       '/apis/batch/v1/namespaces/fabrik-runs/jobs',
-      { labelSelector: 'fabrik.dev/managed-by=fabrik' },
+      { labelSelector: 'fabrik.sh/managed-by=fabrik' },
       (type, obj) => ({ type, job: obj })
     );
   }
@@ -609,8 +658,8 @@ spec:
 
 - [ ] `fabrik cluster init` creates working k3s cluster with fabrik-system and fabrik-runs namespaces
 - [ ] `fabrik run --spec x.json` creates Job that completes successfully
-- [ ] Job pods show correct labels: `fabrik.dev/phase`, `fabrik.dev/task`, `fabrik.dev/status`
-- [ ] Job pods show correct annotations: `fabrik.dev/progress` as JSON
+- [ ] Job pods show correct labels: `fabrik.sh/phase`, `fabrik.sh/task`, `fabrik.sh/status`
+- [ ] Job pods show correct annotations: `fabrik.sh/progress` as JSON
 - [ ] Smithers updates pod labels/annotations in real-time (every task transition)
 - [ ] `fabrik runs list` queries K8s directly, returns all runs across configured clusters
 - [ ] `fabrik runs show --id <run-id>` returns current phase, task, progress from pod labels

@@ -42,6 +42,13 @@
 
 ---
 
+## Design Principles
+
+This spec follows the design principles defined in `specs/051-k3s-orchestrator.md`.
+Cost attribution must read run metadata from the shared labels/annotations schema.
+
+---
+
 ## Non-Goals
 
 - Payment processing or invoicing
@@ -61,7 +68,7 @@
 │  │  ┌─ Hetzner API ──────────────────────────────────────────────────┐ │ │
 │  │  │  GET /v1/servers, /v1/volumes, /v1/load_balancers             │ │ │
 │  │  │  Prices from Hetzner pricing API                               │ │ │
-│  │  │  Cached: ~/.cache/fabrik/pricing/hetzner.json                  │ │ │
+│  │  │  Cached: ~/.cache/fabrik/state.db                              │ │ │
 │  │  └───────────────────────────────────────────────────────────────────┘ │ │
 │  │                                                                          │ │
 │  │  ┌─ Smithers Metrics ──────────────────────────────────────────────┐ │ │
@@ -136,7 +143,7 @@ async function fetchHetznerPricing(): Promise<Pricing> {
 # Pod annotation from Smithers
 metadata:
   annotations:
-    fabrik.dev/llm-cost: '{
+    fabrik.sh/llm-cost: '{
       "model": "claude-3-5-sonnet-20241022",
       "input_tokens": 15000,
       "output_tokens": 8500,
