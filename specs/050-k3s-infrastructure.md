@@ -1,29 +1,30 @@
 # Spec: k3s-infrastructure
 
-> Pulumi-based infrastructure provisioning for fabrik k3s clusters — Hetzner Cloud native with NixOS
+> Terraform/OpenTofu-based infrastructure provisioning for fabrik k3s clusters — Hetzner Cloud native with NixOS
 
 **Status**: draft  
-**Version**: 1.1.0  
-**Last Updated**: 2026-02-16  
+**Version**: 1.1.1  
+**Last Updated**: 2026-03-04  
 **Provides**: Infrastructure foundation for k3s execution
 
 ---
 
 ## Changelog
 
-- **v1.1.0** (2026-02-16): Added container build process, Pulumi state backend (S3), clarified no external dependencies
+- **v1.1.1** (2026-03-04): Standardized IaC on Terraform/OpenTofu only and updated state/bootstrap flow
+- **v1.1.0** (2026-02-16): Added container build process, remote state backend (S3), clarified no external dependencies
 
 ---
 
 ## Identity
 
-**What**: Infrastructure-as-code for k3s clusters using Pulumi or Terraform with NixOS. Supports:
+**What**: Infrastructure-as-code for k3s clusters using Terraform/OpenTofu with NixOS. Supports:
 1. **Hetzner Cloud** - Native provider, optimal price/performance
 2. **Manual bootstrap** - Existing servers via SSH + NixOS
-3. **Extensible** - AWS, GCP, Azure via Pulumi or Terraform providers
+3. **Extensible** - AWS, GCP, Azure via Terraform/OpenTofu providers
 
-**Why Pulumi/Terraform + NixOS**:
-- Pulumi or Terraform: State management, drift detection, infra as code
+**Why Terraform/OpenTofu + NixOS**:
+- Terraform/OpenTofu: State management, drift detection, infra as code
 - NixOS: Declarative, reproducible, atomic upgrades, perfect for k3s nodes
 - Hetzner: Best price/performance for compute in EU, native IPv6, no egress charges
 
@@ -39,10 +40,10 @@
 2. **NixOS everywhere**: All nodes run NixOS for reproducibility
 3. **Hetzner native**: Optimized for Hetzner Cloud (CX servers, volumes, networks)
 4. **SSH bootstrap**: Support existing bare metal or VMs via SSH + NixOS install
-5. **GitOps ready**: Pulumi state can be stored in S3, GitLab, or Pulumi Cloud
+5. **GitOps ready**: Terraform/OpenTofu state can be stored in S3, GCS, or local backends
 6. **Multi-region**: Support multiple Hetzner locations (nbg1, fsn1, hel1)
 7. **Disaster recovery**: Backup/restore etcd, PVC snapshots via Longhorn
-8. **Terraform compatibility**: Support Hetzner Terraform + SSH for single-node and multi-node bootstrap
+8. **Terraform/OpenTofu compatibility**: Support Hetzner Terraform/OpenTofu + SSH for single-node and multi-node bootstrap
 
 ---
 
@@ -56,7 +57,7 @@ This spec follows the design principles defined in `specs/051-k3s-orchestrator.m
 
 - **NixOS everywhere**: All nodes are built from a pinned Nix flake + lockfile.
 - **Pinned k3s**: k3s version is explicitly pinned (no floating latest).
-- **Pinned providers**: Terraform/Pulumi providers must be version-pinned.
+- **Pinned providers**: Terraform/OpenTofu providers must be version-pinned.
 - **Immutable artifacts**: Any image or binary used in bootstrap must be referenced by digest or fixed version.
 
 ---
@@ -72,6 +73,10 @@ This spec follows the design principles defined in `specs/051-k3s-orchestrator.m
 
 ## Requirements
 
+### Tooling (Required)
+
+- `fabrik infra init` bootstraps a pinned Terraform/OpenTofu binary into `~/.cache/fabrik/tools/` and uses it for all runs.
+
 ### 0. Bootstrap Modes (Required)
 
 **Single-node (Hetzner Terraform + SSH)**:
@@ -84,19 +89,25 @@ This spec follows the design principles defined in `specs/051-k3s-orchestrator.m
 - SSH bootstrap installs k3s server on control plane, agents join via token.
 - Default path for production multi-node clusters.
 
-**Manual SSH (No Terraform/Pulumi)**:
-- Existing servers via SSH + `nixos-anywhere`.
+**Manual SSH (No cloud provisioning)**:
+- Existing servers via SSH + `nixos-anywhere`, orchestrated by Terraform/OpenTofu.
 - Same join logic as above.
 
-### 1. Architecture Overview
+### 1. Node Join / Remove (Required)
+
+- **Join**: Workers join using the k3s token from the control plane.
+- **Remove**: Terraform destroy removes worker nodes cleanly; cluster remains healthy.
+- **Autoscaling**: Node pool scaling is done via Terraform (or provider API), and new nodes join via the same SSH bootstrap flow.
+
+### 2. Architecture Overview
 
 ```
-┌─ Pulumi Project: fabrik-infrastructure ─────────────────────────────────────┐
+┌─ Terraform/OpenTofu Root Module: fabrik-infrastructure ─────────────────────┐
 │                                                                             │
-│  ┌─ Entry: index.ts ─────────────────────────────────────────────────────┐ │
-│  │  ├─ Parse config (provider, region, node count, types)                │ │
+│  ┌─ Entry: main.tf ──────────────────────────────────────────────────────┐ │
+│  │  ├─ Parse config (provider, region, node count, types)                 │ │
 │  │  ├─ Instantiate provider (Hetzner | AWS | Manual)                      │ │
-│  │  └─ Export: kubeconfig, cluster endpoints, node IPs                   │ │
+│  │  └─ Output: kubeconfig, cluster endpoints, node IPs                    │ │
 │  └────────────────────────────────────────────────────────────────────────┘ │
 │                                                                             │
 │  ┌─ Providers ────────────────────────────────────────────────────────────┐ │
@@ -161,132 +172,178 @@ This spec follows the design principles defined in `specs/051-k3s-orchestrator.m
 └───────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2. Pulumi Configuration Schema
+### 3. Terraform/OpenTofu Configuration Schema
 
-```typescript
-// Pulumi.yaml / Pulumi.dev.yaml
-interface FabrikInfrastructureConfig {
-  // Provider selection
-  provider: 'hetzner' | 'manual' | 'aws' | 'gcp';
-  
-  // Hetzner-specific
-  hetzner?: {
-    token: string;           // HCLOUD_TOKEN (secret)
-    location: 'nbg1' | 'fsn1' | 'hel1' | 'ash';
-    networkZone: 'eu-central' | 'us-east';
-    
-    controlPlane: {
-      serverType: 'cx21' | 'cx31' | 'cx41' | 'cx51' | 'ccx12';
-      count: number;         // 1 for dev, 3 for HA
-      enableFloatingIp: boolean;
-    };
-    
-    workers: {
-      serverType: 'cx21' | 'cx31' | 'cx41' | 'cpx21' | 'cpx31';
-      count: number;
-      volumes: Array<{
-        size: number;        // GB
-        format: 'ext4' | 'xfs';
-        mount: string;       // /var/lib/longhorn
-      }>;
-    };
-    
-    networking: {
-      ipRange: string;       // 10.0.0.0/16
-      subnet: string;        // 10.0.1.0/24
-      enableIPv6: boolean;
-    };
-    
-    loadBalancer: {
-      type: 'lb11' | 'lb21' | 'lb31';
-      location: string;
-    };
-    
-    firewall: {
-      allowedCidr: string[];   // ["0.0.0.0/0"] or restrict
-    };
-  };
-  
-  // Manual/SSH bootstrap
-  manual?: {
-    nodes: Array<{
-      name: string;
-      host: string;           // IP or hostname
-      port: number;          // SSH port
-      user: string;          // root or sudo user
-      sshKeyPath: string;    // ~/.ssh/id_ed25519
-      role: 'control-plane' | 'worker';
-      architecture: 'x86_64' | 'aarch64';
-      nixosDisk?: string;    // /dev/sda (for nixos-anywhere)
-    }>;
-  };
-  
-  // k3s configuration
-  k3s: {
-    version: string;         // v1.29.0+k3s1
-    clusterCidr: string;     // 10.42.0.0/16
-    serviceCidr: string;     // 10.43.0.0/16
-    clusterDns: string;      // 10.43.0.10
-    tlsSan: string[];        // Additional SANs for API cert
-    
-    // Embedded etcd (default) or external
-    datastore: 'embedded' | 'external';
-    externalDatastore?: {
-      endpoint: string;      // postgres://... or https://etcd:2379
-    };
-    
-    // Features
-    disable: ('traefik' | 'servicelb' | 'metrics-server' | 'coredns' | 'local-storage')[];
-    flannelBackend: 'vxlan' | 'host-gw' | 'wireguard' | 'none';
-    
-    // Extra args
-    serverExtraArgs: string[];
-    agentExtraArgs: string[];
-  };
-  
-  // NixOS configuration
-  nixos: {
-    channel: string;         // nixos-24.11 or nixos-unstable
-    flake?: string;          // Path to custom flake
-    extraModules: string[];  // Additional NixOS modules
-  };
-  
-  // Add-ons installed after k3s
-  addons: {
-    longhorn: {
-      enabled: boolean;
-      version: string;       // v1.6.0
-      defaultStorageClass: boolean;
-      replicaCount: number;  // 3 for HA, 1 for dev
-    };
-    
-    metallb: {
-      enabled: boolean;      // If not using Hetzner LB
-      addresses: string[];     // ["10.0.1.100-10.0.1.110"]
-    };
-    
-    certManager: {
-      enabled: boolean;
-      version: string;
-      issuer: 'letsencrypt-staging' | 'letsencrypt-prod' | 'selfsigned';
-    };
-    
-    laos: {
-      enabled: boolean;        // Deploy LAOS stack in-cluster
-      persistence: boolean;    // PVC for metrics/logs
-    };
-  };
-  
-  // Pulumi state backend
-  backend: {
-    type: 'pulumi-cloud' | 's3' | 'local';
-    bucket?: string;         // For S3: s3://my-pulumi-state
-    region?: string;         // For S3: eu-central-1
-  };
+```hcl
+# variables.tf
+variable "name" {
+  type = string
 }
+
+variable "ssh_public_key_path" {
+  type = string
+}
+
+variable "provider" {
+  type = string
+  validation {
+    condition     = contains(["hetzner", "manual", "aws", "gcp"], var.provider)
+    error_message = "provider must be one of: hetzner, manual, aws, gcp"
+  }
+}
+
+variable "hetzner" {
+  type = object({
+    token        = string
+    location     = string
+    network_zone = string
+    control_plane = object({
+      server_type        = string
+      count              = number
+      enable_floating_ip = bool
+    })
+    workers = object({
+      server_type = string
+      count       = number
+      volumes = list(object({
+        size   = number
+        format = string
+        mount  = string
+      }))
+    })
+    networking = object({
+      ip_range    = string
+      subnet      = string
+      enable_ipv6 = bool
+    })
+    load_balancer = object({
+      type     = string
+      location = string
+    })
+    firewall = object({
+      allowed_cidr = list(string)
+    })
+  })
+  default = null
+}
+
+variable "manual_nodes" {
+  type = list(object({
+    name         = string
+    host         = string
+    port         = number
+    user         = string
+    ssh_key_path = string
+    role         = string
+    architecture = string
+    nixos_disk   = optional(string)
+  }))
+  default = []
+}
+
+variable "k3s" {
+  type = object({
+    version           = string
+    cluster_cidr      = string
+    service_cidr      = string
+    cluster_dns       = string
+    tls_san           = list(string)
+    datastore         = string
+    external_ds       = optional(object({ endpoint = string }))
+    disable           = list(string)
+    flannel_backend   = string
+    server_extra_args = list(string)
+    agent_extra_args  = list(string)
+  })
+}
+
+variable "nixos" {
+  type = object({
+    channel       = string
+    flake         = optional(string)
+    extra_modules = list(string)
+  })
+}
+
+variable "addons" {
+  type = object({
+    longhorn = object({
+      enabled               = bool
+      version               = string
+      default_storage_class = bool
+      replica_count         = number
+    })
+    metallb = object({
+      enabled   = bool
+      addresses = list(string)
+    })
+    cert_manager = object({
+      enabled = bool
+      version = string
+      issuer  = string
+    })
+    laos = object({
+      enabled     = bool
+      persistence = bool
+    })
+  })
+}
+
+variable "kubeconfig_path" {
+  type = string
+  default = "~/.kube/config"
+}
+
+# terraform.tfvars (example)
+provider = "hetzner"
+
+hetzner = {
+  token        = "${HCLOUD_TOKEN}"
+  location     = "nbg1"
+  network_zone = "eu-central"
+  control_plane = {
+    server_type        = "cx31"
+    count              = 1
+    enable_floating_ip = false
+  }
+  workers = {
+    server_type = "cx21"
+    count       = 2
+    volumes = [
+      { size = 50, format = "ext4", mount = "/var/lib/longhorn" }
+    ]
+  }
+  networking = {
+    ip_range    = "10.0.0.0/16"
+    subnet      = "10.0.1.0/24"
+    enable_ipv6 = true
+  }
+  load_balancer = {
+    type = "lb11"
+    location = "nbg1"
+  }
+  firewall = {
+    allowed_cidr = ["0.0.0.0/0"]
+  }
+}
+
+k3s = {
+  version           = "v1.29.0+k3s1"
+  cluster_cidr      = "10.42.0.0/16"
+  service_cidr      = "10.43.0.0/16"
+  cluster_dns       = "10.43.0.10"
+  tls_san           = ["fabrik-api.example.com"]
+  datastore         = "embedded"
+  disable           = ["traefik", "servicelb"]
+  flannel_backend   = "vxlan"
+  server_extra_args = []
+  agent_extra_args  = []
+}
+
+# NOTE: Terraform/OpenTofu backend config is set in a separate backend block
 ```
 
-### 3. NixOS Module for k3s
+### 4. NixOS Module for k3s
 
 ```nix
 # nixos/modules/k3s-node.nix
@@ -400,7 +457,7 @@ in
 }
 ```
 
-### 4. Container Image Build (Nix)
+### 5. Container Image Build (Nix)
 
 Smithers runs as a container in k3s. We build via Nix for reproducibility.
 
@@ -414,420 +471,271 @@ docker push ghcr.io/fabrik/smithers:v1.2.3
 
 **Image:** ~50-100MB, non-root user (1000:1000), multi-arch support.
 
-### 5. Pulumi State (Self-Hosted)
+### 6. Terraform/OpenTofu State (Self-Hosted)
 
-No Pulumi Cloud. Options:
-- **S3**: `pulumi login s3://fabrik-state?endpoint=minio.internal:9000`
-- **Local**: `pulumi login file:///mnt/shared/pulumi-state`
+No Terraform Cloud. Options:
+- **S3**: Remote state with encryption and locking
+- **GCS**: Remote state with object versioning
+- **Local**: `terraform.tfstate` in a dedicated state directory
 
-State encrypted with passphrase, backed up to S3 daily.
-
-### 6. Pulumi Hetzner Implementation
-
-```typescript
-// pulumi/hetzner/index.ts
-import * as hcloud from "@pulumi/hcloud";
-import * as pulumi from "@pulumi/pulumi";
-import * as command from "@pulumi/command";
-import { readFileSync } from "fs";
-
-const config = new pulumi.Config();
-const name = config.get("clusterName") || "fabrik";
-const location = config.get("location") || "nbg1";
-
-// Network
-const network = new hcloud.Network(`${name}-net`, {
-  ipRange: "10.0.0.0/16",
-  labels: { "managed-by": "fabrik" },
-});
-
-const subnet = new hcloud.NetworkSubnet(`${name}-subnet`, {
-  networkId: network.id,
-  type: "cloud",
-  networkZone: "eu-central",
-  ipRange: "10.0.1.0/24",
-});
-
-// Firewall
-const firewall = new hcloud.Firewall(`${name}-fw`, {
-  rules: [
-    { direction: "in", protocol: "tcp", port: "22", sourceIps: ["0.0.0.0/0"], description: "SSH" },
-    { direction: "in", protocol: "tcp", port: "6443", sourceIps: ["0.0.0.0/0"], description: "k3s API" },
-    { direction: "in", protocol: "tcp", port: "80", sourceIps: ["0.0.0.0/0"], description: "HTTP" },
-    { direction: "in", protocol: "tcp", port: "443", sourceIps: ["0.0.0.0/0"], description: "HTTPS" },
-    { direction: "in", protocol: "tcp", port: "10250", sourceIps: ["10.0.0.0/16"], description: "kubelet" },
-    { direction: "in", protocol: "udp", port: "8472", sourceIps: ["10.0.0.0/16"], description: "flannel" },
-  ],
-});
-
-// SSH Key
-const sshKey = new hcloud.SshKey(`${name}-key`, {
-  publicKey: readFileSync(config.require("sshPublicKeyPath"), "utf8"),
-});
-
-// Generate NixOS configuration for control plane
-function generateNixosConfig(role: "server" | "agent", token?: string, serverUrl?: string): string {
-  const k3sArgs = role === "server" 
-    ? `--cluster-init --tls-san=${name}-api.example.com --node-taint=node-role.kubernetes.io/control-plane:NoSchedule`
-    : `--server=${serverUrl} --token=${token}`;
-  
-  return `
-{ config, pkgs, ... }:
-{
-  imports = [ ./hardware-configuration.nix ];
-  
-  boot.loader.grub.device = "/dev/sda";
-  
-  networking.hostName = "${name}-${role}";
-  networking.useDHCP = false;
-  networking.interfaces.eth0.useDHCP = true;
-  
-  services.openssh.enable = true;
-  
-  services.fabrik-k3s = {
-    enable = true;
-    role = "${role}";
-    ${role === "agent" ? `serverUrl = "${serverUrl}";
-    token = "${token}";` : ""}
-    extraArgs = [
-      ${role === "server" ? `"--cluster-init", "--tls-san=${name}-api.example.com",` : ""}
-      "--flannel-backend=vxlan",
-      "--disable=traefik,servicelb",
-    ];
-  };
-  
-  system.stateVersion = "24.11";
+```hcl
+# backend.tf
+terraform {
+  backend "s3" {
+    bucket         = "fabrik-state"
+    key            = "clusters/prod/terraform.tfstate"
+    region         = "eu-central-1"
+    encrypt        = true
+    dynamodb_table = "fabrik-terraform-locks"
+  }
 }
-`;
-}
-
-// Control Plane Server
-const cpConfig = generateNixosConfig("server");
-const controlPlane = new hcloud.Server(`${name}-cp-1`, {
-  serverType: "cx31",
-  image: "ubuntu-22.04",  // Will be replaced by NixOS via rescue
-  location: location,
-  sshKeys: [sshKey.id],
-  networks: [{ networkId: network.id, ip: "10.0.1.10" }],
-  firewallIds: [firewall.id],
-  labels: { "role": "control-plane", "cluster": name },
-  userData: `
-#cloud-config
-runcmd:
-  # Install NixOS via kexec
-  - curl -L https://github.com/nix-community/nixos-images/releases/download/nixos-24.11/nixos-kexec-installer-x86_64-linux | bash
-  - mkdir -p /mnt/etc/nixos
-  - echo '${cpConfig}' > /mnt/etc/nixos/configuration.nix
-  - nixos-install --root /mnt --no-root-passwd
-  - reboot
-`,
-});
-
-// Get k3s token for workers
-const k3sToken = new command.remote.Command("get-k3s-token", {
-  connection: {
-    host: controlPlane.ipv4Address,
-    user: "root",
-    privateKey: readFileSync(config.require("sshPrivateKeyPath"), "utf8"),
-  },
-  create: "cat /var/lib/rancher/k3s/server/token",
-  triggers: [controlPlane.ipv4Address],
-}, { dependsOn: [controlPlane] });
-
-// Worker Servers
-const workerCount = config.getNumber("workerCount") || 2;
-const workers: hcloud.Server[] = [];
-
-for (let i = 1; i <= workerCount; i++) {
-  const workerConfig = generateNixosConfig(
-    "agent", 
-    k3sToken.stdout,
-    pulumi.interpolate`https://10.0.1.10:6443`
-  );
-  
-  const worker = new hcloud.Server(`${name}-worker-${i}`, {
-    serverType: "cx21",
-    image: "ubuntu-22.04",
-    location: location,
-    sshKeys: [sshKey.id],
-    networks: [{ networkId: network.id, ip: `10.0.1.${20 + i}` }],
-    firewallIds: [firewall.id],
-    labels: { "role": "worker", "cluster": name },
-    userData: `
-#cloud-config
-runcmd:
-  - curl -L https://github.com/nix-community/nixos-images/releases/download/nixos-24.11/nixos-kexec-installer-x86_64-linux | bash
-  - mkdir -p /mnt/etc/nixos
-  - echo '${workerConfig}' > /mnt/etc/nixos/configuration.nix
-  - nixos-install --root /mnt --no-root-passwd
-  - reboot
-`,
-  }, { dependsOn: [controlPlane, k3sToken] });
-  
-  workers.push(worker);
-}
-
-// Load Balancer for k3s API
-const lb = new hcloud.LoadBalancer(`${name}-lb`, {
-  loadBalancerType: "lb11",
-  location: location,
-  networkZone: "eu-central",
-});
-
-new hcloud.LoadBalancerNetwork(`${name}-lb-net`, {
-  loadBalancerId: lb.id,
-  networkId: network.id,
-  ip: "10.0.1.5",
-});
-
-new hcloud.LoadBalancerService(`${name}-lb-api`, {
-  loadBalancerId: lb.id,
-  protocol: "tcp",
-  listenPort: 6443,
-  destinationPort: 6443,
-  healthCheck: {
-    protocol: "tcp",
-    port: 6443,
-    interval: 10,
-    timeout: 10,
-    retries: 3,
-  },
-});
-
-new hcloud.LoadBalancerTarget(`${name}-lb-target`, {
-  loadBalancerId: lb.id,
-  type: "server",
-  serverId: controlPlane.id,
-  usePrivateIp: true,
-});
-
-// Volumes for Longhorn
-workers.forEach((worker, i) => {
-  new hcloud.Volume(`${name}-storage-${i + 1}`, {
-    size: 50,
-    serverId: worker.id,
-    format: "ext4",
-    location: location,
-    labels: { "purpose": "longhorn", "cluster": name },
-  });
-});
-
-// Export values
-export const kubeconfig = pulumi.interpolate`apiVersion: v1
-clusters:
-- cluster:
-    certificate-authority-data: <from server>
-    server: https://${lb.ipv4}:6443
-  name: ${name}
-contexts:
-- context:
-    cluster: ${name}
-    user: admin
-  name: ${name}
-current-context: ${name}
-kind: Config
-users:
-- name: admin
-  user:
-    client-certificate-data: <from server>
-    client-key-data: <from server>
-`;
-
-export const controlPlaneIp = controlPlane.ipv4Address;
-export const workerIps = workers.map(w => w.ipv4Address);
-export const apiEndpoint = lb.ipv4;
 ```
 
-### 7. Manual/SSH Bootstrap
+State is encrypted at rest and backed up to S3 daily. OpenTofu uses the same backend configuration.
 
-```typescript
-// pulumi/manual/index.ts
-import * as command from "@pulumi/command";
-import { readFileSync } from "fs";
+### 7. Terraform/OpenTofu Hetzner Implementation
 
-const config = new pulumi.Config();
-
-interface NodeConfig {
-  name: string;
-  host: string;
-  port: number;
-  user: string;
-  sshKeyPath: string;
-  role: 'control-plane' | 'worker';
-  architecture: 'x86_64' | 'aarch64';
-  nixosDisk?: string;
+```hcl
+# main.tf
+terraform {
+  required_providers {
+    hcloud = {
+      source  = "hetznercloud/hcloud"
+      version = ">= 1.48.0, < 2.0.0"
+    }
+  }
 }
 
-const nodes = config.requireObject<NodeConfig[]>("nodes");
+provider "hcloud" {
+  token = var.hetzner.token
+}
 
-// Generate k3s token from first control plane node
-const firstCp = nodes.find(n => n.role === 'control-plane');
-if (!firstCp) throw new Error("At least one control plane node required");
+resource "hcloud_network" "net" {
+  name     = "${var.name}-net"
+  ip_range = var.hetzner.networking.ip_range
+  labels   = { managed_by = "fabrik" }
+}
 
-// Install NixOS via nixos-anywhere on first control plane
-const installNixos = new command.remote.Command(`install-${firstCp.name}`, {
-  connection: {
-    host: firstCp.host,
-    port: firstCp.port,
-    user: firstCp.user,
-    privateKey: readFileSync(firstCp.sshKeyPath, "utf8"),
-  },
-  create: `
-    # Download nixos-anywhere
-    curl -L https://github.com/nix-community/nixos-anywhere/releases/latest/download/nixos-anywhere-x86_64-linux -o /tmp/nixos-anywhere
-    chmod +x /tmp/nixos-anywhere
-    
-    # Generate config
-    mkdir -p /tmp/nixos-config
-    cat > /tmp/nixos-config/configuration.nix << 'NIXEOF'
-    { config, pkgs, ... }: {
-      imports = [ ./hardware-configuration.nix ];
-      boot.loader.grub.device = "${firstCp.nixosDisk || "/dev/sda"}";
-      networking.hostName = "${firstCp.name}";
-      services.openssh.enable = true;
-      services.fabrik-k3s = {
-        enable = true;
-        role = "server";
-        extraArgs = ["--cluster-init", "--tls-san=${firstCp.host}"];
-      };
-      system.stateVersion = "24.11";
-    }
-    NIXEOF
-    
-    # Install NixOS
-    /tmp/nixos-anywhere --flake /tmp/nixos-config#${firstCp.name} root@${firstCp.host}
-  `,
-});
+resource "hcloud_network_subnet" "subnet" {
+  network_id   = hcloud_network.net.id
+  type         = "cloud"
+  network_zone = var.hetzner.network_zone
+  ip_range     = var.hetzner.networking.subnet
+}
 
-// Get k3s token
-const k3sToken = new command.remote.Command("get-k3s-token", {
-  connection: {
-    host: firstCp.host,
-    port: firstCp.port,
-    user: "root",
-    privateKey: readFileSync(firstCp.sshKeyPath, "utf8"),
-  },
-  create: "cat /var/lib/rancher/k3s/server/token",
-  triggers: [installNixos.id],
-}, { dependsOn: [installNixos] });
+resource "hcloud_firewall" "fw" {
+  name = "${var.name}-fw"
+  rule {
+    direction  = "in"
+    protocol   = "tcp"
+    port       = "22"
+    source_ips = var.hetzner.firewall.allowed_cidr
+    description = "SSH"
+  }
+  rule {
+    direction  = "in"
+    protocol   = "tcp"
+    port       = "6443"
+    source_ips = var.hetzner.firewall.allowed_cidr
+    description = "k3s API"
+  }
+  rule {
+    direction  = "in"
+    protocol   = "udp"
+    port       = "8472"
+    source_ips = [var.hetzner.networking.ip_range]
+    description = "flannel"
+  }
+}
 
-// Install workers
-const workerInstalls = nodes
-  .filter(n => n.role === 'worker')
-  .map((node, i) => {
-    return new command.remote.Command(`install-${node.name}`, {
-      connection: {
-        host: node.host,
-        port: node.port,
-        user: node.user,
-        privateKey: readFileSync(node.sshKeyPath, "utf8"),
-      },
-      create: pulumi.interpolate`
-        curl -L https://github.com/nix-community/nixos-anywhere/releases/latest/download/nixos-anywhere-${node.architecture}-linux -o /tmp/nixos-anywhere
-        chmod +x /tmp/nixos-anywhere
-        
-        mkdir -p /tmp/nixos-config
-        cat > /tmp/nixos-config/configuration.nix << 'NIXEOF'
-        { config, pkgs, ... }: {
-          imports = [ ./hardware-configuration.nix ];
-          boot.loader.grub.device = "${node.nixosDisk || "/dev/sda"}";
-          networking.hostName = "${node.name}";
-          services.openssh.enable = true;
-          services.fabrik-k3s = {
-            enable = true;
-            role = "agent";
-            serverUrl = "https://${firstCp.host}:6443";
-            token = "${k3sToken.stdout}";
-          };
-          system.stateVersion = "24.11";
-        }
-        NIXEOF
-        
-        /tmp/nixos-anywhere --flake /tmp/nixos-config#${node.name} root@${node.host}
-      `,
-    }, { dependsOn: [k3sToken] });
-  });
+resource "hcloud_ssh_key" "ssh" {
+  name       = "${var.name}-key"
+  public_key = file(var.ssh_public_key_path)
+}
 
-// Export kubeconfig retrieval command
-export const kubeconfigCommand = pulumi.interpolate`ssh -i ${firstCp.sshKeyPath} root@${firstCp.host} "cat /etc/rancher/k3s/k3s.yaml" | sed "s/127.0.0.1/${firstCp.host}/g"`;
+resource "hcloud_server" "control_plane" {
+  name         = "${var.name}-cp-1"
+  server_type  = var.hetzner.control_plane.server_type
+  image        = "ubuntu-22.04"
+  location     = var.hetzner.location
+  ssh_keys     = [hcloud_ssh_key.ssh.id]
+  firewall_ids = [hcloud_firewall.fw.id]
+  networks     = [{ network_id = hcloud_network.net.id, ip = "10.0.1.10" }]
+  labels       = { role = "control-plane", cluster = var.name }
+
+  user_data = <<-CLOUD
+    #cloud-config
+    runcmd:
+      - curl -L https://github.com/nix-community/nixos-images/releases/download/nixos-24.11/nixos-kexec-installer-x86_64-linux | bash
+      - mkdir -p /mnt/etc/nixos
+      - echo '${file("${path.module}/nixos/control-plane.nix")}' > /mnt/etc/nixos/configuration.nix
+      - nixos-install --root /mnt --no-root-passwd
+      - reboot
+  CLOUD
+}
+
+resource "hcloud_server" "workers" {
+  count       = var.hetzner.workers.count
+  name        = "${var.name}-worker-${count.index + 1}"
+  server_type = var.hetzner.workers.server_type
+  image       = "ubuntu-22.04"
+  location    = var.hetzner.location
+  ssh_keys    = [hcloud_ssh_key.ssh.id]
+  firewall_ids = [hcloud_firewall.fw.id]
+  networks    = [{ network_id = hcloud_network.net.id, ip = "10.0.1.${20 + count.index}" }]
+  labels      = { role = "worker", cluster = var.name }
+}
+
+resource "hcloud_load_balancer" "lb" {
+  name               = "${var.name}-lb"
+  load_balancer_type = var.hetzner.load_balancer.type
+  location           = var.hetzner.load_balancer.location
+}
+
+resource "hcloud_load_balancer_network" "lb_net" {
+  load_balancer_id = hcloud_load_balancer.lb.id
+  network_id       = hcloud_network.net.id
+  ip               = "10.0.1.5"
+}
+
+resource "hcloud_load_balancer_service" "api" {
+  load_balancer_id = hcloud_load_balancer.lb.id
+  protocol         = "tcp"
+  listen_port      = 6443
+  destination_port = 6443
+}
+
+resource "hcloud_load_balancer_target" "cp_target" {
+  load_balancer_id = hcloud_load_balancer.lb.id
+  type             = "server"
+  server_id        = hcloud_server.control_plane.id
+  use_private_ip   = true
+}
+
+resource "hcloud_volume" "worker_volume" {
+  count     = var.hetzner.workers.count
+  name      = "${var.name}-storage-${count.index + 1}"
+  size      = 50
+  server_id = hcloud_server.workers[count.index].id
+  format    = "ext4"
+  location  = var.hetzner.location
+  labels    = { purpose = "longhorn", cluster = var.name }
+}
+
+output "control_plane_ip" { value = hcloud_server.control_plane.ipv4_address }
+output "worker_ips" { value = hcloud_server.workers[*].ipv4_address }
+output "api_endpoint" { value = hcloud_load_balancer.lb.ipv4 }
+```
+
+### 8. Manual/SSH Bootstrap (Terraform/OpenTofu)
+
+```hcl
+# manual-bootstrap.tf
+locals {
+  control_plane = one([for n in var.manual_nodes : n if n.role == "control-plane"])
+  workers       = [for n in var.manual_nodes : n if n.role == "worker"]
+}
+
+resource "null_resource" "install_control_plane" {
+  connection {
+    host        = local.control_plane.host
+    port        = local.control_plane.port
+    user        = local.control_plane.user
+    private_key = file(local.control_plane.ssh_key_path)
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "curl -L https://github.com/nix-community/nixos-anywhere/releases/latest/download/nixos-anywhere-${local.control_plane.architecture}-linux -o /tmp/nixos-anywhere",
+      "chmod +x /tmp/nixos-anywhere",
+      "/tmp/nixos-anywhere --flake /tmp/nixos-config#${local.control_plane.name} root@${local.control_plane.host}"
+    ]
+  }
+}
+
+resource "null_resource" "fetch_k3s_token" {
+  depends_on = [null_resource.install_control_plane]
+
+  provisioner "local-exec" {
+    command = "ssh -i ${local.control_plane.ssh_key_path} -p ${local.control_plane.port} ${local.control_plane.user}@${local.control_plane.host} 'cat /var/lib/rancher/k3s/server/token' > .k3s-token"
+  }
+}
+
+resource "null_resource" "install_workers" {
+  for_each = { for n in local.workers : n.name => n }
+
+  depends_on = [null_resource.fetch_k3s_token]
+
+  connection {
+    host        = each.value.host
+    port        = each.value.port
+    user        = each.value.user
+    private_key = file(each.value.ssh_key_path)
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "curl -L https://github.com/nix-community/nixos-anywhere/releases/latest/download/nixos-anywhere-${each.value.architecture}-linux -o /tmp/nixos-anywhere",
+      "chmod +x /tmp/nixos-anywhere",
+      "K3S_TOKEN=${trimspace(file(\".k3s-token\"))} /tmp/nixos-anywhere --flake /tmp/nixos-config#${each.value.name} root@${each.value.host}"
+    ]
+  }
+}
+
+output "kubeconfig_command" {
+  value = "ssh -i ${local.control_plane.ssh_key_path} ${local.control_plane.user}@${local.control_plane.host} 'cat /etc/rancher/k3s/k3s.yaml' | sed 's/127.0.0.1/${local.control_plane.host}/g'"
+}
 ```
 
 ### 8. Post-Provisioning: Add-ons
 
-```typescript
-// pulumi/addons/index.ts
-import * as k8s from "@pulumi/kubernetes";
+### 9. Post-Provisioning: Add-ons (Terraform Helm Provider)
 
-const k8sProvider = new k8s.Provider("k8s", {
-  kubeconfig: config.requireSecret("kubeconfig"),
-});
+```hcl
+# addons.tf
+provider "kubernetes" {
+  config_path = var.kubeconfig_path
+}
 
-// Longhorn
-const longhornNamespace = new k8s.core.v1.Namespace("longhorn", {
-  metadata: { name: "longhorn-system" },
-}, { provider: k8sProvider });
+provider "helm" {
+  kubernetes {
+    config_path = var.kubeconfig_path
+  }
+}
 
-const longhorn = new k8s.helm.v3.Release("longhorn", {
-  chart: "longhorn",
-  version: "1.6.0",
-  repositoryOpts: { repo: "https://charts.longhorn.io" },
-  namespace: longhornNamespace.metadata.name,
-  values: {
-    persistence: {
-      defaultClass: true,
-      defaultClassReplicaCount: 3,
-    },
-    csi: {
-      attacherReplicaCount: 2,
-      provisionerReplicaCount: 2,
-      resizerReplicaCount: 2,
-      snapshotterReplicaCount: 2,
-    },
-  },
-}, { provider: k8sProvider });
+resource "helm_release" "longhorn" {
+  name       = "longhorn"
+  repository = "https://charts.longhorn.io"
+  chart      = "longhorn"
+  version    = var.addons.longhorn.version
+  namespace  = "longhorn-system"
+  create_namespace = true
 
-// LAOS (in-cluster)
-const laosNamespace = new k8s.core.v1.Namespace("monitoring", {
-  metadata: { name: "monitoring" },
-}, { provider: k8sProvider });
+  values = [yamlencode({
+    persistence = {
+      defaultClass = var.addons.longhorn.default_storage_class
+      defaultClassReplicaCount = var.addons.longhorn.replica_count
+    }
+  })]
+}
 
-const prometheus = new k8s.helm.v3.Release("prometheus", {
-  chart: "kube-prometheus-stack",
-  version: "55.0.0",
-  repositoryOpts: { repo: "https://prometheus-community.github.io/helm-charts" },
-  namespace: laosNamespace.metadata.name,
-  values: {
-    grafana: {
-      enabled: true,
-      adminPassword: config.requireSecret("grafanaAdminPassword"),
-    },
-    prometheus: {
-      prometheusSpec: {
-        retention: "30d",
-        storageSpec: {
-          volumeClaimTemplate: {
-            spec: {
-              storageClassName: "longhorn",
-              resources: { requests: { storage: "50Gi" } },
-            },
-          },
-        },
-      },
-    },
-  },
-}, { provider: k8sProvider });
+resource "helm_release" "prometheus" {
+  name       = "kube-prometheus-stack"
+  repository = "https://prometheus-community.github.io/helm-charts"
+  chart      = "kube-prometheus-stack"
+  version    = "55.0.0"
+  namespace  = "monitoring"
+  create_namespace = true
+}
 
-// Fabrik namespaces
-new k8s.core.v1.Namespace("fabrik-system", {
-  metadata: { name: "fabrik-system" },
-}, { provider: k8sProvider });
+resource "kubernetes_namespace" "fabrik_system" {
+  metadata { name = "fabrik-system" }
+}
 
-new k8s.core.v1.Namespace("fabrik-runs", {
-  metadata: { name: "fabrik-runs" },
-}, { provider: k8sProvider });
+resource "kubernetes_namespace" "fabrik_runs" {
+  metadata { name = "fabrik-runs" }
+}
 ```
-
----
 
 ## CLI Commands
 
@@ -844,7 +752,7 @@ fabrik infra up
 # Get kubeconfig
 fabrik infra kubeconfig > ~/.kube/config
 
-# SSH to nodes (via Pulumi output)
+# SSH to nodes (via Terraform/OpenTofu output)
 fabrik infra ssh control-plane-1
 fabrik infra ssh worker-1
 
@@ -886,7 +794,7 @@ fabrik infra init manual-cluster --provider manual --nodes-file nodes.yaml
 - [ ] Workers join cluster automatically using k3s token.
 - [ ] Nodes can be added/removed cleanly (Terraform apply/destroy) without breaking the cluster.
 - [ ] Autoscaling use case supported by Terraform-managed node pool (join/remove via SSH bootstrap).
-- [ ] `fabrik infra init --provider hetzner` creates Pulumi project with Hetzner config
+- [ ] `fabrik infra init --provider hetzner` creates Terraform/OpenTofu project with Hetzner config
 - [ ] `fabrik infra up` provisions NixOS servers with k3s installed
 - [ ] Control plane accessible via load balancer on port 6443
 - [ ] Workers join cluster automatically using k3s token
@@ -894,7 +802,7 @@ fabrik infra init manual-cluster --provider manual --nodes-file nodes.yaml
 - [ ] `fabrik infra kubeconfig` outputs valid kubeconfig for kubectl
 - [ ] Nodes labeled with `fabrik.sh/role` and other configured labels
 - [ ] Manual provider works with existing servers via SSH + nixos-anywhere
-- [ ] Pulumi state stored in configured backend (S3, Pulumi Cloud, local)
+- [ ] Terraform/OpenTofu state stored in configured backend (S3, GCS, local)
 - [ ] `fabrik infra destroy` cleanly removes all cloud resources
 - [ ] NixOS configuration can be customized via extra modules
 - [ ] Firewall rules correctly restrict k3s ports
@@ -906,20 +814,20 @@ fabrik infra init manual-cluster --provider manual --nodes-file nodes.yaml
 
 1. **Hetzner account**: User has Hetzner Cloud account and API token
 2. **SSH keys**: Ed25519 SSH key pair exists (~/.ssh/id_ed25519)
-3. **Pulumi**: Pulumi CLI installed and configured (pulumi login)
+3. **Terraform/OpenTofu**: Bootstrapped by `fabrik infra init` (no system install required)
 4. **NixOS**: For manual bootstrap, servers have internet access for nixos-anywhere
 5. **Node access**: Root or sudo access on manual nodes for NixOS installation
 6. **Architecture**: x86_64 supported first, aarch64 can be added
 7. **DNS**: For production, DNS records point to load balancer IPs
 8. **TLS**: k3s generates self-signed certs (or use valid certs via TLS SANs)
 9. **Cost awareness**: User understands Hetzner pricing (CX21 ≈ €5.35/month)
-10. **State security**: Pulumi state contains secrets, store in S3 with encryption or Pulumi Cloud
+10. **State security**: Terraform/OpenTofu state contains secrets, store in S3 with encryption and locking
 
 ---
 
 ## Glossary
 
-- **Pulumi**: Infrastructure-as-code using real programming languages (TypeScript, Python, Go)
+- **Terraform/OpenTofu**: Declarative infrastructure-as-code using HCL and providers
 - **NixOS**: Declarative Linux distribution, atomic upgrades, reproducible
 - **Hetzner Cloud**: German cloud provider, affordable, EU-focused
 - **k3s**: Lightweight Kubernetes distribution by Rancher
@@ -946,15 +854,12 @@ fabrik infra init manual-cluster --provider manual --nodes-file nodes.yaml
 
 ## Changelog
 
+- **v1.1.1** (2026-03-04): Standardized IaC on Terraform/OpenTofu only and updated state/bootstrap flow
+- **v1.1.0** (2026-02-16): Added container build process and remote state backend (S3)
 - **v1.0.0** (2026-02-16): Initial specification
   - Hetzner Cloud native support
   - Manual/SSH bootstrap via nixos-anywhere
   - NixOS + k3s architecture
-  - Pulumi-based IaC
+  - Terraform/OpenTofu-based IaC
   - Longhorn storage
   - LAOS in-cluster deployment
-### 7.1 Node Join / Remove (Required)
-
-- **Join**: Workers join using the k3s token from the control plane.
-- **Remove**: Terraform destroy removes worker nodes cleanly; cluster remains healthy.
-- **Autoscaling**: Node pool scaling is done via Terraform (or provider API), and new nodes join via the same SSH bootstrap flow.
