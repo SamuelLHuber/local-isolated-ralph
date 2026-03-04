@@ -19,3 +19,28 @@ Fabrik runs as k3s-native Jobs/CronJobs with k3d for local/CI testing.
 
 ## Notes
 - Labels/annotations use the `fabrik.sh` domain (see `specs/051-k3s-orchestrator.md`).
+
+## Local Testing
+
+For local testing use [k3d](https://k3d.io).
+
+### Single Node
+
+Create the single node k3s cluster with k3d locally
+
+```bash
+k3d cluster create dev
+```
+
+then check it works with 
+
+```
+kubectl cluster-info
+kubectl get nodes
+```
+
+To clean up
+
+```
+k3d cluster delete dev
+```
