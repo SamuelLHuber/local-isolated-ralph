@@ -2,3 +2,5 @@ node_modules/
 dist/
 specs/**/*.min.json
 smitherssample/
+k8s/job-sync/*
+!k8s/job-sync/.gitkeep

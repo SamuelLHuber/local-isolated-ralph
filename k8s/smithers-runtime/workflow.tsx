@@ -9,10 +9,11 @@ const { smithers, outputs } = createSmithers(
       summary: z.string(),
     }),
   },
-  { dbPath: "workflows/hello-world-agent.db" },
+  { dbPath: process.env.SMITHERS_DB_PATH ?? "/workspace/.smithers/state.db" },
 );
 
 const agent = new CodexAgent({
+  model: process.env.SMITHERS_MODEL,
   sandbox: "workspace-write",
   skipGitRepoCheck: true,
   json: true,
