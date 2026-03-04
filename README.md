@@ -1,6 +1,6 @@
-# Fabrik (Kubernetes-First)
+# Fabrik 
 
-Fabrik is now Kubernetes-first. The system runs as k3s-native Jobs/CronJobs with k3d for local/CI testing.
+Fabrik runs as k3s-native Jobs/CronJobs with k3d for local/CI testing.
 
 ## Start Here
 - Specs live in `specs/`.
@@ -18,5 +18,4 @@ Fabrik is now Kubernetes-first. The system runs as k3s-native Jobs/CronJobs with
 - `specs/063-benchmark-system.md`
 
 ## Notes
-- VM-based workflows (Ralph/Lima/libvirt) have been removed.
 - Labels/annotations use the `fabrik.sh` domain (see `specs/051-k3s-orchestrator.md`).

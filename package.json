@@ -7,25 +7,16 @@
     "fabrik": "dist/fabrik"
   },
   "scripts": {
-    "build": "bun build src/fabrik/bin.ts --compile --outfile dist/fabrik",
-    "cli": "bun run src/fabrik/bin.ts",
     "changeset-version": "changeset version && node scripts/version.mjs",
     "changeset-publish": "bun run build && node scripts/publish.mjs",
-    "test": "bun test src/fabrik/__tests__",
-    "test:markdown": "bun test src/fabrik/__tests__/markdown-spec.test.ts",
-    "test:learning": "bun test src/fabrik/__tests__/learning.test.ts",
     "hooks:install": "git config core.hooksPath .githooks && chmod +x .githooks/pre-commit"
   },
   "dependencies": {
-    "@effect/cli": "latest",
-    "@effect/platform-node": "latest",
-    "effect": "latest"
   },
   "devDependencies": {
     "@changesets/changelog-github": "latest",
     "@changesets/cli": "latest"
   },
   "trustedDependencies": [
-    "@parcel/watcher"
   ]
 }
