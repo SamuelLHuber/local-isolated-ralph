@@ -1,4 +1,4 @@
-# Fabrik (Kubernetes-First)
+# Fabrik
 
 ## Deployment Targets
 - Linux and macOS local development via k3d (k3s in Docker)
@@ -6,7 +6,6 @@
 
 ## Critical Rules
 - K8s is the source of truth for runtime state.
-- No VM-based workflows (Lima/libvirt/Ralph) remain.
 - Use immutable image references for Jobs and keep resume on the same digest.
 - Local persistence is a single DB: `~/.cache/fabrik/state.db`.
 
