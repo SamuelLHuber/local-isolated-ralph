@@ -12,11 +12,11 @@
     "hooks:install": "git config core.hooksPath .githooks && chmod +x .githooks/pre-commit"
   },
   "dependencies": {
+    "smithers-orchestrator": "0.9.1"
   },
   "devDependencies": {
-    "@changesets/changelog-github": "latest",
-    "@changesets/cli": "latest"
+    "@changesets/changelog-github": "0.6.0",
+    "@changesets/cli": "2.30.0"
   },
-  "trustedDependencies": [
-  ]
+  "trustedDependencies": []
 }
