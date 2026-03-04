@@ -7,6 +7,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUN_ID="${1:-k3d-local}"
 NAMESPACE="${NAMESPACE:-default}"
 PRE_CLEAN_WORKDIR="${PRE_CLEAN_WORKDIR:-1}"
+PVC_SIZE="${PVC_SIZE:-10Gi}"
+PVC_STORAGE_CLASS="${PVC_STORAGE_CLASS:-}"
 
 sanitize() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9-' '-'
@@ -16,11 +18,13 @@ SAFE_RUN_ID="$(sanitize "$RUN_ID")"
 JOB_NAME="smithers-${SAFE_RUN_ID}"
 SYNC_POD="smithers-sync-${SAFE_RUN_ID}"
 CLEAN_POD="smithers-clean-${SAFE_RUN_ID}"
+PVC_NAME="data-fabrik-${SAFE_RUN_ID}"
 
 # K8s names must be <=63 chars and start/end with alnum.
 JOB_NAME="$(printf '%s' "$JOB_NAME" | cut -c1-63 | sed 's/^[^a-z0-9]*//; s/[^a-z0-9]*$//')"
 SYNC_POD="$(printf '%s' "$SYNC_POD" | cut -c1-63 | sed 's/^[^a-z0-9]*//; s/[^a-z0-9]*$//')"
 CLEAN_POD="$(printf '%s' "$CLEAN_POD" | cut -c1-63 | sed 's/^[^a-z0-9]*//; s/[^a-z0-9]*$//')"
+PVC_NAME="$(printf '%s' "$PVC_NAME" | cut -c1-63 | sed 's/^[^a-z0-9]*//; s/[^a-z0-9]*$//')"
 if [ -z "$JOB_NAME" ]; then
   echo "failed to derive a valid job name from run id: $RUN_ID" >&2
   exit 1
@@ -31,6 +35,10 @@ if [ -z "$SYNC_POD" ]; then
 fi
 if [ -z "$CLEAN_POD" ]; then
   echo "failed to derive a valid clean pod name from run id: $RUN_ID" >&2
+  exit 1
+fi
+if [ -z "$PVC_NAME" ]; then
+  echo "failed to derive a valid pvc name from run id: $RUN_ID" >&2
   exit 1
 fi
 
@@ -45,7 +53,24 @@ mkdir -p "$SYNC_ROOT"
 printf '%s\n' "$RUN_ID" > "$SYNC_ROOT/run-id.txt"
 
 echo "[1/8] Ensuring PVC exists"
-kubectl -n "$NAMESPACE" apply -f "$REPO_ROOT/k8s/pvc.yaml"
+if [ -n "$PVC_STORAGE_CLASS" ]; then
+  PVC_STORAGE_CLASS_LINE="  storageClassName: $PVC_STORAGE_CLASS"
+else
+  PVC_STORAGE_CLASS_LINE=""
+fi
+cat <<YAML | kubectl -n "$NAMESPACE" apply -f -
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: $PVC_NAME
+spec:
+  accessModes:
+    - ReadWriteOnce
+$PVC_STORAGE_CLASS_LINE
+  resources:
+    requests:
+      storage: $PVC_SIZE
+YAML
 
 if [ "$PRE_CLEAN_WORKDIR" = "1" ]; then
   echo "[2/8] Cleaning /workspace/workdir on PVC"
@@ -60,7 +85,7 @@ spec:
   volumes:
     - name: workspace
       persistentVolumeClaim:
-        claimName: smithers-workspace-pvc
+        claimName: $PVC_NAME
   containers:
     - name: clean
       image: alpine:3.20
@@ -69,8 +94,11 @@ spec:
         - name: workspace
           mountPath: /workspace
 YAML
-  kubectl -n "$NAMESPACE" wait --for=condition=Ready --timeout=120s "pod/$CLEAN_POD" >/dev/null
-  kubectl -n "$NAMESPACE" wait --for=jsonpath='{.status.phase}'=Succeeded --timeout=120s "pod/$CLEAN_POD" >/dev/null
+  if ! kubectl -n "$NAMESPACE" wait --for=jsonpath='{.status.phase}'=Succeeded --timeout=120s "pod/$CLEAN_POD" >/dev/null; then
+    echo "clean pod did not complete successfully; recent logs:" >&2
+    kubectl -n "$NAMESPACE" logs "$CLEAN_POD" --tail=200 || true
+    exit 1
+  fi
   kubectl -n "$NAMESPACE" delete pod "$CLEAN_POD" --ignore-not-found >/dev/null
 else
   echo "[2/8] Skipping pre-clean (/workspace/workdir)"
@@ -102,7 +130,7 @@ metadata:
   name: $JOB_NAME
 spec:
   backoffLimit: 0
-  ttlSecondsAfterFinished: 86400
+  ttlSecondsAfterFinished: 604800
   template:
     spec:
       restartPolicy: Never
@@ -135,7 +163,7 @@ spec:
       volumes:
         - name: workspace
           persistentVolumeClaim:
-            claimName: smithers-workspace-pvc
+            claimName: $PVC_NAME
         - name: codex-auth
           secret:
             secretName: codex-auth
@@ -169,7 +197,7 @@ spec:
   volumes:
     - name: workspace
       persistentVolumeClaim:
-        claimName: smithers-workspace-pvc
+        claimName: $PVC_NAME
   containers:
     - name: sync
       image: alpine:3.20
