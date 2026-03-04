@@ -170,7 +170,20 @@ spec:
             defaultMode: 0400
 YAML
 
-echo "[5/8] Waiting for job completion"
+echo "[5/8] Linking PVC to Job for TTL cleanup"
+JOB_UID="$(kubectl -n "$NAMESPACE" get job "$JOB_NAME" -o jsonpath='{.metadata.uid}')"
+kubectl -n "$NAMESPACE" patch pvc "$PVC_NAME" --type=merge -p "{
+  \"metadata\": {
+    \"ownerReferences\": [{
+      \"apiVersion\": \"batch/v1\",
+      \"kind\": \"Job\",
+      \"name\": \"$JOB_NAME\",
+      \"uid\": \"$JOB_UID\"
+    }]
+  }
+}" >/dev/null
+
+echo "[6/8] Waiting for job completion"
 if ! kubectl -n "$NAMESPACE" wait --for=condition=complete --timeout=30m "job/$JOB_NAME" >/dev/null; then
   echo "job did not complete successfully; recent logs:" >&2
   POD_NAME="$(kubectl -n "$NAMESPACE" get pods -l job-name="$JOB_NAME" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
@@ -182,10 +195,10 @@ fi
 
 POD_NAME="$(kubectl -n "$NAMESPACE" get pods -l job-name="$JOB_NAME" -o jsonpath='{.items[0].metadata.name}')"
 
-echo "[6/8] Saving pod logs"
+echo "[7/8] Saving pod logs"
 kubectl -n "$NAMESPACE" logs "$POD_NAME" > "$SYNC_ROOT/job.log"
 
-echo "[7/8] Syncing /workspace/workdir and state.db from PVC"
+echo "[8/8] Syncing /workspace/workdir and state.db from PVC"
 kubectl -n "$NAMESPACE" delete pod "$SYNC_POD" --ignore-not-found >/dev/null
 cat <<YAML | kubectl -n "$NAMESPACE" apply -f -
 apiVersion: v1
@@ -211,6 +224,6 @@ rm -rf "$SYNC_ROOT/workdir"
 kubectl -n "$NAMESPACE" cp "$SYNC_POD:/workspace/workdir" "$SYNC_ROOT/workdir"
 kubectl -n "$NAMESPACE" cp "$SYNC_POD:/workspace/.smithers/state.db" "$SYNC_ROOT/state.db" || true
 
-echo "[8/8] Done"
+echo "[9/9] Done"
 echo "Synced artifacts: $SYNC_ROOT"
 echo "Generated file: $SYNC_ROOT/workdir/public/hello-world.html"
