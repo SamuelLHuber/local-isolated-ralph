@@ -171,6 +171,8 @@ spec:
 YAML
 
 echo "[5/8] Linking PVC to Job for TTL cleanup"
+# OwnerRef ties PVC lifecycle to the Job; when the Job TTL GC deletes the Job,
+# the PVC is garbage-collected too.
 JOB_UID="$(kubectl -n "$NAMESPACE" get job "$JOB_NAME" -o jsonpath='{.metadata.uid}')"
 kubectl -n "$NAMESPACE" patch pvc "$PVC_NAME" --type=merge -p "{
   \"metadata\": {
