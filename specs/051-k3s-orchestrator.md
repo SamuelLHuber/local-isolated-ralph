@@ -179,6 +179,7 @@ All fabrik Jobs/CronJobs must include these labels/annotations. Other specs and 
 - PVC per run: `data-fabrik-<run-id>` (10GB default)
 - StorageClass: `local-path` (k3s default) or `longhorn` (HA)
 - Retention: 7 days after completion, then deleted
+- Implementation: PVCs are owner-referenced to their Job so Job TTL GC removes them.
 - Manual `fabrik run retain --id <run-id> --days 30` extends
 
 **Resource Limits**:
@@ -623,6 +624,10 @@ metadata:
 reclaimPolicy: Delete  # PVC deleted when Job deleted
 # OR: reclaimPolicy: Retain for manual cleanup
 ```
+
+**CLI Enforcement + Fallback:**
+- CLI must set PVC ownerReferences to the Job and fail loudly if it cannot (ensures TTL GC deletes PVCs).
+- Provide a CronJob fallback that deletes stale PVCs (e.g., by label and age) in case ownerRefs or TTL GC fail.
 
 **Namespace-Level Cleanup:**
 
