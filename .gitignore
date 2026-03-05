@@ -1,4 +1,5 @@
 node_modules/
+workflows/
 dist/
 specs/**/*.min.json
 smitherssample/
