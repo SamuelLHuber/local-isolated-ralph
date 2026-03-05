@@ -129,10 +129,15 @@ docker push localhost:5111/fabrik-app:${GIT_SHA}
 
 ```
 # Single-node, fast
-k3d cluster create dev
+scripts/k3d/cluster.sh create single dev
+scripts/k3d/cluster.sh verify single dev
 
 # Multi-node
-k3d cluster create dev --agents 2 -p "8080:80@loadbalancer"
+scripts/k3d/cluster.sh create multi dev
+scripts/k3d/cluster.sh verify multi dev
+
+# Optional: override local registry port
+K3D_REGISTRY_PORT=5112 scripts/k3d/cluster.sh create single dev
 
 # Install platform charts (optional)
 helm upgrade --install platform ./charts/platform -f values/dev.yaml

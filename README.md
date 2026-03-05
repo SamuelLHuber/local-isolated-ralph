@@ -36,18 +36,28 @@ For local testing use [k3d](https://k3d.io).
 Create the single node k3s cluster with k3d locally
 
 ```bash
-k3d cluster create dev
+scripts/k3d/cluster.sh create single dev
+scripts/k3d/cluster.sh verify single dev
+```
+
+### Multi Node
+
+Create the multi-node k3s cluster (1 server + 2 agents)
+
+```bash
+scripts/k3d/cluster.sh create multi dev
+scripts/k3d/cluster.sh verify multi dev
 ```
 
 then check it works with 
 
 ```
-kubectl cluster-info
-kubectl get nodes
+kubectl --context k3d-dev cluster-info
+kubectl --context k3d-dev get nodes
 ```
 
 To clean up
 
 ```
-k3d cluster delete dev
+scripts/k3d/cluster.sh delete dev
 ```

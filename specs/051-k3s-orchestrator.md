@@ -36,7 +36,7 @@
 2. **Resource governance**: CPU/memory limits, quotas, priority classes prevent runaway jobs
 3. **Secret management**: Per-project environment via K8s Secrets, rotated automatically
 4. **Persistent storage**: Smithers SQLite state in PVCs, backed up via Longhorn
-5. **Multi-cluster support**: Dev, staging, prod clusters with unified tooling
+5. **Multi-cluster support**: Dev, staging, prod clusters with unified tooling (e.g. LAOS stack)
 6. **Observability**: LAOS (in-cluster or external) receives all metrics/logs
 
 ---
