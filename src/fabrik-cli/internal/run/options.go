@@ -56,8 +56,8 @@ func validateOptions(opts Options) error {
 	if strings.TrimSpace(opts.Image) == "" {
 		return errors.New("missing required flag: --image")
 	}
-	if !isImmutableImageReference(opts.Image) {
-		return errors.New("image must be immutable: use a digest or a pinned non-latest tag")
+	if !opts.RenderOnly && !opts.DryRun && !isImmutableImageReference(opts.Image) {
+		return errors.New("image must be immutable: use a digest reference like repo/image@sha256:<digest>")
 	}
 	if strings.TrimSpace(opts.Namespace) == "" {
 		return errors.New("missing required flag: --namespace")
@@ -90,22 +90,7 @@ func validateOptions(opts Options) error {
 }
 
 func isImmutableImageReference(image string) bool {
-	if strings.Contains(image, "@sha256:") {
-		return true
-	}
-
-	lastColon := strings.LastIndex(image, ":")
-	lastSlash := strings.LastIndex(image, "/")
-	if lastColon <= lastSlash {
-		return false
-	}
-
-	tag := image[lastColon+1:]
-	if tag == "" || tag == "latest" {
-		return false
-	}
-
-	return true
+	return strings.Contains(image, "@sha256:")
 }
 
 func (opts Options) Summary() string {
