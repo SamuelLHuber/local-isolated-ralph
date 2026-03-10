@@ -3,6 +3,7 @@ package run
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -10,14 +11,20 @@ import (
 )
 
 type Manifests struct {
-	JobName string
-	PVCName string
-	PVCYAML string
-	JobYAML string
+	JobName        string
+	PVCName        string
+	WorkflowConfig string
+	PVCYAML        string
+	JobYAML        string
 }
 
 func (m Manifests) AllYAML() string {
-	return m.PVCYAML + "---\n" + m.JobYAML
+	parts := []string{}
+	if m.WorkflowConfig != "" {
+		parts = append(parts, m.WorkflowConfig)
+	}
+	parts = append(parts, m.PVCYAML, m.JobYAML)
+	return strings.Join(parts, "---\n")
 }
 
 func (m Manifests) Summary() string {
@@ -58,14 +65,27 @@ func BuildManifests(opts Options) (Manifests, error) {
 		"fabrik.sh/spec-path":   opts.SpecPath,
 	}
 
+	workflowConfigName := ""
+	workflowConfig := ""
+	if strings.TrimSpace(opts.WorkflowPath) != "" {
+		source, err := os.ReadFile(opts.WorkflowPath)
+		if err != nil {
+			return Manifests{}, err
+		}
+		workflowConfigName = trimK8sName("fabrik-workflow-" + safeRunID)
+		workflowConfig = buildWorkflowConfigMap(opts.Namespace, workflowConfigName, string(source))
+		annotations["fabrik.sh/workflow-path"] = opts.WorkflowPath
+	}
+
 	pvcYAML := buildPVCYAML(opts, pvcName, labels)
-	jobYAML := buildJobYAML(opts, jobName, pvcName, labels, annotations)
+	jobYAML := buildJobYAML(opts, jobName, pvcName, workflowConfigName, labels, annotations)
 
 	return Manifests{
-		JobName: jobName,
-		PVCName: pvcName,
-		PVCYAML: pvcYAML,
-		JobYAML: jobYAML,
+		JobName:        jobName,
+		PVCName:        pvcName,
+		WorkflowConfig: workflowConfig,
+		PVCYAML:        pvcYAML,
+		JobYAML:        jobYAML,
 	}, nil
 }
 
@@ -89,7 +109,7 @@ func buildPVCYAML(opts Options, pvcName string, labels map[string]string) string
 	return b.String()
 }
 
-func buildJobYAML(opts Options, jobName, pvcName string, labels, annotations map[string]string) string {
+func buildJobYAML(opts Options, jobName, pvcName, workflowConfigName string, labels, annotations map[string]string) string {
 	var b strings.Builder
 	b.WriteString("apiVersion: batch/v1\n")
 	b.WriteString("kind: Job\n")
@@ -113,7 +133,11 @@ func buildJobYAML(opts Options, jobName, pvcName string, labels, annotations map
 	b.WriteString("        - name: fabrik\n")
 	b.WriteString("          image: " + opts.Image + "\n")
 	b.WriteString("          imagePullPolicy: IfNotPresent\n")
-	b.WriteString("          command: [\"sh\", \"-lc\", " + yamlQuote(opts.JobCommand) + "]\n")
+	if strings.TrimSpace(opts.WorkflowPath) == "" {
+		b.WriteString("          command: [\"sh\", \"-lc\", " + yamlQuote(opts.JobCommand) + "]\n")
+	} else {
+		b.WriteString("          command: [\"sh\", \"-lc\", " + yamlQuote("mkdir -p /workspace/workdir/workflows /workspace/.smithers && exec /opt/smithers-runtime/run.sh") + "]\n")
+	}
 	b.WriteString("          env:\n")
 	b.WriteString("            - name: SMITHERS_RUN_ID\n")
 	b.WriteString("              value: " + yamlQuote(opts.RunID) + "\n")
@@ -121,13 +145,54 @@ func buildJobYAML(opts Options, jobName, pvcName string, labels, annotations map
 	b.WriteString("              value: " + yamlQuote(opts.SpecPath) + "\n")
 	b.WriteString("            - name: SMITHERS_PROJECT\n")
 	b.WriteString("              value: " + yamlQuote(opts.Project) + "\n")
+	if strings.TrimSpace(opts.WorkflowPath) != "" {
+		b.WriteString("            - name: SMITHERS_INPUT_JSON\n")
+		b.WriteString("              value: " + yamlQuote(opts.InputJSON) + "\n")
+	}
 	b.WriteString("          volumeMounts:\n")
 	b.WriteString("            - name: workspace\n")
 	b.WriteString("              mountPath: /workspace\n")
+	if strings.TrimSpace(opts.WorkflowPath) != "" {
+		b.WriteString("            - name: workflow\n")
+		b.WriteString("              mountPath: /opt/smithers-runtime/workflow.tsx\n")
+		b.WriteString("              subPath: workflow.tsx\n")
+		b.WriteString("            - name: codex-auth\n")
+		b.WriteString("              mountPath: /root/.codex/auth.json\n")
+		b.WriteString("              subPath: auth.json\n")
+		b.WriteString("              readOnly: true\n")
+		b.WriteString("            - name: codex-auth\n")
+		b.WriteString("              mountPath: /root/.codex/config.toml\n")
+		b.WriteString("              subPath: config.toml\n")
+		b.WriteString("              readOnly: true\n")
+	}
 	b.WriteString("      volumes:\n")
 	b.WriteString("        - name: workspace\n")
 	b.WriteString("          persistentVolumeClaim:\n")
 	b.WriteString("            claimName: " + pvcName + "\n")
+	if strings.TrimSpace(opts.WorkflowPath) != "" {
+		b.WriteString("        - name: workflow\n")
+		b.WriteString("          configMap:\n")
+		b.WriteString("            name: " + workflowConfigName + "\n")
+		b.WriteString("        - name: codex-auth\n")
+		b.WriteString("          secret:\n")
+		b.WriteString("            secretName: codex-auth\n")
+		b.WriteString("            defaultMode: 0400\n")
+	}
+	return b.String()
+}
+
+func buildWorkflowConfigMap(namespace, configMapName, workflowSource string) string {
+	var b strings.Builder
+	b.WriteString("apiVersion: v1\n")
+	b.WriteString("kind: ConfigMap\n")
+	b.WriteString("metadata:\n")
+	b.WriteString("  name: " + configMapName + "\n")
+	b.WriteString("  namespace: " + namespace + "\n")
+	b.WriteString("data:\n")
+	b.WriteString("  workflow.tsx: |-\n")
+	for _, line := range strings.Split(strings.ReplaceAll(workflowSource, "\r\n", "\n"), "\n") {
+		b.WriteString("    " + line + "\n")
+	}
 	return b.String()
 }
 

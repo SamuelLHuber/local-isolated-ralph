@@ -36,6 +36,8 @@ func newRunCommand(runMode string) *cobra.Command {
 	flags.StringVar(&opts.SpecPath, "spec", "", "Path to the run spec")
 	flags.StringVar(&opts.Project, "project", "", "Project ID (DNS-1123)")
 	flags.StringVar(&opts.Image, "image", "", "Immutable image reference for the job")
+	flags.StringVar(&opts.WorkflowPath, "workflow-path", "", "Path to a local workflow file to mount into the job")
+	flags.StringVar(&opts.InputJSON, "input-json", "", "JSON input passed to Smithers when using --workflow-path")
 	flags.StringVar(&opts.Namespace, "namespace", opts.Namespace, "Kubernetes namespace")
 	flags.StringVar(&opts.KubeContext, "context", "", "Kubernetes context")
 	flags.StringVar(&opts.PVCSize, "pvc-size", opts.PVCSize, "PVC size request")
