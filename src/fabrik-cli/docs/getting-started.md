@@ -93,6 +93,51 @@ fabrik run \
   --interactive=false
 ```
 
+For workflows that should preserve repository history and push results back upstream, prefer dispatching from version control rather than relying on post-run artifact sync alone:
+
+```bash
+fabrik run \
+  --run-id counter-rootserver \
+  --spec specs/051-k3s-orchestrator.md \
+  --project counter \
+  --workflow-path examples/counter-local/workflow.tsx \
+  --input-json '{"appName":"counter-rootserver-app"}' \
+  --jj-repo https://github.com/example/counter-app.git \
+  --jj-bookmark fabrik/counter-rootserver \
+  --context default \
+  --interactive=false
+```
+
+This maps to the workflow's existing `SMITHERS_JJ_REPO` / `SMITHERS_JJ_BOOKMARK` support in [`examples/counter-local/workflow.tsx`](/Users/samuel/git/local-isolated-ralph/examples/counter-local/workflow.tsx). The local sync output remains useful for logs and artifacts, but VCS fidelity should come from the repo-aware workflow path.
+
+## Filtered Workflow Sync
+
+Workflow artifact sync is intentionally filtered.
+
+What is excluded from local post-run artifact sync:
+
+- `.git`
+- `.jj`
+- large dependency trees such as `node_modules`
+
+Why:
+
+- round-tripping full VCS metadata through the Kubernetes API stream is slow and unreliable
+- preserving repo state should happen inside the workflow by cloning and pushing through JJ/Git
+- local post-run sync is for logs, generated outputs, and lightweight working files
+
+Operator rule:
+
+- workflow dispatch requires explicit acknowledgement of filtered sync
+- interactive runs prompt for confirmation
+- non-interactive runs must pass `--accept-filtered-sync`
+
+Recommended pattern:
+
+1. use `--jj-repo` and `--jj-bookmark` so the workflow prepares a real repo in-cluster
+2. treat a future `.fabrik-sync` file as the manifest for small non-VCS files that need to be injected into the workspace, such as `.env.local`
+3. do not treat local post-run artifact sync as the source of truth for repository history
+
 ## Design Rules
 
 The CLI must follow the existing Fabrik specs, especially:
