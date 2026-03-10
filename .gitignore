@@ -1,7 +1,8 @@
 node_modules/
-workflows/
+/workflows/
 dist/
 src/fabrik-cli/.cache/
+.docker-ghcr/
 specs/**/*.min.json
 smitherssample/
 k8s/job-sync/*

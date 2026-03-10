@@ -51,17 +51,22 @@ func BuildManifests(opts Options) (Manifests, error) {
 	}
 
 	startedAt := buildStartedAt()
+	progressJSON := `{"finished":0,"total":1}`
 	labels := map[string]string{
-		"fabrik.sh/run-id":  opts.RunID,
-		"fabrik.sh/spec":    specID,
-		"fabrik.sh/project": opts.Project,
-		"fabrik.sh/phase":   "run",
+		"fabrik.sh/run-id":     opts.RunID,
+		"fabrik.sh/spec":       specID,
+		"fabrik.sh/project":    opts.Project,
+		"fabrik.sh/phase":      "run",
+		"fabrik.sh/status":     "running",
+		"fabrik.sh/task":       "dispatch",
+		"fabrik.sh/managed-by": "fabrik",
 	}
 	annotations := map[string]string{
 		"fabrik.sh/status":      string(statusJSON),
 		"fabrik.sh/started-at":  startedAt,
 		"fabrik.sh/finished-at": "",
-		"fabrik.sh/outcome":     "running",
+		"fabrik.sh/outcome":     "",
+		"fabrik.sh/progress":    progressJSON,
 		"fabrik.sh/spec-path":   opts.SpecPath,
 	}
 

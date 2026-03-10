@@ -59,6 +59,40 @@ Good initial uses for Charm libraries:
 - confirmation before applying resources
 - spinners while waiting on `kubectl apply`, `kubectl wait`, and sync steps
 
+## Workflow Image Resolution
+
+Workflow-backed runs do not need a manual `--image` when the Smithers runtime image has been published to GHCR.
+
+The default behavior is:
+
+- publish `k8s/Dockerfile` to `ghcr.io/<github-owner>/fabrik-smithers`
+- tag the image with the default branch name (`main` or `master`) and a `sha-<commit>` tag
+- when `fabrik run --workflow-path ...` is used without `--image`, the CLI:
+  - derives the GitHub owner from the local `origin` remote
+  - derives the default branch from `origin/HEAD`
+  - resolves `ghcr.io/<owner>/fabrik-smithers:<default-branch>` to a registry digest
+  - dispatches the Job with the immutable digest reference
+
+This keeps the operator UX simple without violating the immutable-image rule.
+
+Override behavior:
+
+- set `FABRIK_SMITHERS_IMAGE` to force a specific image reference
+- pass `--image` explicitly to override both the env var and auto-resolution
+
+Recommended usage for production-like runs:
+
+```bash
+fabrik run \
+  --run-id counter-rootserver \
+  --spec specs/051-k3s-orchestrator.md \
+  --project counter \
+  --workflow-path examples/counter-local/workflow.tsx \
+  --input-json '{"appName":"counter-rootserver-app"}' \
+  --context default \
+  --interactive=false
+```
+
 ## Design Rules
 
 The CLI must follow the existing Fabrik specs, especially:
