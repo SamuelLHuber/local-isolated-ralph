@@ -129,15 +129,15 @@ docker push localhost:5111/fabrik-app:${GIT_SHA}
 
 ```
 # Single-node, fast
-scripts/k3d/cluster.sh create single dev
-scripts/k3d/cluster.sh verify single dev
+scripts/k3d/cluster.sh create single dev-single
+scripts/k3d/cluster.sh verify single dev-single
 
 # Multi-node
-scripts/k3d/cluster.sh create multi dev
-scripts/k3d/cluster.sh verify multi dev
+scripts/k3d/cluster.sh create multi dev-multi
+scripts/k3d/cluster.sh verify multi dev-multi
 
 # Optional: override local registry port
-K3D_REGISTRY_PORT=5112 scripts/k3d/cluster.sh create single dev
+K3D_REGISTRY_PORT=5112 scripts/k3d/cluster.sh create single dev-single
 
 # Install platform charts (optional)
 helm upgrade --install platform ./charts/platform -f values/dev.yaml
@@ -145,6 +145,8 @@ helm upgrade --install platform ./charts/platform -f values/dev.yaml
 # Install fabrik
 helm upgrade --install fabrik ./charts/fabrik -f values/dev.yaml
 ```
+
+If the name is omitted, `single` uses `dev-single` with registry port `5111`, and `multi` uses `dev-multi` with registry port `5112`.
 
 ### 7. Linux + macOS Compatibility
 
