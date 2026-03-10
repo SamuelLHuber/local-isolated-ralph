@@ -1,7 +1,6 @@
 package run
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -23,28 +22,13 @@ type Options struct {
 	PVCSize        string
 	OutputSubdir   string
 	WaitTimeout    string
+	RunMode        string
 	PreClean       bool
 	Wait           bool
 	RenderOnly     bool
 	DryRun         bool
 	Interactive    bool
 	NonInteractive bool
-}
-
-func ResolveOptions(ctx context.Context, opts Options) (Options, error) {
-	var err error
-	if opts.Interactive {
-		opts, err = promptForMissing(ctx, opts)
-		if err != nil {
-			return Options{}, err
-		}
-	}
-
-	if err := validateOptions(opts); err != nil {
-		return Options{}, err
-	}
-
-	return opts, nil
 }
 
 func validateOptions(opts Options) error {
