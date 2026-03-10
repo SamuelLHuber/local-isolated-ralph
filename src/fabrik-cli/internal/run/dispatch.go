@@ -72,7 +72,7 @@ func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opt
 		return err
 	}
 	if strings.TrimSpace(resolved.WorkflowPath) != "" {
-		if _, err := fmt.Fprintln(stderr, "note: workflow artifact sync excludes .git/.jj; preserve repo state via JJ/Git in the workflow prepare step, and treat .fabrik-sync as the place for small extra files such as .env.local"); err != nil {
+		if _, err := fmt.Fprintln(stderr, "note: workflow artifact sync excludes .git/.jj; preserve repo state via JJ/Git in the workflow prepare step, and use .fabrik-sync only for a few explicit local-only files such as .env.local"); err != nil {
 			return err
 		}
 		if resolved.SyncBundle != nil {
@@ -326,8 +326,8 @@ func syncArtifacts(ctx context.Context, opts Options, manifests Manifests, podNa
 		return "", err
 	}
 	// Local post-run sync is intentionally artifact-focused. Repository history should be
-	// preserved through JJ/Git inside the workflow, while `.fabrik-sync` handles the small
-	// extra files that must be injected ahead of execution.
+	// preserved through JJ/Git inside the workflow, while `.fabrik-sync` only injects a few
+	// explicit local-only files ahead of execution.
 	workdir := filepath.Join(targetDir, "workdir")
 	_ = os.RemoveAll(workdir)
 	if err := copyWorkdirFromPod(ctx, opts, syncPodName, workdir); err != nil {
@@ -377,7 +377,7 @@ func copyWorkdirFromPod(ctx context.Context, opts Options, podName, destination 
 	}
 	// Artifact sync is intentionally filtered: .git/.jj are not a reliable thing to round-trip
 	// through the Kubernetes API stream. Preserve repository state via JJ/Git inside the workflow,
-	// and reserve future .fabrik-sync support for small non-VCS files that must be injected.
+	// and use `.fabrik-sync` only for a few explicit local-only files that must be injected.
 	args = append(args, "-n", opts.Namespace, "exec", podName, "--", "tar", "-C", "/workspace/workdir")
 	for _, pattern := range syncWorkdirExcludes {
 		args = append(args, "--exclude="+pattern)
