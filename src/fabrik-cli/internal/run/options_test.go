@@ -49,3 +49,23 @@ func TestValidateOptionsAcceptsPinnedTag(t *testing.T) {
 		t.Fatalf("expected success, got error: %v", err)
 	}
 }
+
+func TestValidateOptionsRequiresAcceptanceForWorkflowSyncBundle(t *testing.T) {
+	opts := Options{
+		RunID:              "r1",
+		SpecPath:           "specs/a.yaml",
+		Project:            "demo",
+		Image:              "repo/image@sha256:abcdef",
+		WorkflowPath:       "workflow.tsx",
+		InputJSON:          "{}",
+		Namespace:          "fabrik-runs",
+		PVCSize:            "1Gi",
+		WaitTimeout:        "5m",
+		Interactive:        false,
+		AcceptFilteredSync: false,
+		SyncBundle:         &SyncBundle{ManifestPath: ".fabrik-sync"},
+	}
+	if err := validateOptions(opts); err == nil {
+		t.Fatalf("expected validation error for missing filtered-sync acknowledgement")
+	}
+}

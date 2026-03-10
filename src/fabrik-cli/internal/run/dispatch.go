@@ -75,6 +75,11 @@ func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opt
 		if _, err := fmt.Fprintln(stderr, "note: workflow artifact sync excludes .git/.jj; preserve repo state via JJ/Git in the workflow prepare step, and treat .fabrik-sync as the place for small extra files such as .env.local"); err != nil {
 			return err
 		}
+		if resolved.SyncBundle != nil {
+			if _, err := fmt.Fprintf(stderr, "note: injecting %d .fabrik-sync file(s) from %s into /workspace/workdir before the workflow starts\n", len(resolved.SyncBundle.Files), resolved.SyncBundle.ManifestPath); err != nil {
+				return err
+			}
+		}
 	}
 	if strings.TrimSpace(resolved.WorkflowPath) != "" {
 		if err := applyCodexSecret(ctx, resolved); err != nil {
@@ -130,6 +135,10 @@ func ResolveOptions(ctx context.Context, in io.Reader, out io.Writer, opts Optio
 	}
 	if strings.TrimSpace(opts.WorkflowPath) != "" {
 		opts.WorkflowPath, err = resolveLocalPath(opts.WorkflowPath)
+		if err != nil {
+			return Options{}, err
+		}
+		opts.SyncBundle, err = resolveSyncBundle(opts)
 		if err != nil {
 			return Options{}, err
 		}
@@ -301,7 +310,7 @@ func syncArtifacts(ctx context.Context, opts Options, manifests Manifests, podNa
 	if err := os.WriteFile(filepath.Join(targetDir, "job.log"), []byte(logs), 0o644); err != nil {
 		return "", err
 	}
-	syncPodName := trimK8sName("fabrik-sync-" + sanitizeName(opts.RunID))
+	syncPodName := buildSyncPodName(opts.RunID)
 	if _, err := runKubectl(ctx, opts, "", "-n", opts.Namespace, "delete", "pod", syncPodName, "--ignore-not-found"); err != nil {
 		return "", err
 	}
@@ -316,6 +325,9 @@ func syncArtifacts(ctx context.Context, opts Options, manifests Manifests, podNa
 	if _, err := runKubectl(ctx, opts, "", "-n", opts.Namespace, "wait", "--for=condition=Ready", "--timeout="+syncPodReadyTimeout.String(), "pod/"+syncPodName); err != nil {
 		return "", err
 	}
+	// Local post-run sync is intentionally artifact-focused. Repository history should be
+	// preserved through JJ/Git inside the workflow, while `.fabrik-sync` handles the small
+	// extra files that must be injected ahead of execution.
 	workdir := filepath.Join(targetDir, "workdir")
 	_ = os.RemoveAll(workdir)
 	if err := copyWorkdirFromPod(ctx, opts, syncPodName, workdir); err != nil {
@@ -447,3 +459,7 @@ func findRepoRoot() (string, error) {
 }
 
 func buildStartedAt() string { return time.Now().UTC().Format(time.RFC3339) }
+
+func buildSyncPodName(runID string) string {
+	return trimK8sName(fmt.Sprintf("fabrik-sync-%s-%d", sanitizeName(runID), time.Now().UTC().Unix()))
+}

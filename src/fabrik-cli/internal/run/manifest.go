@@ -14,6 +14,7 @@ type Manifests struct {
 	JobName        string
 	PVCName        string
 	WorkflowConfig string
+	SyncSecret     string
 	PVCYAML        string
 	JobYAML        string
 }
@@ -22,6 +23,9 @@ func (m Manifests) AllYAML() string {
 	parts := []string{}
 	if m.WorkflowConfig != "" {
 		parts = append(parts, m.WorkflowConfig)
+	}
+	if m.SyncSecret != "" {
+		parts = append(parts, m.SyncSecret)
 	}
 	parts = append(parts, m.PVCYAML, m.JobYAML)
 	return strings.Join(parts, "---\n")
@@ -72,6 +76,8 @@ func BuildManifests(opts Options) (Manifests, error) {
 
 	workflowConfigName := ""
 	workflowConfig := ""
+	syncSecretName := ""
+	syncSecret := ""
 	if strings.TrimSpace(opts.WorkflowPath) != "" {
 		source, err := os.ReadFile(opts.WorkflowPath)
 		if err != nil {
@@ -80,15 +86,21 @@ func BuildManifests(opts Options) (Manifests, error) {
 		workflowConfigName = trimK8sName("fabrik-workflow-" + safeRunID)
 		workflowConfig = buildWorkflowConfigMap(opts.Namespace, workflowConfigName, string(source))
 		annotations["fabrik.sh/workflow-path"] = opts.WorkflowPath
+		if opts.SyncBundle != nil {
+			syncSecretName = trimK8sName("fabrik-sync-" + safeRunID)
+			syncSecret = buildSyncSecret(opts.Namespace, syncSecretName, opts.SyncBundle)
+			annotations["fabrik.sh/fabrik-sync-path"] = opts.SyncBundle.ManifestPath
+		}
 	}
 
 	pvcYAML := buildPVCYAML(opts, pvcName, labels)
-	jobYAML := buildJobYAML(opts, jobName, pvcName, workflowConfigName, labels, annotations)
+	jobYAML := buildJobYAML(opts, jobName, pvcName, workflowConfigName, syncSecretName, labels, annotations)
 
 	return Manifests{
 		JobName:        jobName,
 		PVCName:        pvcName,
 		WorkflowConfig: workflowConfig,
+		SyncSecret:     syncSecret,
 		PVCYAML:        pvcYAML,
 		JobYAML:        jobYAML,
 	}, nil
@@ -114,7 +126,7 @@ func buildPVCYAML(opts Options, pvcName string, labels map[string]string) string
 	return b.String()
 }
 
-func buildJobYAML(opts Options, jobName, pvcName, workflowConfigName string, labels, annotations map[string]string) string {
+func buildJobYAML(opts Options, jobName, pvcName, workflowConfigName, syncSecretName string, labels, annotations map[string]string) string {
 	var b strings.Builder
 	b.WriteString("apiVersion: batch/v1\n")
 	b.WriteString("kind: Job\n")
@@ -141,7 +153,12 @@ func buildJobYAML(opts Options, jobName, pvcName, workflowConfigName string, lab
 	if strings.TrimSpace(opts.WorkflowPath) == "" {
 		b.WriteString("          command: [\"sh\", \"-lc\", " + yamlQuote(opts.JobCommand) + "]\n")
 	} else {
-		b.WriteString("          command: [\"sh\", \"-lc\", " + yamlQuote("mkdir -p /workspace/workdir/workflows /workspace/.smithers && exec /opt/smithers-runtime/run.sh") + "]\n")
+		bootstrap := "mkdir -p /workspace/workdir/workflows /workspace/.smithers"
+		if syncSecretName != "" {
+			bootstrap += " && if [ -f /opt/fabrik-sync/bundle.tgz ]; then tar -xzf /opt/fabrik-sync/bundle.tgz -C /workspace/workdir; fi"
+		}
+		bootstrap += " && exec /opt/smithers-runtime/run.sh"
+		b.WriteString("          command: [\"sh\", \"-lc\", " + yamlQuote(bootstrap) + "]\n")
 	}
 	b.WriteString("          env:\n")
 	b.WriteString("            - name: SMITHERS_RUN_ID\n")
@@ -177,6 +194,12 @@ func buildJobYAML(opts Options, jobName, pvcName, workflowConfigName string, lab
 		b.WriteString("              mountPath: /root/.codex/config.toml\n")
 		b.WriteString("              subPath: config.toml\n")
 		b.WriteString("              readOnly: true\n")
+		if syncSecretName != "" {
+			b.WriteString("            - name: fabrik-sync\n")
+			b.WriteString("              mountPath: /opt/fabrik-sync/bundle.tgz\n")
+			b.WriteString("              subPath: bundle.tgz\n")
+			b.WriteString("              readOnly: true\n")
+		}
 	}
 	b.WriteString("      volumes:\n")
 	b.WriteString("        - name: workspace\n")
@@ -190,6 +213,12 @@ func buildJobYAML(opts Options, jobName, pvcName, workflowConfigName string, lab
 		b.WriteString("          secret:\n")
 		b.WriteString("            secretName: codex-auth\n")
 		b.WriteString("            defaultMode: 0400\n")
+		if syncSecretName != "" {
+			b.WriteString("        - name: fabrik-sync\n")
+			b.WriteString("          secret:\n")
+			b.WriteString("            secretName: " + syncSecretName + "\n")
+			b.WriteString("            defaultMode: 0400\n")
+		}
 	}
 	return b.String()
 }
@@ -206,6 +235,19 @@ func buildWorkflowConfigMap(namespace, configMapName, workflowSource string) str
 	for _, line := range strings.Split(strings.ReplaceAll(workflowSource, "\r\n", "\n"), "\n") {
 		b.WriteString("    " + line + "\n")
 	}
+	return b.String()
+}
+
+func buildSyncSecret(namespace, secretName string, bundle *SyncBundle) string {
+	var b strings.Builder
+	b.WriteString("apiVersion: v1\n")
+	b.WriteString("kind: Secret\n")
+	b.WriteString("metadata:\n")
+	b.WriteString("  name: " + secretName + "\n")
+	b.WriteString("  namespace: " + namespace + "\n")
+	b.WriteString("type: Opaque\n")
+	b.WriteString("data:\n")
+	b.WriteString("  bundle.tgz: " + yamlQuote(bundle.ArchiveBase64) + "\n")
 	return b.String()
 }
 
