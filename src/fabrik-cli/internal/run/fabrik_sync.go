@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 )
 
@@ -57,7 +56,7 @@ func resolveSyncBundle(opts Options) (*SyncBundle, error) {
 	}
 
 	baseDir := filepath.Dir(resolvedPath)
-	files, err := expandSyncEntries(baseDir, entries)
+	files, err := collectSyncFiles(baseDir, entries)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +106,7 @@ func parseSyncManifest(path string) ([]string, error) {
 	return entries, nil
 }
 
-func expandSyncEntries(baseDir string, entries []string) ([]string, error) {
+func collectSyncFiles(baseDir string, entries []string) ([]string, error) {
 	seen := map[string]struct{}{}
 	var files []string
 
@@ -121,47 +120,7 @@ func expandSyncEntries(baseDir string, entries []string) ([]string, error) {
 			return nil, fmt.Errorf("symlinks are not allowed in .fabrik-sync: %s", entry)
 		}
 		if info.IsDir() {
-			err = filepath.WalkDir(absPath, func(path string, d os.DirEntry, walkErr error) error {
-				if walkErr != nil {
-					return walkErr
-				}
-				rel, err := filepath.Rel(baseDir, path)
-				if err != nil {
-					return err
-				}
-				rel = filepath.Clean(rel)
-				if rel == "." {
-					return nil
-				}
-				// Explicit entries for blocked trees fail validation up front. Nested blocked
-				// directories discovered during expansion are skipped so broad app/ entries can
-				// still include lightweight files without pulling VCS metadata or dependency trees.
-				if err := validateSyncRelativePath(rel); err != nil {
-					if d.IsDir() {
-						return filepath.SkipDir
-					}
-					return err
-				}
-				info, err := d.Info()
-				if err != nil {
-					return err
-				}
-				if info.Mode()&os.ModeSymlink != 0 {
-					return fmt.Errorf("symlinks are not allowed in .fabrik-sync: %s", rel)
-				}
-				if d.IsDir() {
-					return nil
-				}
-				if _, ok := seen[rel]; !ok {
-					files = append(files, rel)
-					seen[rel] = struct{}{}
-				}
-				return nil
-			})
-			if err != nil {
-				return nil, err
-			}
-			continue
+			return nil, fmt.Errorf("directories are not allowed in .fabrik-sync: %s", entry)
 		}
 		if _, ok := seen[entry]; !ok {
 			files = append(files, entry)
@@ -169,7 +128,6 @@ func expandSyncEntries(baseDir string, entries []string) ([]string, error) {
 		}
 	}
 
-	sort.Strings(files)
 	return files, nil
 }
 

@@ -61,6 +61,9 @@ func TestResolveSyncBundleIncludesAllowedFiles(t *testing.T) {
 	if len(bundle.Files) != 2 {
 		t.Fatalf("expected 2 files, got %d", len(bundle.Files))
 	}
+	if bundle.Files[0] != ".env.local" || bundle.Files[1] != "config/app.env" {
+		t.Fatalf("unexpected file list: %v", bundle.Files)
+	}
 
 	names := unpackArchiveNames(t, bundle.ArchiveBase64)
 	if !contains(names, ".env.local") || !contains(names, "config/app.env") {
@@ -125,82 +128,39 @@ func TestResolveSyncBundleRejectsTotalSizeOverflow(t *testing.T) {
 	}
 }
 
-func TestResolveSyncBundleRejectsDirectoryWithNodeModules(t *testing.T) {
+func TestResolveSyncBundleRejectsDirectoryEntry(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".fabrik-sync"), []byte("app\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, "app", "node_modules", "pkg"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "app"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "app", "node_modules", "pkg", "index.js"), []byte("bad\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "app", ".env.local"), []byte("ok=1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	bundle, err := resolveSyncBundle(Options{FabrikSyncFile: filepath.Join(dir, ".fabrik-sync")})
-	if err != nil {
-		t.Fatalf("expected success, got %v", err)
-	}
-	names := unpackArchiveNames(t, bundle.ArchiveBase64)
-	if contains(names, "app/node_modules/pkg/index.js") {
-		t.Fatalf("node_modules file should have been excluded, got %v", names)
-	}
-	if !contains(names, "app/.env.local") {
-		t.Fatalf("expected allowed file in archive, got %v", names)
+	_, err := resolveSyncBundle(Options{FabrikSyncFile: filepath.Join(dir, ".fabrik-sync")})
+	if err == nil || !strings.Contains(err.Error(), "directories are not allowed") {
+		t.Fatalf("expected directory rejection, got %v", err)
 	}
 }
 
-func TestResolveSyncBundleRejectsForbiddenExplicitDirectory(t *testing.T) {
+func TestResolveSyncBundleRejectsForbiddenExplicitPath(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".fabrik-sync"), []byte(".jj\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, ".jj"), 0o755); err != nil {
+	_, err := resolveSyncBundle(Options{FabrikSyncFile: filepath.Join(dir, ".fabrik-sync")})
+	if err == nil || !strings.Contains(err.Error(), "forbidden") {
+		t.Fatalf("expected forbidden path error, got %v", err)
+	}
+}
+
+func TestResolveSyncBundleRejectsNestedForbiddenPath(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".fabrik-sync"), []byte("app/.git/config\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, err := resolveSyncBundle(Options{FabrikSyncFile: filepath.Join(dir, ".fabrik-sync")})
 	if err == nil || !strings.Contains(err.Error(), "forbidden") {
-		t.Fatalf("expected forbidden directory error, got %v", err)
-	}
-}
-
-func TestResolveSyncBundleExcludesForbiddenNestedTrees(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".fabrik-sync"), []byte("app\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for _, forbiddenDir := range []string{".git", ".jj", ".next", "dist", "build"} {
-		if err := os.MkdirAll(filepath.Join(dir, "app", forbiddenDir, "nested"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "app", forbiddenDir, "nested", "blocked.txt"), []byte("blocked\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(dir, "app", "allowed.txt"), []byte("ok\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	bundle, err := resolveSyncBundle(Options{FabrikSyncFile: filepath.Join(dir, ".fabrik-sync")})
-	if err != nil {
-		t.Fatalf("expected success, got %v", err)
-	}
-	names := unpackArchiveNames(t, bundle.ArchiveBase64)
-	if !contains(names, "app/allowed.txt") {
-		t.Fatalf("expected allowed file in archive, got %v", names)
-	}
-	for _, blocked := range []string{
-		"app/.git/nested/blocked.txt",
-		"app/.jj/nested/blocked.txt",
-		"app/.next/nested/blocked.txt",
-		"app/dist/nested/blocked.txt",
-		"app/build/nested/blocked.txt",
-	} {
-		if contains(names, blocked) {
-			t.Fatalf("unexpected forbidden file %q in archive: %v", blocked, names)
-		}
+		t.Fatalf("expected forbidden nested path error, got %v", err)
 	}
 }
 

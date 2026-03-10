@@ -110,7 +110,7 @@ func confirmDispatch(ctx context.Context, in io.Reader, out io.Writer, opts Opti
 		reader := bufio.NewReader(in)
 		prompt := "Apply resources to the cluster? [y/N]: "
 		if strings.TrimSpace(opts.WorkflowPath) != "" && !opts.AcceptFilteredSync {
-			prompt = "Workflow artifact sync excludes .git/.jj. Preserve repo state via JJ/Git in the workflow and treat .fabrik-sync as the place for small extra files. Continue? [y/N]: "
+			prompt = "Workflow artifact sync excludes .git/.jj. Preserve repo state via JJ/Git in the workflow and use .fabrik-sync only for a few explicit local-only files. Continue? [y/N]: "
 		}
 		if _, err := fmt.Fprint(out, prompt); err != nil {
 			return false, err
@@ -126,7 +126,7 @@ func confirmDispatch(ctx context.Context, in io.Reader, out io.Writer, opts Opti
 	confirmed := false
 	title := "Apply resources to the cluster?"
 	if strings.TrimSpace(opts.WorkflowPath) != "" && !opts.AcceptFilteredSync {
-		title = "Workflow sync excludes .git/.jj. Preserve repo state via JJ/Git in the workflow and use .fabrik-sync for small extra files. Continue?"
+		title = "Workflow sync excludes .git/.jj. Preserve repo state via JJ/Git in the workflow and use .fabrik-sync only for a few explicit local-only files. Continue?"
 	}
 	form := huh.NewForm(
 		huh.NewGroup(

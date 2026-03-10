@@ -114,6 +114,15 @@ This maps to the workflow's existing `SMITHERS_JJ_REPO` / `SMITHERS_JJ_BOOKMARK`
 
 Workflow artifact sync is intentionally filtered.
 
+This is not a workspace sync feature.
+
+The source of truth for repository state should be:
+
+1. clone the repo inside the workflow with JJ/Git
+2. inject a few local-only files such as `.env.local`
+
+That means `.fabrik-sync` is a local secrets/config injection feature, not a way to mirror a local checkout into the cluster.
+
 What is excluded from local post-run artifact sync:
 
 - `.git`
@@ -135,7 +144,7 @@ Operator rule:
 Recommended pattern:
 
 1. use `--jj-repo` and `--jj-bookmark` so the workflow prepares a real repo in-cluster
-2. use `.fabrik-sync` as the manifest for small non-VCS files that need to be injected into the workspace, such as `.env.local`
+2. use `.fabrik-sync` as the manifest for a few small non-VCS files that need to be injected into the workspace, such as `.env.local`
 3. do not treat local post-run artifact sync as the source of truth for repository history
 
 Example `.fabrik-sync`:
@@ -149,6 +158,7 @@ config/app.env
 Rules enforced by the CLI:
 
 - entries are relative paths only
+- entries must be explicit file paths; directories are rejected
 - `.git`, `.jj`, `node_modules`, `.next`, `dist`, and `build` are blocked
 - symlinks are rejected
 - files larger than 256 KiB are rejected
@@ -158,7 +168,7 @@ When present, `.fabrik-sync` is bundled locally, mounted into the Job as a Secre
 
 Verification path used for this implementation:
 
-- unit tests cover allowed files, comments, nested directory expansion, blocked `.git` / `.jj` / `node_modules` / `.next` / `dist` / `build`, absolute paths, parent traversal, symlinks, per-file size overflow, and total-size overflow
+- unit tests cover allowed files, comments, blocked `.git` / `.jj` / `node_modules` / `.next` / `dist` / `build`, absolute paths, parent traversal, directory rejection, symlinks, per-file size overflow, and total-size overflow
 - render tests verify the Secret mount and bootstrap extraction command
 - live smoke tests dispatch the sample workflow to `k3d-dev-single` and `k3d-dev-multi`, then verify the injected files exist in the synced artifacts while blocked trees remain excluded
 
