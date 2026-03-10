@@ -33,3 +33,19 @@ func TestValidateOptionsAcceptsDigest(t *testing.T) {
 		t.Fatalf("expected success, got error: %v", err)
 	}
 }
+
+func TestValidateOptionsAcceptsPinnedTag(t *testing.T) {
+	opts := Options{
+		RunID:       "r1",
+		SpecPath:    "specs/a.yaml",
+		Project:     "demo",
+		Image:       "repo/image:v1.2.3",
+		Namespace:   "fabrik-runs",
+		PVCSize:     "1Gi",
+		JobCommand:  "echo hi",
+		WaitTimeout: "5m",
+	}
+	if err := validateOptions(opts); err != nil {
+		t.Fatalf("expected success, got error: %v", err)
+	}
+}

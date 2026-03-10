@@ -34,7 +34,7 @@ func promptForMissing(ctx context.Context, in io.Reader, out io.Writer, opts Opt
 			return Options{}, err
 		}
 	}
-	if strings.TrimSpace(opts.Image) == "" {
+	if strings.TrimSpace(opts.Image) == "" && strings.TrimSpace(opts.WorkflowPath) == "" {
 		opts.Image, err = promptHuh(ctx, "Image", "")
 		if err != nil {
 			return Options{}, err
@@ -70,7 +70,7 @@ func promptForMissingTestMode(in io.Reader, out io.Writer, opts Options) (Option
 			return Options{}, err
 		}
 	}
-	if strings.TrimSpace(opts.Image) == "" {
+	if strings.TrimSpace(opts.Image) == "" && strings.TrimSpace(opts.WorkflowPath) == "" {
 		opts.Image, err = promptLine(reader, out, "Image")
 		if err != nil {
 			return Options{}, err

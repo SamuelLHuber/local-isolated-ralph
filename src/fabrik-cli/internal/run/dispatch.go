@@ -87,6 +87,9 @@ func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opt
 	if err != nil {
 		return err
 	}
+	if err := patchCompletedRunMetadata(ctx, resolved, manifests.JobName, podName); err != nil {
+		return err
+	}
 
 	syncDir, err := syncArtifacts(ctx, resolved, manifests, podName)
 	if err != nil {
@@ -109,6 +112,12 @@ func ResolveOptions(ctx context.Context, in io.Reader, out io.Writer, opts Optio
 		opts.WorkflowPath, err = resolveLocalPath(opts.WorkflowPath)
 		if err != nil {
 			return Options{}, err
+		}
+		if strings.TrimSpace(opts.Image) == "" {
+			opts.Image, err = resolveDefaultWorkflowImage(ctx)
+			if err != nil {
+				return Options{}, err
+			}
 		}
 	}
 	if err := validateOptions(opts); err != nil {
@@ -182,6 +191,48 @@ func patchPVCOwnerReference(ctx context.Context, opts Options, jobName, pvcName 
 	}
 
 	_, err = runKubectl(ctx, opts, "", "-n", opts.Namespace, "patch", "pvc", pvcName, "--type=merge", "-p", string(payload))
+	return err
+}
+
+func patchCompletedRunMetadata(ctx context.Context, opts Options, jobName, podName string) error {
+	finishedAt := buildStartedAt()
+	statusJSON, err := json.Marshal(map[string]any{
+		"phase":        "complete",
+		"current_task": "done",
+		"attempt":      1,
+		"progress": map[string]int{
+			"finished": 1,
+			"total":    1,
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	progressJSON := `{"finished":1,"total":1}`
+	patch, err := json.Marshal(map[string]any{
+		"metadata": map[string]any{
+			"labels": map[string]string{
+				"fabrik.sh/phase":  "complete",
+				"fabrik.sh/status": "finished",
+				"fabrik.sh/task":   "done",
+			},
+			"annotations": map[string]string{
+				"fabrik.sh/status":      string(statusJSON),
+				"fabrik.sh/finished-at": finishedAt,
+				"fabrik.sh/outcome":     "succeeded",
+				"fabrik.sh/progress":    progressJSON,
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	if _, err := runKubectl(ctx, opts, "", "-n", opts.Namespace, "patch", "job", jobName, "--type=merge", "-p", string(patch)); err != nil {
+		return err
+	}
+	_, err = runKubectl(ctx, opts, "", "-n", opts.Namespace, "patch", "pod", podName, "--type=merge", "-p", string(patch))
 	return err
 }
 
