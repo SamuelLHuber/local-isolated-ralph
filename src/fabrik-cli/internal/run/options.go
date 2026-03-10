@@ -19,6 +19,8 @@ type Options struct {
 	Image              string
 	WorkflowPath       string
 	InputJSON          string
+	FabrikSyncFile     string
+	SyncBundle         *SyncBundle
 	JJRepo             string
 	JJBookmark         string
 	StorageClass       string

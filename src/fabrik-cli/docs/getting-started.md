@@ -135,8 +135,32 @@ Operator rule:
 Recommended pattern:
 
 1. use `--jj-repo` and `--jj-bookmark` so the workflow prepares a real repo in-cluster
-2. treat a future `.fabrik-sync` file as the manifest for small non-VCS files that need to be injected into the workspace, such as `.env.local`
+2. use `.fabrik-sync` as the manifest for small non-VCS files that need to be injected into the workspace, such as `.env.local`
 3. do not treat local post-run artifact sync as the source of truth for repository history
+
+Example `.fabrik-sync`:
+
+```text
+# small files only
+.env.local
+config/app.env
+```
+
+Rules enforced by the CLI:
+
+- entries are relative paths only
+- `.git`, `.jj`, `node_modules`, `.next`, `dist`, and `build` are blocked
+- symlinks are rejected
+- files larger than 256 KiB are rejected
+- total injected content larger than 1 MiB is rejected
+
+When present, `.fabrik-sync` is bundled locally, mounted into the Job as a Secret, and extracted into `/workspace/workdir` before the workflow starts. You can override the manifest location with `--fabrik-sync-file`.
+
+Verification path used for this implementation:
+
+- unit tests cover allowed files, comments, nested directory expansion, blocked `.git` / `.jj` / `node_modules` / `.next` / `dist` / `build`, absolute paths, parent traversal, symlinks, per-file size overflow, and total-size overflow
+- render tests verify the Secret mount and bootstrap extraction command
+- live smoke tests dispatch the sample workflow to `k3d-dev-single` and `k3d-dev-multi`, then verify the injected files exist in the synced artifacts while blocked trees remain excluded
 
 ## Design Rules
 
