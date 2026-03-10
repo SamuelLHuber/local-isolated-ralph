@@ -13,6 +13,21 @@ import (
 	"time"
 )
 
+const (
+	syncPodReadyTimeout = 120 * time.Second
+	syncCopyTimeout     = 2 * time.Minute
+	syncCleanupTimeout  = 15 * time.Second
+)
+
+var syncWorkdirExcludes = []string{
+	"node_modules",
+	".git",
+	".jj",
+	".next",
+	"dist",
+	"build",
+}
+
 func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opts Options) error {
 	resolved, err := ResolveOptions(ctx, stdin, stdout, opts)
 	if err != nil {
@@ -289,35 +304,120 @@ func syncArtifacts(ctx context.Context, opts Options, manifests Manifests, podNa
 		return "", err
 	}
 	defer func() {
-		_, _ = runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "pod", syncPodName, "--ignore-not-found")
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), syncCleanupTimeout)
+		defer cancel()
+		_, _ = runKubectl(cleanupCtx, opts, "", "-n", opts.Namespace, "delete", "pod", syncPodName, "--ignore-not-found", "--wait=false")
 	}()
-	if _, err := runKubectl(ctx, opts, "", "-n", opts.Namespace, "wait", "--for=condition=Ready", "--timeout=120s", "pod/"+syncPodName); err != nil {
+	if _, err := runKubectl(ctx, opts, "", "-n", opts.Namespace, "wait", "--for=condition=Ready", "--timeout="+syncPodReadyTimeout.String(), "pod/"+syncPodName); err != nil {
 		return "", err
 	}
 	workdir := filepath.Join(targetDir, "workdir")
 	_ = os.RemoveAll(workdir)
+	if err := copyWorkdirFromPod(ctx, opts, syncPodName, workdir); err != nil {
+		return "", err
+	}
+	stateDB := filepath.Join(targetDir, "state.db")
+	exists, err := podFileExists(ctx, opts, syncPodName, "/workspace/.smithers/state.db")
+	if err != nil {
+		return "", err
+	}
+	if exists {
+		if err := kubectlCopy(ctx, opts, syncPodName+":/workspace/.smithers/state.db", stateDB); err != nil {
+			return "", err
+		}
+	}
+	return targetDir, nil
+}
+
+func kubectlCopy(ctx context.Context, opts Options, source, destination string) error {
+	copyCtx, cancel := context.WithTimeout(ctx, syncCopyTimeout)
+	defer cancel()
+
 	cpArgs := []string{}
 	if strings.TrimSpace(opts.KubeContext) != "" {
 		cpArgs = append(cpArgs, "--context", opts.KubeContext)
 	}
-	cpArgs = append(cpArgs, "-n", opts.Namespace, "cp", syncPodName+":/workspace/workdir", workdir)
-	cpCmd := exec.CommandContext(ctx, "kubectl", cpArgs...)
+	cpArgs = append(cpArgs, "-n", opts.Namespace, "cp", source, destination)
+	cpCmd := exec.CommandContext(copyCtx, "kubectl", cpArgs...)
 	cpOut, err := cpCmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("kubectl %s failed: %w\n%s", strings.Join(cpArgs, " "), err, strings.TrimSpace(string(cpOut)))
+		return fmt.Errorf("kubectl %s failed: %w\n%s", strings.Join(cpArgs, " "), err, strings.TrimSpace(string(cpOut)))
 	}
-	stateDB := filepath.Join(targetDir, "state.db")
-	cpArgs = cpArgs[:0]
+	return nil
+}
+
+func copyWorkdirFromPod(ctx context.Context, opts Options, podName, destination string) error {
+	copyCtx, cancel := context.WithTimeout(ctx, syncCopyTimeout)
+	defer cancel()
+
+	if err := os.MkdirAll(destination, 0o755); err != nil {
+		return err
+	}
+
+	args := []string{}
 	if strings.TrimSpace(opts.KubeContext) != "" {
-		cpArgs = append(cpArgs, "--context", opts.KubeContext)
+		args = append(args, "--context", opts.KubeContext)
 	}
-	cpArgs = append(cpArgs, "-n", opts.Namespace, "cp", syncPodName+":/workspace/.smithers/state.db", stateDB)
-	cpCmd = exec.CommandContext(ctx, "kubectl", cpArgs...)
-	cpOut, err = cpCmd.CombinedOutput()
-	if err != nil && !bytes.Contains(cpOut, []byte("No such file")) {
-		return "", fmt.Errorf("kubectl %s failed: %w\n%s", strings.Join(cpArgs, " "), err, strings.TrimSpace(string(cpOut)))
+	args = append(args, "-n", opts.Namespace, "exec", podName, "--", "tar", "-C", "/workspace/workdir")
+	for _, pattern := range syncWorkdirExcludes {
+		args = append(args, "--exclude="+pattern)
 	}
-	return targetDir, nil
+	args = append(args, "-cf", "-", ".")
+
+	sourceCmd := exec.CommandContext(copyCtx, "kubectl", args...)
+	sourceStdout, err := sourceCmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	var sourceStderr bytes.Buffer
+	sourceCmd.Stderr = &sourceStderr
+
+	extractCmd := exec.CommandContext(copyCtx, "tar", "-xf", "-", "-C", destination)
+	extractCmd.Stdin = sourceStdout
+	var extractStderr bytes.Buffer
+	extractCmd.Stderr = &extractStderr
+
+	if err := extractCmd.Start(); err != nil {
+		return err
+	}
+	if err := sourceCmd.Start(); err != nil {
+		_ = extractCmd.Process.Kill()
+		_ = extractCmd.Wait()
+		return err
+	}
+
+	sourceErr := sourceCmd.Wait()
+	extractErr := extractCmd.Wait()
+	if sourceErr != nil {
+		return fmt.Errorf("kubectl %s failed: %w\n%s", strings.Join(args, " "), sourceErr, strings.TrimSpace(sourceStderr.String()))
+	}
+	if extractErr != nil {
+		return fmt.Errorf("tar extract into %s failed: %w\n%s", destination, extractErr, strings.TrimSpace(extractStderr.String()))
+	}
+	return nil
+}
+
+func podFileExists(ctx context.Context, opts Options, podName, filePath string) (bool, error) {
+	execCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	args := []string{}
+	if strings.TrimSpace(opts.KubeContext) != "" {
+		args = append(args, "--context", opts.KubeContext)
+	}
+	args = append(args, "-n", opts.Namespace, "exec", podName, "--", "test", "-f", filePath)
+
+	cmd := exec.CommandContext(execCtx, "kubectl", args...)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return true, nil
+	}
+
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+
+	return false, fmt.Errorf("kubectl %s failed: %w\n%s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 }
 
 func findRepoRoot() (string, error) {
