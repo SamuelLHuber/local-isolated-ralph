@@ -30,6 +30,11 @@ func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opt
 	}
 
 	if resolved.DryRun {
+		if strings.TrimSpace(resolved.WorkflowPath) != "" {
+			if err := applyCodexSecret(ctx, resolved); err != nil {
+				return err
+			}
+		}
 		out, err := runKubectl(ctx, resolved, manifests.AllYAML(), "apply", "--dry-run=client", "-o", "yaml", "-f", "-")
 		if err != nil {
 			return err
@@ -50,6 +55,11 @@ func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opt
 
 	if _, err := io.WriteString(stdout, manifests.Summary()); err != nil {
 		return err
+	}
+	if strings.TrimSpace(resolved.WorkflowPath) != "" {
+		if err := applyCodexSecret(ctx, resolved); err != nil {
+			return err
+		}
 	}
 
 	if _, err := runKubectl(ctx, resolved, manifests.AllYAML(), "apply", "-f", "-"); err != nil {
@@ -95,6 +105,12 @@ func ResolveOptions(ctx context.Context, in io.Reader, out io.Writer, opts Optio
 			return Options{}, err
 		}
 	}
+	if strings.TrimSpace(opts.WorkflowPath) != "" {
+		opts.WorkflowPath, err = resolveLocalPath(opts.WorkflowPath)
+		if err != nil {
+			return Options{}, err
+		}
+	}
 	if err := validateOptions(opts); err != nil {
 		return Options{}, err
 	}
@@ -118,6 +134,40 @@ func runKubectl(ctx context.Context, opts Options, stdin string, args ...string)
 		return "", fmt.Errorf("kubectl %s failed: %w\n%s", strings.Join(cmdArgs, " "), err, strings.TrimSpace(string(out)))
 	}
 	return string(out), nil
+}
+
+func applyCodexSecret(ctx context.Context, opts Options) error {
+	authFile := filepath.Join(os.Getenv("HOME"), ".codex", "auth.json")
+	configFile := filepath.Join(os.Getenv("HOME"), ".codex", "config.toml")
+
+	if _, err := os.Stat(authFile); err != nil {
+		return fmt.Errorf("missing codex auth file %s: %w", authFile, err)
+	}
+	if _, err := os.Stat(configFile); err != nil {
+		return fmt.Errorf("missing codex config file %s: %w", configFile, err)
+	}
+
+	cmdArgs := []string{}
+	if strings.TrimSpace(opts.KubeContext) != "" {
+		cmdArgs = append(cmdArgs, "--context", opts.KubeContext)
+	}
+	cmdArgs = append(cmdArgs,
+		"-n", opts.Namespace,
+		"create", "secret", "generic", "codex-auth",
+		"--from-file=auth.json="+authFile,
+		"--from-file=config.toml="+configFile,
+		"--dry-run=client",
+		"-o", "yaml",
+	)
+
+	cmd := exec.CommandContext(ctx, "kubectl", cmdArgs...)
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("kubectl %s failed: %w", strings.Join(cmdArgs, " "), err)
+	}
+
+	_, err = runKubectl(ctx, opts, string(out), "apply", "-f", "-")
+	return err
 }
 
 func patchPVCOwnerReference(ctx context.Context, opts Options, jobName, pvcName string) error { /* unchanged */
@@ -187,7 +237,9 @@ func syncArtifacts(ctx context.Context, opts Options, manifests Manifests, podNa
 	if _, err := runKubectl(ctx, opts, buildSyncPodYAML(opts.Namespace, syncPodName, manifests.PVCName), "apply", "-f", "-"); err != nil {
 		return "", err
 	}
-	defer func() { _, _ = runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "pod", syncPodName, "--ignore-not-found") }()
+	defer func() {
+		_, _ = runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "pod", syncPodName, "--ignore-not-found")
+	}()
 	if _, err := runKubectl(ctx, opts, "", "-n", opts.Namespace, "wait", "--for=condition=Ready", "--timeout=120s", "pod/"+syncPodName); err != nil {
 		return "", err
 	}

@@ -3,7 +3,9 @@ package run
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -15,6 +17,8 @@ type Options struct {
 	SpecPath       string
 	Project        string
 	Image          string
+	WorkflowPath   string
+	InputJSON      string
 	StorageClass   string
 	JobCommand     string
 	Namespace      string
@@ -56,8 +60,16 @@ func validateOptions(opts Options) error {
 	if strings.TrimSpace(opts.PVCSize) == "" {
 		return errors.New("missing required flag: --pvc-size")
 	}
-	if strings.TrimSpace(opts.JobCommand) == "" && !opts.RenderOnly && !opts.DryRun {
+	if strings.TrimSpace(opts.JobCommand) == "" && strings.TrimSpace(opts.WorkflowPath) == "" && !opts.RenderOnly && !opts.DryRun {
 		return errors.New("missing required flag: --job-command")
+	}
+	if strings.TrimSpace(opts.WorkflowPath) != "" {
+		if _, err := os.Stat(opts.WorkflowPath); err != nil {
+			return fmt.Errorf("failed to read workflow path %q: %w", opts.WorkflowPath, err)
+		}
+		if strings.TrimSpace(opts.InputJSON) == "" {
+			return errors.New("missing required flag: --input-json when --workflow-path is set")
+		}
 	}
 	if strings.TrimSpace(opts.WaitTimeout) == "" {
 		return errors.New("missing required flag: --wait-timeout")
@@ -127,4 +139,22 @@ func validateKubeContext(contextName string) error {
 	}
 
 	return nil
+}
+
+func resolveLocalPath(path string) (string, error) {
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+	if _, err := os.Stat(path); err == nil {
+		return filepath.Abs(path)
+	}
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		return "", err
+	}
+	candidate := filepath.Join(repoRoot, path)
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate, nil
+	}
+	return filepath.Abs(path)
 }
