@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -16,9 +17,32 @@ const (
 	defaultWorkflowImageEnv  = "FABRIK_SMITHERS_IMAGE"
 )
 
+var manifestAcceptHeader = strings.Join([]string{
+	"application/vnd.oci.image.index.v1+json",
+	"application/vnd.docker.distribution.manifest.list.v2+json",
+	"application/vnd.oci.image.manifest.v1+json",
+	"application/vnd.docker.distribution.manifest.v2+json",
+}, ", ")
+
+var resolveImmutableImage = resolveImmutableImageReference
+
 type ghcrTokenResponse struct {
 	Token       string `json:"token"`
 	AccessToken string `json:"access_token"`
+}
+
+type parsedImageReference struct {
+	RegistryHost      string
+	CanonicalRegistry string
+	Repository        string
+	Reference         string
+	Scheme            string
+}
+
+type bearerChallenge struct {
+	Realm   string
+	Service string
+	Scope   string
 }
 
 func resolveDefaultWorkflowImage(ctx context.Context) (string, error) {
@@ -97,39 +121,11 @@ func defaultOriginBranchTag(ctx context.Context) (string, error) {
 }
 
 func resolveGHCRDigest(ctx context.Context, repository, tag string) (string, error) {
-	token, err := resolveGHCRToken(ctx, repository)
-	if err != nil {
-		return "", err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, "https://ghcr.io/v2/"+repository+"/manifests/"+tag, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to create GHCR manifest request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", strings.Join([]string{
-		"application/vnd.oci.image.index.v1+json",
-		"application/vnd.docker.distribution.manifest.list.v2+json",
-		"application/vnd.oci.image.manifest.v1+json",
-		"application/vnd.docker.distribution.manifest.v2+json",
-	}, ", "))
-
-	resp, err := http.DefaultClient.Do(req)
+	resolved, err := resolveImmutableImageReference(ctx, "ghcr.io/"+repository+":"+tag)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve GHCR digest for %s:%s: %w", repository, tag, err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("failed to resolve GHCR digest for %s:%s: registry returned %s", repository, tag, resp.Status)
-	}
-
-	digest := strings.TrimSpace(resp.Header.Get("Docker-Content-Digest"))
-	if digest == "" {
-		return "", fmt.Errorf("failed to resolve GHCR digest for %s:%s: missing Docker-Content-Digest header", repository, tag)
-	}
-
-	return "ghcr.io/" + repository + "@" + digest, nil
+	return resolved, nil
 }
 
 func resolveGHCRToken(ctx context.Context, repository string) (string, error) {
@@ -164,6 +160,228 @@ func resolveGHCRToken(ctx context.Context, repository string) (string, error) {
 	}
 	if token == "" {
 		return "", fmt.Errorf("GHCR token response for %s did not include a token", repository)
+	}
+
+	return token, nil
+}
+
+func resolveImmutableImageReference(ctx context.Context, image string) (string, error) {
+	if isImmutableImageReference(image) {
+		return image, nil
+	}
+
+	ref, err := parseImageReference(image)
+	if err != nil {
+		return "", err
+	}
+
+	digest, err := resolveRegistryDigest(ctx, http.DefaultClient, ref)
+	if err != nil {
+		return "", err
+	}
+
+	return ref.CanonicalRegistry + "/" + ref.Repository + "@" + digest, nil
+}
+
+func parseImageReference(image string) (parsedImageReference, error) {
+	trimmed := strings.TrimSpace(image)
+	if trimmed == "" {
+		return parsedImageReference{}, fmt.Errorf("image reference is empty")
+	}
+	if strings.Contains(trimmed, "@") {
+		return parsedImageReference{}, fmt.Errorf("image reference %q is already immutable", image)
+	}
+
+	namePart := trimmed
+	tag := "latest"
+	lastSlash := strings.LastIndex(namePart, "/")
+	lastColon := strings.LastIndex(namePart, ":")
+	if lastColon > lastSlash {
+		namePart = namePart[:lastColon]
+		tag = namePartOrDefault(trimmed[lastColon+1:], "latest")
+	}
+
+	registryHost := ""
+	repository := namePart
+	firstSlash := strings.Index(namePart, "/")
+	if firstSlash == -1 {
+		registryHost = "registry-1.docker.io"
+		repository = "library/" + namePart
+	} else {
+		firstComponent := namePart[:firstSlash]
+		if strings.Contains(firstComponent, ".") || strings.Contains(firstComponent, ":") || firstComponent == "localhost" {
+			registryHost = firstComponent
+			repository = namePart[firstSlash+1:]
+		} else {
+			registryHost = "registry-1.docker.io"
+			repository = namePart
+		}
+	}
+	if registryHost == "registry-1.docker.io" && !strings.Contains(repository, "/") {
+		repository = "library/" + repository
+	}
+	if strings.TrimSpace(repository) == "" {
+		return parsedImageReference{}, fmt.Errorf("image reference %q is missing a repository", image)
+	}
+
+	canonicalRegistry := registryHost
+	if registryHost == "registry-1.docker.io" {
+		canonicalRegistry = "docker.io"
+	}
+
+	return parsedImageReference{
+		RegistryHost:      registryHost,
+		CanonicalRegistry: canonicalRegistry,
+		Repository:        repository,
+		Reference:         tag,
+		Scheme:            registryScheme(registryHost),
+	}, nil
+}
+
+func namePartOrDefault(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func registryScheme(host string) string {
+	if host == "localhost" || strings.HasPrefix(host, "localhost:") || strings.HasPrefix(host, "127.0.0.1:") || host == "127.0.0.1" {
+		return "http"
+	}
+	return "https"
+}
+
+func resolveRegistryDigest(ctx context.Context, client *http.Client, ref parsedImageReference) (string, error) {
+	manifestURL := fmt.Sprintf("%s://%s/v2/%s/manifests/%s", ref.Scheme, ref.RegistryHost, ref.Repository, ref.Reference)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, manifestURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create manifest request for %s/%s:%s: %w", ref.CanonicalRegistry, ref.Repository, ref.Reference, err)
+	}
+	req.Header.Set("Accept", manifestAcceptHeader)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve digest for %s/%s:%s: %w", ref.CanonicalRegistry, ref.Repository, ref.Reference, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		challenge, parseErr := parseBearerChallenge(resp.Header.Get("Www-Authenticate"))
+		if parseErr != nil {
+			return "", fmt.Errorf("failed to resolve digest for %s/%s:%s: registry requires auth but challenge could not be parsed: %w", ref.CanonicalRegistry, ref.Repository, ref.Reference, parseErr)
+		}
+		token, tokenErr := requestBearerToken(ctx, client, challenge)
+		if tokenErr != nil {
+			return "", fmt.Errorf("failed to resolve digest for %s/%s:%s: %w", ref.CanonicalRegistry, ref.Repository, ref.Reference, tokenErr)
+		}
+
+		retryReq, err := http.NewRequestWithContext(ctx, http.MethodHead, manifestURL, nil)
+		if err != nil {
+			return "", fmt.Errorf("failed to create authenticated manifest request for %s/%s:%s: %w", ref.CanonicalRegistry, ref.Repository, ref.Reference, err)
+		}
+		retryReq.Header.Set("Accept", manifestAcceptHeader)
+		retryReq.Header.Set("Authorization", "Bearer "+token)
+
+		retryResp, err := client.Do(retryReq)
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve digest for %s/%s:%s: %w", ref.CanonicalRegistry, ref.Repository, ref.Reference, err)
+		}
+		defer retryResp.Body.Close()
+		resp = retryResp
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to resolve digest for %s/%s:%s: registry returned %s", ref.CanonicalRegistry, ref.Repository, ref.Reference, resp.Status)
+	}
+
+	digest := strings.TrimSpace(resp.Header.Get("Docker-Content-Digest"))
+	if digest == "" {
+		return "", fmt.Errorf("failed to resolve digest for %s/%s:%s: missing Docker-Content-Digest header", ref.CanonicalRegistry, ref.Repository, ref.Reference)
+	}
+	return digest, nil
+}
+
+func parseBearerChallenge(header string) (bearerChallenge, error) {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return bearerChallenge{}, fmt.Errorf("missing Www-Authenticate header")
+	}
+	if !strings.HasPrefix(strings.ToLower(header), "bearer ") {
+		return bearerChallenge{}, fmt.Errorf("unsupported auth challenge %q", header)
+	}
+
+	attrs := map[string]string{}
+	for _, part := range strings.Split(header[len("Bearer "):], ",") {
+		piece := strings.TrimSpace(part)
+		if piece == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(piece, "=")
+		if !ok {
+			return bearerChallenge{}, fmt.Errorf("invalid auth challenge attribute %q", piece)
+		}
+		unquoted, err := strconv.Unquote(value)
+		if err != nil {
+			return bearerChallenge{}, fmt.Errorf("invalid auth challenge value %q: %w", value, err)
+		}
+		attrs[strings.ToLower(strings.TrimSpace(key))] = unquoted
+	}
+
+	realm := strings.TrimSpace(attrs["realm"])
+	if realm == "" {
+		return bearerChallenge{}, fmt.Errorf("auth challenge missing realm")
+	}
+
+	return bearerChallenge{
+		Realm:   realm,
+		Service: strings.TrimSpace(attrs["service"]),
+		Scope:   strings.TrimSpace(attrs["scope"]),
+	}, nil
+}
+
+func requestBearerToken(ctx context.Context, client *http.Client, challenge bearerChallenge) (string, error) {
+	tokenURL, err := url.Parse(challenge.Realm)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse token realm %q: %w", challenge.Realm, err)
+	}
+
+	query := tokenURL.Query()
+	if challenge.Service != "" {
+		query.Set("service", challenge.Service)
+	}
+	if challenge.Scope != "" {
+		query.Set("scope", challenge.Scope)
+	}
+	tokenURL.RawQuery = query.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tokenURL.String(), nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create token request: %w", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to request registry token: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("registry token request returned %s", resp.Status)
+	}
+
+	var payload ghcrTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", fmt.Errorf("failed to decode registry token response: %w", err)
+	}
+
+	token := strings.TrimSpace(payload.Token)
+	if token == "" {
+		token = strings.TrimSpace(payload.AccessToken)
+	}
+	if token == "" {
+		return "", fmt.Errorf("registry token response did not include a token")
 	}
 
 	return token, nil

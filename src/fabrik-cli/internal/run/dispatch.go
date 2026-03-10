@@ -21,6 +21,9 @@ const (
 
 var syncWorkdirExcludes = []string{
 	"node_modules",
+	".next",
+	"dist",
+	"build",
 	".git",
 	".jj",
 }
@@ -43,7 +46,7 @@ func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opt
 
 	if resolved.DryRun {
 		if strings.TrimSpace(resolved.WorkflowPath) != "" {
-			if err := applyCodexSecret(ctx, resolved); err != nil {
+			if _, _, err := ensureCodexAuthFilesExist(); err != nil {
 				return err
 			}
 		}
@@ -96,7 +99,11 @@ func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opt
 	}
 
 	if !resolved.Wait {
-		_, err := fmt.Fprintf(stdout, "dispatched job %s in namespace %s\n", manifests.JobName, resolved.Namespace)
+		podName, phase, err := verifyDispatchedJob(ctx, resolved, manifests.JobName)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, "dispatched job %s in namespace %s\npod: %s\nphase: %s\n", manifests.JobName, resolved.Namespace, podName, phase)
 		return err
 	}
 
@@ -149,6 +156,12 @@ func ResolveOptions(ctx context.Context, in io.Reader, out io.Writer, opts Optio
 			}
 		}
 	}
+	if !opts.RenderOnly && !opts.DryRun && !isImmutableImageReference(opts.Image) {
+		opts.Image, err = resolveImmutableImage(ctx, opts.Image)
+		if err != nil {
+			return Options{}, fmt.Errorf("resolve immutable image for dispatch: %w", err)
+		}
+	}
 	if err := validateOptions(opts); err != nil {
 		return Options{}, err
 	}
@@ -175,14 +188,9 @@ func runKubectl(ctx context.Context, opts Options, stdin string, args ...string)
 }
 
 func applyCodexSecret(ctx context.Context, opts Options) error {
-	authFile := filepath.Join(os.Getenv("HOME"), ".codex", "auth.json")
-	configFile := filepath.Join(os.Getenv("HOME"), ".codex", "config.toml")
-
-	if _, err := os.Stat(authFile); err != nil {
-		return fmt.Errorf("missing codex auth file %s: %w", authFile, err)
-	}
-	if _, err := os.Stat(configFile); err != nil {
-		return fmt.Errorf("missing codex config file %s: %w", configFile, err)
+	authFile, configFile, err := ensureCodexAuthFilesExist()
+	if err != nil {
+		return err
 	}
 
 	cmdArgs := []string{}
@@ -206,6 +214,20 @@ func applyCodexSecret(ctx context.Context, opts Options) error {
 
 	_, err = runKubectl(ctx, opts, string(out), "apply", "-f", "-")
 	return err
+}
+
+func ensureCodexAuthFilesExist() (string, string, error) {
+	authFile := filepath.Join(os.Getenv("HOME"), ".codex", "auth.json")
+	configFile := filepath.Join(os.Getenv("HOME"), ".codex", "config.toml")
+
+	if _, err := os.Stat(authFile); err != nil {
+		return "", "", fmt.Errorf("missing codex auth file %s: %w", authFile, err)
+	}
+	if _, err := os.Stat(configFile); err != nil {
+		return "", "", fmt.Errorf("missing codex config file %s: %w", configFile, err)
+	}
+
+	return authFile, configFile, nil
 }
 
 func patchPVCOwnerReference(ctx context.Context, opts Options, jobName, pvcName string) error { /* unchanged */
@@ -275,6 +297,43 @@ func handleWaitFailure(ctx context.Context, stderr io.Writer, opts Options, jobN
 	return waitErr
 }
 
+func verifyDispatchedJob(ctx context.Context, opts Options, jobName string) (string, string, error) {
+	verifyTimeout := dispatchVerificationTimeout(opts.WaitTimeout)
+	verifyCtx, cancel := context.WithTimeout(ctx, verifyTimeout)
+	defer cancel()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	var lastErr error
+	for {
+		podName, err := getJobPodName(verifyCtx, opts, jobName)
+		if err == nil {
+			phase, phaseErr := getPodPhase(verifyCtx, opts, podName)
+			if phaseErr != nil {
+				lastErr = phaseErr
+			} else {
+				switch phase {
+				case "Pending", "Running", "Succeeded":
+					return podName, phase, nil
+				case "Failed":
+					return "", "", fmt.Errorf("job %s started but pod %s entered Failed phase", jobName, podName)
+				default:
+					lastErr = fmt.Errorf("job %s pod %s is in unexpected phase %q", jobName, podName, phase)
+				}
+			}
+		} else {
+			lastErr = err
+		}
+
+		select {
+		case <-verifyCtx.Done():
+			return "", "", fmt.Errorf("job %s did not reach a started state within %s: %w", jobName, verifyTimeout, lastErr)
+		case <-ticker.C:
+		}
+	}
+}
+
 func getJobPodName(ctx context.Context, opts Options, jobName string) (string, error) { /* unchanged */
 	out, err := runKubectl(ctx, opts, "", "-n", opts.Namespace, "get", "pods", "-l", "job-name="+jobName, "-o", "jsonpath={.items[0].metadata.name}")
 	if err != nil {
@@ -285,6 +344,30 @@ func getJobPodName(ctx context.Context, opts Options, jobName string) (string, e
 		return "", fmt.Errorf("failed to resolve pod for job %s", jobName)
 	}
 	return podName, nil
+}
+
+func getPodPhase(ctx context.Context, opts Options, podName string) (string, error) {
+	out, err := runKubectl(ctx, opts, "", "-n", opts.Namespace, "get", "pod", podName, "-o", "jsonpath={.status.phase}")
+	if err != nil {
+		return "", err
+	}
+	phase := strings.TrimSpace(out)
+	if phase == "" {
+		return "", fmt.Errorf("failed to resolve phase for pod %s", podName)
+	}
+	return phase, nil
+}
+
+func dispatchVerificationTimeout(waitTimeout string) time.Duration {
+	maximum := 30 * time.Second
+	parsed, err := time.ParseDuration(waitTimeout)
+	if err != nil || parsed <= 0 {
+		return maximum
+	}
+	if parsed < maximum {
+		return parsed
+	}
+	return maximum
 }
 
 func syncArtifacts(ctx context.Context, opts Options, manifests Manifests, podName string) (string, error) { /* unchanged */

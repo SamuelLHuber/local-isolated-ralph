@@ -206,7 +206,7 @@ The first slice should:
 5. set PVC owner references for TTL cleanup
 6. wait for completion
 7. save logs locally
-8. sync artifacts back to `k8s/job-sync/<run-id>/`
+8. optionally wait for completion and sync artifacts back to `k8s/job-sync/<run-id>/`
 
 The first slice should not try to implement every spec at once.
 
@@ -374,8 +374,9 @@ For local cluster verification with `k3d`:
 4. run CLI checks manually when needed:
    - `go run . run --render ...`
    - `go run . run --dry-run ...`
+   - `go run . run ...`
    - `go run . run ... --wait`
-5. verify artifacts under `k8s/job-sync/<run-id>/`
+5. verify artifacts under `k8s/job-sync/<run-id>/` only for `--wait` flows
 
 ## Implementation Guidance
 

@@ -12,7 +12,7 @@ func newRunCommand(runMode string) *cobra.Command {
 		PVCSize:      "10Gi",
 		PreClean:     true,
 		Interactive:  true,
-		Wait:         true,
+		Wait:         false,
 		WaitTimeout:  "5m",
 		JobCommand:   run.DefaultJobCommand(),
 		OutputSubdir: "k8s/job-sync",
@@ -23,12 +23,14 @@ func newRunCommand(runMode string) *cobra.Command {
 		Use:   "run",
 		Short: "Dispatch a Fabrik run to Kubernetes",
 		Long: "Dispatch a Fabrik run to Kubernetes.\n\n" +
-			"The first implementation targets local k3d development and mirrors " +
-			"the current run-and-sync workflow while we migrate it into Go.\n\n" +
-			"Workflow runs sync logs and filtered artifacts back locally. VCS metadata " +
-			"such as .git and .jj is intentionally excluded from artifact sync; preserve " +
-			"repo state via JJ/Git inside the workflow prepare step, and use " +
-			".fabrik-sync only for a few explicit local-only files such as .env.local.",
+			"The default live behavior applies the PVC and Job, verifies that the Job " +
+			"has started on the cluster, and then returns. Use --wait when you need " +
+			"completion tracking and local artifact sync.\n\n" +
+			"Workflow runs sync logs and filtered artifacts back locally only when " +
+			"--wait is enabled. VCS metadata such as .git and .jj is intentionally " +
+			"excluded from artifact sync; preserve repo state via JJ/Git inside the " +
+			"workflow prepare step, and use .fabrik-sync only for a few explicit " +
+			"local-only files such as .env.local.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.NonInteractive = !opts.Interactive
 			return run.Execute(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr(), opts)
@@ -53,7 +55,7 @@ func newRunCommand(runMode string) *cobra.Command {
 	flags.StringVar(&opts.WaitTimeout, "wait-timeout", opts.WaitTimeout, "Maximum time to wait for job completion")
 	flags.StringVar(&opts.OutputSubdir, "output-subdir", opts.OutputSubdir, "Artifact output directory relative to the repo root")
 	flags.BoolVar(&opts.PreClean, "pre-clean", opts.PreClean, "Clean the mounted workdir before starting")
-	flags.BoolVar(&opts.Wait, "wait", opts.Wait, "Wait for job completion and sync artifacts")
+	flags.BoolVar(&opts.Wait, "wait", opts.Wait, "Wait for job completion and sync artifacts back locally")
 	flags.BoolVar(&opts.AcceptFilteredSync, "accept-filtered-sync", false, "Acknowledge that workflow artifact sync excludes .git and .jj, and that repo state should come from JJ/Git in the workflow while .fabrik-sync is only for a few local-only files")
 	flags.BoolVar(&opts.Interactive, "interactive", opts.Interactive, "Prompt for missing values")
 	flags.BoolVar(&opts.RenderOnly, "render", false, "Render resources without applying them")
