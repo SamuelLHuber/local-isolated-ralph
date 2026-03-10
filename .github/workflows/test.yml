@@ -22,13 +22,13 @@ jobs:
         run: bun install
       
       - name: Run workflow compile tests
-        run: bun test src/fabrik/__tests__/workflow-compile.test.ts
+        run: bun test ./src/fabrik/__tests__/workflow-compile.test.ts
       
       - name: Run markdown spec tests
-        run: bun test src/fabrik/__tests__/markdown-spec.test.ts
+        run: bun test ./src/fabrik/__tests__/markdown-spec.test.ts
       
       - name: Run learning system tests
-        run: bun test src/fabrik/__tests__/learning.test.ts
+        run: bun test ./src/fabrik/__tests__/learning.test.ts
       
       - name: Verify build
         run: bun run build
