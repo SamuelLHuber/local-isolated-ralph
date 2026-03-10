@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-func Execute(ctx context.Context, stdout, stderr io.Writer, opts Options) error {
-	resolved, err := ResolveOptions(ctx, opts)
+func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opts Options) error {
+	resolved, err := ResolveOptions(ctx, stdin, stdout, opts)
 	if err != nil {
 		return err
 	}
@@ -39,7 +39,7 @@ func Execute(ctx context.Context, stdout, stderr io.Writer, opts Options) error 
 	}
 
 	if resolved.Interactive {
-		ok, err := confirmDispatch()
+		ok, err := confirmDispatch(ctx, stdin, stdout, resolved)
 		if err != nil {
 			return err
 		}
@@ -87,7 +87,21 @@ func Execute(ctx context.Context, stdout, stderr io.Writer, opts Options) error 
 	return err
 }
 
-func runKubectl(ctx context.Context, opts Options, stdin string, args ...string) (string, error) {
+func ResolveOptions(ctx context.Context, in io.Reader, out io.Writer, opts Options) (Options, error) {
+	var err error
+	if opts.Interactive {
+		opts, err = promptForMissing(ctx, in, out, opts)
+		if err != nil {
+			return Options{}, err
+		}
+	}
+	if err := validateOptions(opts); err != nil {
+		return Options{}, err
+	}
+	return opts, nil
+}
+
+func runKubectl(ctx context.Context, opts Options, stdin string, args ...string) (string, error) { /* unchanged */
 	cmdArgs := make([]string, 0, len(args)+2)
 	if strings.TrimSpace(opts.KubeContext) != "" {
 		cmdArgs = append(cmdArgs, "--context", opts.KubeContext)
@@ -103,28 +117,16 @@ func runKubectl(ctx context.Context, opts Options, stdin string, args ...string)
 	if err != nil {
 		return "", fmt.Errorf("kubectl %s failed: %w\n%s", strings.Join(cmdArgs, " "), err, strings.TrimSpace(string(out)))
 	}
-
 	return string(out), nil
 }
 
-func patchPVCOwnerReference(ctx context.Context, opts Options, jobName, pvcName string) error {
+func patchPVCOwnerReference(ctx context.Context, opts Options, jobName, pvcName string) error { /* unchanged */
 	jobUID, err := runKubectl(ctx, opts, "", "-n", opts.Namespace, "get", "job", jobName, "-o", "jsonpath={.metadata.uid}")
 	if err != nil {
 		return err
 	}
 
-	payload, err := json.Marshal(map[string]any{
-		"metadata": map[string]any{
-			"ownerReferences": []map[string]string{
-				{
-					"apiVersion": "batch/v1",
-					"kind":       "Job",
-					"name":       jobName,
-					"uid":        strings.TrimSpace(jobUID),
-				},
-			},
-		},
-	})
+	payload, err := json.Marshal(map[string]any{"metadata": map[string]any{"ownerReferences": []map[string]string{{"apiVersion": "batch/v1", "kind": "Job", "name": jobName, "uid": strings.TrimSpace(jobUID)}}}})
 	if err != nil {
 		return err
 	}
@@ -140,43 +142,37 @@ func handleWaitFailure(ctx context.Context, stderr io.Writer, opts Options, jobN
 			fmt.Fprintf(stderr, "recent logs for %s:\n%s\n", podName, logs)
 		}
 	}
-
 	return waitErr
 }
 
-func getJobPodName(ctx context.Context, opts Options, jobName string) (string, error) {
+func getJobPodName(ctx context.Context, opts Options, jobName string) (string, error) { /* unchanged */
 	out, err := runKubectl(ctx, opts, "", "-n", opts.Namespace, "get", "pods", "-l", "job-name="+jobName, "-o", "jsonpath={.items[0].metadata.name}")
 	if err != nil {
 		return "", err
 	}
-
 	podName := strings.TrimSpace(out)
 	if podName == "" {
 		return "", fmt.Errorf("failed to resolve pod for job %s", jobName)
 	}
-
 	return podName, nil
 }
 
-func syncArtifacts(ctx context.Context, opts Options, manifests Manifests, podName string) (string, error) {
+func syncArtifacts(ctx context.Context, opts Options, manifests Manifests, podName string) (string, error) { /* unchanged */
 	repoRoot, err := findRepoRoot()
 	if err != nil {
 		return "", err
 	}
-
 	safeRunID := sanitizeName(opts.RunID)
 	targetDir := filepath.Join(repoRoot, opts.OutputSubdir, safeRunID)
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
 		return "", err
 	}
-
 	if err := os.WriteFile(filepath.Join(targetDir, "run-id.txt"), []byte(opts.RunID+"\n"), 0o644); err != nil {
 		return "", err
 	}
 	if err := os.WriteFile(filepath.Join(targetDir, "manifests.yaml"), []byte(manifests.AllYAML()), 0o644); err != nil {
 		return "", err
 	}
-
 	logs, err := runKubectl(ctx, opts, "", "-n", opts.Namespace, "logs", podName)
 	if err != nil {
 		return "", err
@@ -184,7 +180,6 @@ func syncArtifacts(ctx context.Context, opts Options, manifests Manifests, podNa
 	if err := os.WriteFile(filepath.Join(targetDir, "job.log"), []byte(logs), 0o644); err != nil {
 		return "", err
 	}
-
 	syncPodName := trimK8sName("fabrik-sync-" + sanitizeName(opts.RunID))
 	if _, err := runKubectl(ctx, opts, "", "-n", opts.Namespace, "delete", "pod", syncPodName, "--ignore-not-found"); err != nil {
 		return "", err
@@ -192,28 +187,22 @@ func syncArtifacts(ctx context.Context, opts Options, manifests Manifests, podNa
 	if _, err := runKubectl(ctx, opts, buildSyncPodYAML(opts.Namespace, syncPodName, manifests.PVCName), "apply", "-f", "-"); err != nil {
 		return "", err
 	}
-	defer func() {
-		_, _ = runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "pod", syncPodName, "--ignore-not-found")
-	}()
+	defer func() { _, _ = runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "pod", syncPodName, "--ignore-not-found") }()
 	if _, err := runKubectl(ctx, opts, "", "-n", opts.Namespace, "wait", "--for=condition=Ready", "--timeout=120s", "pod/"+syncPodName); err != nil {
 		return "", err
 	}
-
 	workdir := filepath.Join(targetDir, "workdir")
 	_ = os.RemoveAll(workdir)
-
 	cpArgs := []string{}
 	if strings.TrimSpace(opts.KubeContext) != "" {
 		cpArgs = append(cpArgs, "--context", opts.KubeContext)
 	}
 	cpArgs = append(cpArgs, "-n", opts.Namespace, "cp", syncPodName+":/workspace/workdir", workdir)
-
 	cpCmd := exec.CommandContext(ctx, "kubectl", cpArgs...)
 	cpOut, err := cpCmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("kubectl %s failed: %w\n%s", strings.Join(cpArgs, " "), err, strings.TrimSpace(string(cpOut)))
 	}
-
 	stateDB := filepath.Join(targetDir, "state.db")
 	cpArgs = cpArgs[:0]
 	if strings.TrimSpace(opts.KubeContext) != "" {
@@ -225,7 +214,6 @@ func syncArtifacts(ctx context.Context, opts Options, manifests Manifests, podNa
 	if err != nil && !bytes.Contains(cpOut, []byte("No such file")) {
 		return "", fmt.Errorf("kubectl %s failed: %w\n%s", strings.Join(cpArgs, " "), err, strings.TrimSpace(string(cpOut)))
 	}
-
 	return targetDir, nil
 }
 
@@ -234,13 +222,11 @@ func findRepoRoot() (string, error) {
 	if err != nil {
 		return "", err
 	}
-
 	current := wd
 	for {
 		if stat, err := os.Stat(filepath.Join(current, ".git")); err == nil && stat != nil {
 			return current, nil
 		}
-
 		parent := filepath.Dir(current)
 		if parent == current {
 			return "", fmt.Errorf("failed to locate repo root from %s", wd)
@@ -249,6 +235,4 @@ func findRepoRoot() (string, error) {
 	}
 }
 
-func buildStartedAt() string {
-	return time.Now().UTC().Format(time.RFC3339)
-}
+func buildStartedAt() string { return time.Now().UTC().Format(time.RFC3339) }

@@ -180,6 +180,90 @@ We should build validation into the CLI early:
 
 This lets us verify spec alignment before we rely on a live cluster every time.
 
+## Testing and Verification
+
+Testing needs to cover both command behavior and interactive terminal behavior.
+
+### Required test layers
+
+1. Unit tests for pure logic:
+   - input and flag validation
+   - image reference and digest checks
+   - manifest rendering defaults and metadata
+2. Command tests for Cobra handlers:
+   - expected stdout/stderr/help output
+   - required flag handling in non-interactive mode
+   - error paths without mutating cluster state
+3. Interactive TUI tests for prompt flows:
+   - keyboard navigation and selection behavior
+   - confirmation/cancel paths
+   - validation messages and retry loops
+4. Integration verification against local `k3d`:
+   - `fabrik run` end-to-end happy path
+   - `--render` and `--dry-run` safety workflows
+   - artifact sync outputs and expected files
+
+### Microsoft TUI test library
+
+For interactive terminal verification we use Microsoft's TUI testing approach:
+
+- repository: `https://github.com/microsoft/tui-test`
+- purpose: deterministic terminal interaction tests (keypresses, rendered frames, assertions)
+- current implementation note: the library does not currently expose a stable Go module path/version for this repository, so we mirror the same testing model with deterministic injected terminal IO in Go tests until an importable pinned module is available.
+
+When a stable Go module path is published, add it as a pinned development dependency in `src/fabrik-cli/go.mod` (no floating versions).
+
+### Wiring requirements for proper TUI testing
+
+To make the CLI testable with `tui-test`, we should wire the command runtime so tests can inject terminal IO and environment safely:
+
+- keep `main.go` minimal (process wiring only)
+- expose callable command/app constructors from packages under `cmd/` and `internal/`
+- pass `io.Reader` / `io.Writer` dependencies instead of hard-coding `os.Stdin` / `os.Stdout`
+- isolate prompt orchestration in `internal/prompts/` behind testable interfaces
+- make terminal size, color, and animation behavior configurable for deterministic tests
+- disable or stub spinner timing/animation in test mode
+
+A practical target shape is:
+
+- `cmd/`: returns configured Cobra commands usable by both `main.go` and tests
+- `internal/prompts/`: wraps Charm interactions and can be driven by TUI tests
+- `internal/...`: business logic invoked by commands without terminal coupling
+
+### Verification checklist before merging
+
+- `go test ./...` passes locally
+- interactive flows have deterministic tests using the Microsoft `tui-test` testing model (currently implemented via injected IO harnessing in Go)
+- non-interactive command paths are covered without prompts
+- `--render` and `--dry-run` behaviors are asserted
+- local `k3d` smoke checks confirm real-cluster compatibility
+
+### Invariant assertions with this test approach
+
+This pipeline lets us assert critical Fabrik invariants at multiple layers:
+
+- immutable images are required (`latest` rejected, digest references accepted)
+- project IDs remain DNS-1123 compliant
+- render mode emits deterministic Kubernetes YAML without mutation
+- dry-run mode validates through Kubernetes client-side checks
+- interactive confirmation can cancel dispatch deterministically
+- command output contracts stay stable for operator workflows and CI parsing
+
+For local cluster verification with `k3d`:
+
+1. create/verify cluster:
+   - `scripts/k3d/cluster.sh create single dev`
+   - `scripts/k3d/cluster.sh verify single dev`
+2. run unit + command tests:
+   - `go test ./...`
+3. run env-gated `k3d` integration test layer:
+   - `FABRIK_K3D_E2E=1 go test ./internal/run -run TestK3dRenderAndDryRun -v`
+4. run CLI checks manually when needed:
+   - `go run . run --render ...`
+   - `go run . run --dry-run ...`
+   - `go run . run ... --wait`
+5. verify artifacts under `k8s/job-sync/<run-id>/`
+
 ## Implementation Guidance
 
 When building commands in this module:

@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newRunCommand() *cobra.Command {
+func newRunCommand(runMode string) *cobra.Command {
 	opts := run.Options{
 		Namespace:    "fabrik-runs",
 		PVCSize:      "10Gi",
@@ -16,6 +16,7 @@ func newRunCommand() *cobra.Command {
 		WaitTimeout:  "5m",
 		JobCommand:   run.DefaultJobCommand(),
 		OutputSubdir: "k8s/job-sync",
+		RunMode:      runMode,
 	}
 
 	cmd := &cobra.Command{
@@ -26,7 +27,7 @@ func newRunCommand() *cobra.Command {
 			"the current run-and-sync workflow while we migrate it into Go.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.NonInteractive = !opts.Interactive
-			return run.Execute(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), opts)
+			return run.Execute(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr(), opts)
 		},
 	}
 
