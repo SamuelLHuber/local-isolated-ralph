@@ -20,3 +20,14 @@
   - why the change was needed,
   - what goal the change is trying to achieve,
   - and what behavior or workflow is being improved or protected.
+
+## Verification and Testing Policy
+- Every new feature and every code change must be fully verified and tested before commit.
+- Verification must be layered and principled:
+  - fast deterministic unit/command tests first,
+  - invariant-focused behavior assertions second,
+  - local k3d integration verification for Kubernetes behavior when applicable.
+- For `src/fabrik-cli`, required baseline before merging:
+  - `make verify-cli` (or equivalent `go test ./...` in `src/fabrik-cli`),
+  - k3d-gated integration verification for cluster-affecting changes (`make verify-cli-k3d`).
+- Do not merge changes that bypass or weaken invariant checks (immutable image refs, non-interactive safety, render/dry-run guarantees).
