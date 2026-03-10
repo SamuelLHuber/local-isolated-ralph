@@ -15,7 +15,7 @@ import (
 
 const (
 	syncPodReadyTimeout = 120 * time.Second
-	syncCopyTimeout     = 2 * time.Minute
+	syncCopyTimeout     = 10 * time.Minute
 	syncCleanupTimeout  = 15 * time.Second
 )
 
@@ -23,9 +23,6 @@ var syncWorkdirExcludes = []string{
 	"node_modules",
 	".git",
 	".jj",
-	".next",
-	"dist",
-	"build",
 }
 
 func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opts Options) error {
@@ -66,10 +63,18 @@ func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opt
 		if !ok {
 			return fmt.Errorf("dispatch cancelled")
 		}
+		if strings.TrimSpace(resolved.WorkflowPath) != "" {
+			resolved.AcceptFilteredSync = true
+		}
 	}
 
 	if _, err := io.WriteString(stdout, manifests.Summary()); err != nil {
 		return err
+	}
+	if strings.TrimSpace(resolved.WorkflowPath) != "" {
+		if _, err := fmt.Fprintln(stderr, "note: workflow artifact sync excludes .git/.jj; preserve repo state via JJ/Git in the workflow prepare step, and treat .fabrik-sync as the place for small extra files such as .env.local"); err != nil {
+			return err
+		}
 	}
 	if strings.TrimSpace(resolved.WorkflowPath) != "" {
 		if err := applyCodexSecret(ctx, resolved); err != nil {
@@ -358,6 +363,9 @@ func copyWorkdirFromPod(ctx context.Context, opts Options, podName, destination 
 	if strings.TrimSpace(opts.KubeContext) != "" {
 		args = append(args, "--context", opts.KubeContext)
 	}
+	// Artifact sync is intentionally filtered: .git/.jj are not a reliable thing to round-trip
+	// through the Kubernetes API stream. Preserve repository state via JJ/Git inside the workflow,
+	// and reserve future .fabrik-sync support for small non-VCS files that must be injected.
 	args = append(args, "-n", opts.Namespace, "exec", podName, "--", "tar", "-C", "/workspace/workdir")
 	for _, pattern := range syncWorkdirExcludes {
 		args = append(args, "--exclude="+pattern)

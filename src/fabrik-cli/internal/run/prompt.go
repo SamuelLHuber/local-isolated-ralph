@@ -108,7 +108,11 @@ func promptHuh(ctx context.Context, label, value string) (string, error) {
 func confirmDispatch(ctx context.Context, in io.Reader, out io.Writer, opts Options) (bool, error) {
 	if opts.RunMode == "test" {
 		reader := bufio.NewReader(in)
-		if _, err := fmt.Fprint(out, "Apply resources to the cluster? [y/N]: "); err != nil {
+		prompt := "Apply resources to the cluster? [y/N]: "
+		if strings.TrimSpace(opts.WorkflowPath) != "" && !opts.AcceptFilteredSync {
+			prompt = "Workflow artifact sync excludes .git/.jj. Preserve repo state via JJ/Git in the workflow and treat .fabrik-sync as the place for small extra files. Continue? [y/N]: "
+		}
+		if _, err := fmt.Fprint(out, prompt); err != nil {
 			return false, err
 		}
 		line, err := reader.ReadString('\n')
@@ -120,10 +124,14 @@ func confirmDispatch(ctx context.Context, in io.Reader, out io.Writer, opts Opti
 	}
 
 	confirmed := false
+	title := "Apply resources to the cluster?"
+	if strings.TrimSpace(opts.WorkflowPath) != "" && !opts.AcceptFilteredSync {
+		title = "Workflow sync excludes .git/.jj. Preserve repo state via JJ/Git in the workflow and use .fabrik-sync for small extra files. Continue?"
+	}
 	form := huh.NewForm(
 		huh.NewGroup(
 			huh.NewConfirm().
-				Title("Apply resources to the cluster?").
+				Title(title).
 				Affirmative("Dispatch").
 				Negative("Cancel").
 				Value(&confirmed),

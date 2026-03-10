@@ -153,6 +153,14 @@ func buildJobYAML(opts Options, jobName, pvcName, workflowConfigName string, lab
 	if strings.TrimSpace(opts.WorkflowPath) != "" {
 		b.WriteString("            - name: SMITHERS_INPUT_JSON\n")
 		b.WriteString("              value: " + yamlQuote(opts.InputJSON) + "\n")
+		if strings.TrimSpace(opts.JJRepo) != "" {
+			b.WriteString("            - name: SMITHERS_JJ_REPO\n")
+			b.WriteString("              value: " + yamlQuote(opts.JJRepo) + "\n")
+		}
+		if strings.TrimSpace(opts.JJBookmark) != "" {
+			b.WriteString("            - name: SMITHERS_JJ_BOOKMARK\n")
+			b.WriteString("              value: " + yamlQuote(opts.JJBookmark) + "\n")
+		}
 	}
 	b.WriteString("          volumeMounts:\n")
 	b.WriteString("            - name: workspace\n")

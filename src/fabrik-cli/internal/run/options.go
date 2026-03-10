@@ -13,26 +13,29 @@ import (
 var projectIDPattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
 type Options struct {
-	RunID          string
-	SpecPath       string
-	Project        string
-	Image          string
-	WorkflowPath   string
-	InputJSON      string
-	StorageClass   string
-	JobCommand     string
-	Namespace      string
-	KubeContext    string
-	PVCSize        string
-	OutputSubdir   string
-	WaitTimeout    string
-	RunMode        string
-	PreClean       bool
-	Wait           bool
-	RenderOnly     bool
-	DryRun         bool
-	Interactive    bool
-	NonInteractive bool
+	RunID              string
+	SpecPath           string
+	Project            string
+	Image              string
+	WorkflowPath       string
+	InputJSON          string
+	JJRepo             string
+	JJBookmark         string
+	StorageClass       string
+	JobCommand         string
+	Namespace          string
+	KubeContext        string
+	PVCSize            string
+	OutputSubdir       string
+	WaitTimeout        string
+	RunMode            string
+	PreClean           bool
+	Wait               bool
+	RenderOnly         bool
+	DryRun             bool
+	AcceptFilteredSync bool
+	Interactive        bool
+	NonInteractive     bool
 }
 
 func validateOptions(opts Options) error {
@@ -70,6 +73,9 @@ func validateOptions(opts Options) error {
 		if strings.TrimSpace(opts.InputJSON) == "" {
 			return errors.New("missing required flag: --input-json when --workflow-path is set")
 		}
+		if !opts.RenderOnly && !opts.DryRun && !opts.AcceptFilteredSync && !opts.Interactive {
+			return errors.New("workflow dispatch requires explicit acknowledgement of filtered artifact sync: pass --accept-filtered-sync or run interactively")
+		}
 	}
 	if strings.TrimSpace(opts.WaitTimeout) == "" {
 		return errors.New("missing required flag: --wait-timeout")
@@ -102,7 +108,7 @@ func isImmutableImageReference(image string) bool {
 
 func (opts Options) Summary() string {
 	return fmt.Sprintf(
-		"run draft\n  run-id: %s\n  spec: %s\n  project: %s\n  image: %s\n  namespace: %s\n  context: %s\n  pvc-size: %s\n  pre-clean: %t",
+		"run draft\n  run-id: %s\n  spec: %s\n  project: %s\n  image: %s\n  namespace: %s\n  context: %s\n  pvc-size: %s\n  pre-clean: %t\n  jj-repo: %s\n  jj-bookmark: %s",
 		opts.RunID,
 		opts.SpecPath,
 		opts.Project,
@@ -111,6 +117,8 @@ func (opts Options) Summary() string {
 		emptyDefault(opts.KubeContext, "<current>"),
 		opts.PVCSize,
 		opts.PreClean,
+		emptyDefault(opts.JJRepo, "<none>"),
+		emptyDefault(opts.JJBookmark, "<none>"),
 	)
 }
 
