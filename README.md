@@ -36,8 +36,8 @@ For local testing use [k3d](https://k3d.io).
 Create the single node k3s cluster with k3d locally
 
 ```bash
-scripts/k3d/cluster.sh create single dev
-scripts/k3d/cluster.sh verify single dev
+scripts/k3d/cluster.sh create single dev-single
+scripts/k3d/cluster.sh verify single dev-single
 ```
 
 ### Multi Node
@@ -45,19 +45,24 @@ scripts/k3d/cluster.sh verify single dev
 Create the multi-node k3s cluster (1 server + 2 agents)
 
 ```bash
-scripts/k3d/cluster.sh create multi dev
-scripts/k3d/cluster.sh verify multi dev
+scripts/k3d/cluster.sh create multi dev-multi
+scripts/k3d/cluster.sh verify multi dev-multi
 ```
 
 then check it works with 
 
 ```
-kubectl --context k3d-dev cluster-info
-kubectl --context k3d-dev get nodes
+k3d kubeconfig get dev-multi > /tmp/fabrik-dev-multi.kubeconfig
+KUBECONFIG=/tmp/fabrik-dev-multi.kubeconfig kubectl cluster-info
+KUBECONFIG=/tmp/fabrik-dev-multi.kubeconfig kubectl get nodes
 ```
 
 To clean up
 
 ```
-scripts/k3d/cluster.sh delete dev
+scripts/k3d/cluster.sh delete dev-single
+scripts/k3d/cluster.sh delete dev-multi
 ```
+
+If you omit the cluster name, `single` defaults to `dev-single` and `multi` defaults to `dev-multi`.
+The default registry ports are `5111` for `single` and `5112` for `multi`, so both example clusters can run at the same time.
