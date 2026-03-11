@@ -22,6 +22,7 @@ func TestK3dRenderAndDryRun(t *testing.T) {
 	if _, err := exec.LookPath("kubectl"); err != nil {
 		t.Skip("kubectl not available")
 	}
+	configureDefaultK3dCluster(t)
 
 	repoRoot, err := findRepoRoot()
 	if err != nil {
@@ -76,6 +77,7 @@ func TestK3dCronSchedulesCommandAndWorkflowJobs(t *testing.T) {
 	if _, err := exec.LookPath("kubectl"); err != nil {
 		t.Skip("kubectl not available")
 	}
+	contextName := configureDefaultK3dCluster(t)
 
 	repoRoot, err := findRepoRoot()
 	if err != nil {
@@ -98,7 +100,7 @@ func TestK3dCronSchedulesCommandAndWorkflowJobs(t *testing.T) {
 
 	opts := Options{
 		Namespace:   "fabrik-runs",
-		KubeContext: currentK3dContext(t),
+		KubeContext: contextName,
 		PVCSize:     "1Gi",
 		WaitTimeout: "90s",
 		Interactive: false,
@@ -169,13 +171,13 @@ func TestK3dCronSchedulesCommandAndWorkflowJobs(t *testing.T) {
 	assertEphemeralWorkspacePVC(t, opts, workflowPodName)
 	assertProjectEnvInjectionOnJob(t, opts, workflowJobName, project, environment)
 
-	workflowConfigMap := trimK8sName("fabrik-workflow-" + sanitizeName(workflowRunID))
-	configName, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "get", "job", workflowJobName, "-o", "jsonpath={.spec.template.spec.volumes[2].configMap.name}")
+	workflowSecret := trimK8sName("fabrik-workflow-" + sanitizeName(workflowRunID))
+	configName, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "get", "job", workflowJobName, "-o", "jsonpath={.spec.template.spec.volumes[?(@.name==\"workflow\")].secret.secretName}")
 	if err != nil {
-		t.Fatalf("resolve workflow config map from child job: %v", err)
+		t.Fatalf("resolve workflow secret from child job: %v", err)
 	}
-	if strings.TrimSpace(configName) != workflowConfigMap {
-		t.Fatalf("expected workflow child job to reference configmap %s, got %q", workflowConfigMap, strings.TrimSpace(configName))
+	if strings.TrimSpace(configName) != workflowSecret {
+		t.Fatalf("expected workflow child job to reference secret %s, got %q", workflowSecret, strings.TrimSpace(configName))
 	}
 }
 
@@ -187,6 +189,7 @@ func TestK3dRunInjectsProjectEnvForCommandAndWorkflow(t *testing.T) {
 	if _, err := exec.LookPath("kubectl"); err != nil {
 		t.Skip("kubectl not available")
 	}
+	contextName := configureDefaultK3dCluster(t)
 
 	repoRoot, err := findRepoRoot()
 	if err != nil {
@@ -205,7 +208,7 @@ func TestK3dRunInjectsProjectEnvForCommandAndWorkflow(t *testing.T) {
 
 	opts := Options{
 		Namespace:   "fabrik-runs",
-		KubeContext: currentK3dContext(t),
+		KubeContext: contextName,
 		PVCSize:     "1Gi",
 		WaitTimeout: "90s",
 		Interactive: false,
@@ -344,8 +347,19 @@ func TestK3dWorkflowDispatchWithEnvFileAndGitHubRepoAcrossNamedClusters(t *testi
 	}
 }
 
-func currentK3dContext(t *testing.T) string {
+func configureDefaultK3dCluster(t *testing.T) string {
 	t.Helper()
+
+	if _, err := exec.LookPath("k3d"); err != nil {
+		t.Skip("k3d not available")
+	}
+
+	clusterName := strings.TrimSpace(os.Getenv("FABRIK_K3D_CLUSTER"))
+	if clusterName == "" {
+		clusterName = "dev-single"
+	}
+	kubeconfigPath := writeK3dKubeconfig(t, clusterName)
+	t.Setenv("KUBECONFIG", kubeconfigPath)
 
 	out, err := exec.Command("kubectl", "config", "current-context").Output()
 	if err != nil {
@@ -364,15 +378,15 @@ func cleanupCronRun(t *testing.T, opts Options, runID string) {
 	t.Helper()
 
 	cronJobName := trimK8sName("fabrik-cron-" + sanitizeName(runID))
-	workflowConfigName := trimK8sName("fabrik-workflow-" + sanitizeName(runID))
+	workflowSecretName := trimK8sName("fabrik-workflow-" + sanitizeName(runID))
 	if _, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "cronjob", cronJobName, "--ignore-not-found"); err != nil {
 		t.Fatalf("delete cronjob %s: %v", cronJobName, err)
 	}
 	if _, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "jobs", "-l", "fabrik.sh/run-id="+runID, "--ignore-not-found"); err != nil {
 		t.Fatalf("delete cron child jobs for %s: %v", runID, err)
 	}
-	if _, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "configmap", workflowConfigName, "--ignore-not-found"); err != nil {
-		t.Fatalf("delete workflow configmap %s: %v", workflowConfigName, err)
+	if _, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "secret", workflowSecretName, "--ignore-not-found"); err != nil {
+		t.Fatalf("delete workflow secret %s: %v", workflowSecretName, err)
 	}
 }
 
@@ -381,15 +395,15 @@ func cleanupJobRun(t *testing.T, opts Options, runID string) {
 
 	jobName := trimK8sName("fabrik-" + sanitizeName(runID))
 	pvcName := trimK8sName("data-fabrik-" + sanitizeName(runID))
-	workflowConfigName := trimK8sName("fabrik-workflow-" + sanitizeName(runID))
+	workflowSecretName := trimK8sName("fabrik-workflow-" + sanitizeName(runID))
 	if _, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "job", jobName, "--ignore-not-found"); err != nil {
 		t.Fatalf("delete job %s: %v", jobName, err)
 	}
 	if _, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "pvc", pvcName, "--ignore-not-found"); err != nil {
 		t.Fatalf("delete pvc %s: %v", pvcName, err)
 	}
-	if _, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "configmap", workflowConfigName, "--ignore-not-found"); err != nil {
-		t.Fatalf("delete workflow configmap %s: %v", workflowConfigName, err)
+	if _, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "secret", workflowSecretName, "--ignore-not-found"); err != nil {
+		t.Fatalf("delete workflow secret %s: %v", workflowSecretName, err)
 	}
 }
 
