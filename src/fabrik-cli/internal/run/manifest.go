@@ -14,6 +14,9 @@ type Manifests struct {
 	JobName        string
 	CronJobName    string
 	PVCName        string
+	ServiceAccount string
+	RoleYAML       string
+	RoleBindingYAML string
 	WorkflowSecret string
 	SyncSecret     string
 	PVCYAML        string
@@ -28,6 +31,15 @@ func (m Manifests) AllYAML() string {
 	}
 	if m.SyncSecret != "" {
 		parts = append(parts, m.SyncSecret)
+	}
+	if m.ServiceAccount != "" {
+		parts = append(parts, m.ServiceAccount)
+	}
+	if m.RoleYAML != "" {
+		parts = append(parts, m.RoleYAML)
+	}
+	if m.RoleBindingYAML != "" {
+		parts = append(parts, m.RoleBindingYAML)
 	}
 	if m.PVCYAML != "" {
 		parts = append(parts, m.PVCYAML)
@@ -95,10 +107,22 @@ func BuildManifests(opts Options) (Manifests, error) {
 	workflowSecret := ""
 	syncSecretName := ""
 	syncSecret := ""
+	serviceAccountName := ""
+	serviceAccountYAML := ""
+	roleName := ""
+	roleYAML := ""
+	roleBindingName := ""
+	roleBindingYAML := ""
 	if strings.TrimSpace(opts.WorkflowPath) != "" {
 		workflowSecretName = trimK8sName("fabrik-workflow-" + safeRunID)
 		workflowSecret = buildWorkflowSecret(opts.Namespace, workflowSecretName, opts.WorkflowBundle)
 		annotations["fabrik.sh/workflow-path"] = opts.WorkflowPath
+		serviceAccountName = trimK8sName("fabrik-runner-" + safeRunID)
+		roleName = trimK8sName("fabrik-runner-" + safeRunID)
+		roleBindingName = trimK8sName("fabrik-runner-" + safeRunID)
+		serviceAccountYAML = buildServiceAccountYAML(opts.Namespace, serviceAccountName)
+		roleYAML = buildWorkflowRunnerRoleYAML(opts.Namespace, roleName)
+		roleBindingYAML = buildWorkflowRunnerRoleBindingYAML(opts.Namespace, roleBindingName, roleName, serviceAccountName)
 		if opts.SyncBundle != nil {
 			syncSecretName = trimK8sName("fabrik-sync-" + safeRunID)
 			syncSecret = buildSyncSecret(opts.Namespace, syncSecretName, opts.SyncBundle)
@@ -112,6 +136,9 @@ func BuildManifests(opts Options) (Manifests, error) {
 			Kind:           "CronJob",
 			CronJobName:    cronJobName,
 			PVCName:        opts.CronSchedule,
+			ServiceAccount: serviceAccountYAML,
+			RoleYAML:       roleYAML,
+			RoleBindingYAML: roleBindingYAML,
 			WorkflowSecret: workflowSecret,
 			SyncSecret:     syncSecret,
 			CronJobYAML:    cronJobYAML,
@@ -125,6 +152,9 @@ func BuildManifests(opts Options) (Manifests, error) {
 		Kind:           "Job",
 		JobName:        jobName,
 		PVCName:        pvcName,
+		ServiceAccount: serviceAccountYAML,
+		RoleYAML:       roleYAML,
+		RoleBindingYAML: roleBindingYAML,
 		WorkflowSecret: workflowSecret,
 		SyncSecret:     syncSecret,
 		PVCYAML:        pvcYAML,
@@ -198,6 +228,9 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 	b.WriteString(indent + "  spec:\n")
 	b.WriteString(indent + "    nodeSelector:\n")
 	b.WriteString(indent + "      node-role.kubernetes.io/control-plane: \"true\"\n")
+	if strings.TrimSpace(opts.WorkflowPath) != "" {
+		b.WriteString(indent + "    serviceAccountName: " + trimK8sName("fabrik-runner-"+sanitizeName(opts.RunID)) + "\n")
+	}
 	b.WriteString(indent + "    restartPolicy: Never\n")
 	b.WriteString(indent + "    containers:\n")
 	b.WriteString(indent + "      - name: fabrik\n")
@@ -223,6 +256,26 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 	b.WriteString(indent + "            value: " + yamlQuote(opts.SpecPath) + "\n")
 	b.WriteString(indent + "          - name: SMITHERS_PROJECT\n")
 	b.WriteString(indent + "            value: " + yamlQuote(opts.Project) + "\n")
+	if strings.TrimSpace(opts.WorkflowPath) != "" {
+		b.WriteString(indent + "          - name: FABRIK_RUN_IMAGE\n")
+		b.WriteString(indent + "            value: " + yamlQuote(opts.Image) + "\n")
+		if pvcName != "" {
+			b.WriteString(indent + "          - name: FABRIK_WORKSPACE_PVC\n")
+			b.WriteString(indent + "            value: " + yamlQuote(pvcName) + "\n")
+		}
+		b.WriteString(indent + "          - name: KUBERNETES_NAMESPACE\n")
+		b.WriteString(indent + "            valueFrom:\n")
+		b.WriteString(indent + "              fieldRef:\n")
+		b.WriteString(indent + "                fieldPath: metadata.namespace\n")
+		b.WriteString(indent + "          - name: KUBERNETES_POD_NAME\n")
+		b.WriteString(indent + "            valueFrom:\n")
+		b.WriteString(indent + "              fieldRef:\n")
+		b.WriteString(indent + "                fieldPath: metadata.name\n")
+		b.WriteString(indent + "          - name: KUBERNETES_NODE_NAME\n")
+		b.WriteString(indent + "            valueFrom:\n")
+		b.WriteString(indent + "              fieldRef:\n")
+		b.WriteString(indent + "                fieldPath: spec.nodeName\n")
+	}
 	if opts.IsCron() {
 		b.WriteString(indent + "          - name: SMITHERS_CRON_SCHEDULE\n")
 		b.WriteString(indent + "            value: " + yamlQuote(opts.CronSchedule) + "\n")
@@ -333,6 +386,54 @@ func buildWorkflowSecret(namespace, secretName string, bundle *WorkflowBundle) s
 	b.WriteString("type: Opaque\n")
 	b.WriteString("data:\n")
 	b.WriteString("  bundle.tgz: " + yamlQuote(bundle.ArchiveBase64) + "\n")
+	return b.String()
+}
+
+func buildServiceAccountYAML(namespace, serviceAccountName string) string {
+	var b strings.Builder
+	b.WriteString("apiVersion: v1\n")
+	b.WriteString("kind: ServiceAccount\n")
+	b.WriteString("metadata:\n")
+	b.WriteString("  name: " + serviceAccountName + "\n")
+	b.WriteString("  namespace: " + namespace + "\n")
+	return b.String()
+}
+
+func buildWorkflowRunnerRoleYAML(namespace, roleName string) string {
+	var b strings.Builder
+	b.WriteString("apiVersion: rbac.authorization.k8s.io/v1\n")
+	b.WriteString("kind: Role\n")
+	b.WriteString("metadata:\n")
+	b.WriteString("  name: " + roleName + "\n")
+	b.WriteString("  namespace: " + namespace + "\n")
+	b.WriteString("rules:\n")
+	b.WriteString("  - apiGroups: [\"batch\"]\n")
+	b.WriteString("    resources: [\"jobs\"]\n")
+	b.WriteString("    verbs: [\"create\", \"delete\", \"get\", \"list\", \"watch\"]\n")
+	b.WriteString("  - apiGroups: [\"\"]\n")
+	b.WriteString("    resources: [\"pods\"]\n")
+	b.WriteString("    verbs: [\"get\", \"list\", \"watch\"]\n")
+	b.WriteString("  - apiGroups: [\"\"]\n")
+	b.WriteString("    resources: [\"pods/log\"]\n")
+	b.WriteString("    verbs: [\"get\"]\n")
+	return b.String()
+}
+
+func buildWorkflowRunnerRoleBindingYAML(namespace, roleBindingName, roleName, serviceAccountName string) string {
+	var b strings.Builder
+	b.WriteString("apiVersion: rbac.authorization.k8s.io/v1\n")
+	b.WriteString("kind: RoleBinding\n")
+	b.WriteString("metadata:\n")
+	b.WriteString("  name: " + roleBindingName + "\n")
+	b.WriteString("  namespace: " + namespace + "\n")
+	b.WriteString("subjects:\n")
+	b.WriteString("  - kind: ServiceAccount\n")
+	b.WriteString("    name: " + serviceAccountName + "\n")
+	b.WriteString("    namespace: " + namespace + "\n")
+	b.WriteString("roleRef:\n")
+	b.WriteString("  apiGroup: rbac.authorization.k8s.io\n")
+	b.WriteString("  kind: Role\n")
+	b.WriteString("  name: " + roleName + "\n")
 	return b.String()
 }
 
