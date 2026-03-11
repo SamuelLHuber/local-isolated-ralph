@@ -9,11 +9,12 @@ import {
   createSmithers,
 } from "smithers-orchestrator";
 import { $ } from "bun";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
 import { runVerificationJob } from "./utils/k8s-jobs";
 import { prepareWorkspaces, pushBookmark, snapshotChange } from "./utils/jj-shell";
+import { parseTodoItems, todoItemSchema, type TodoItem } from "./utils/todo-plan";
 
 const WORKDIR_ROOT = process.cwd();
 const CONTROL_ROOT = "/workspace/.fabrik";
@@ -37,21 +38,6 @@ const PI_ENV = {
   XDG_CONFIG_HOME: "/tmp/pi-config",
   PI_CODING_AGENT_DIR: "/tmp/pi-agent",
 };
-
-const todoItemSchema = z.object({
-  id: z
-    .string()
-    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
-    .describe("Stable lowercase kebab-case item id"),
-  title: z.string(),
-  task: z.string(),
-  specTieIn: z.array(z.string()),
-  guarantees: z.array(z.string()),
-  verificationToBuildFirst: z.array(z.string()),
-  requiredChecks: z.array(z.string()),
-  documentationUpdates: z.array(z.string()),
-  blockedReason: z.string().nullable(),
-});
 
 const todoPlanSchema = z.object({
   todoPath: z.string(),
@@ -104,7 +90,6 @@ const { smithers, outputs } = createSmithers(
   { dbPath: DB_PATH },
 );
 
-type TodoItem = z.infer<typeof todoItemSchema>;
 type Review = z.infer<typeof reviewSchema>;
 type Validate = z.infer<typeof validateSchema>;
 type WorkflowCtx = Parameters<Parameters<typeof smithers>[0]>[0];
@@ -267,137 +252,6 @@ function latestPlannedItems(ctx: WorkflowCtx): TodoItem[] {
     const parsed = todoItemSchema.safeParse(item);
     if (parsed.success) items.push(parsed.data);
   }
-  return items;
-}
-
-function slugifyTitle(title: string): string {
-  return title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .replace(/--+/g, "-");
-}
-
-function normalizeMarkdownList(lines: string[]): string[] {
-  const items: string[] = [];
-  let current = "";
-
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (line === "") continue;
-
-    const bullet = line.match(/^[-*]\s+(.*)$/);
-    const numbered = line.match(/^\d+\.\s+(.*)$/);
-    if (bullet || numbered) {
-      if (current !== "") items.push(current);
-      current = (bullet?.[1] ?? numbered?.[1] ?? "").trim();
-      continue;
-    }
-
-    if (current !== "") {
-      current += ` ${line}`;
-    } else {
-      current = line;
-    }
-  }
-
-  if (current !== "") items.push(current);
-  return items;
-}
-
-function normalizeParagraph(lines: string[]): string {
-  return lines
-    .map((line) => line.trim())
-    .filter((line) => line !== "")
-    .join("\n");
-}
-
-function buildTodoItem(title: string, lines: string[]): TodoItem {
-  const sections = new Map<string, string[]>();
-  let currentSection = "";
-
-  for (const line of lines) {
-    const heading = line.match(/^###\s+(.*)$/);
-    if (heading) {
-      currentSection = heading[1].trim().toLowerCase();
-      if (!sections.has(currentSection)) {
-        sections.set(currentSection, []);
-      }
-      continue;
-    }
-
-    if (currentSection !== "") {
-      sections.get(currentSection)?.push(line);
-    }
-  }
-
-  const task = normalizeParagraph(sections.get("task") ?? []);
-  const specTieIn = normalizeMarkdownList(sections.get("spec tie-in") ?? []);
-  const guarantees = normalizeMarkdownList(sections.get("guarantees") ?? []);
-  const verificationToBuildFirst = normalizeMarkdownList(
-    sections.get("verification to build first") ?? [],
-  );
-  const requiredChecks = normalizeMarkdownList(
-    sections.get("required checks") ?? [],
-  );
-  const documentationUpdates = normalizeMarkdownList(
-    sections.get("documentation updates") ?? [],
-  );
-
-  const missing: string[] = [];
-  if (task === "") missing.push("Task");
-  if (specTieIn.length === 0) missing.push("Spec tie-in");
-  if (guarantees.length === 0) missing.push("Guarantees");
-  if (verificationToBuildFirst.length === 0) {
-    missing.push("Verification to build first");
-  }
-  if (requiredChecks.length === 0) missing.push("Required checks");
-
-  return todoItemSchema.parse({
-    id: slugifyTitle(title),
-    title,
-    task,
-    specTieIn,
-    guarantees,
-    verificationToBuildFirst,
-    requiredChecks,
-    documentationUpdates,
-    blockedReason:
-      missing.length > 0
-        ? `Missing required sections in todo.md: ${missing.join(", ")}.`
-        : null,
-  });
-}
-
-function parseTodoItems(todoPath: string): TodoItem[] {
-  const content = readFileSync(todoPath, "utf8").replace(/\r/g, "");
-  const lines = content.split("\n");
-  const items: TodoItem[] = [];
-
-  let currentTitle = "";
-  let currentLines: string[] = [];
-
-  const flush = () => {
-    if (currentTitle === "") return;
-    items.push(buildTodoItem(currentTitle, currentLines));
-    currentTitle = "";
-    currentLines = [];
-  };
-
-  for (const line of lines) {
-    const heading = line.match(/^##\s+\d+\.\s+(.*)$/);
-    if (heading) {
-      flush();
-      currentTitle = heading[1].trim();
-      continue;
-    }
-
-    if (currentTitle !== "") {
-      currentLines.push(line);
-    }
-  }
-
-  flush();
   return items;
 }
 
