@@ -498,6 +498,174 @@ func TestExecuteLiveCronWithMissingProjectEnvFailsBeforeApply(t *testing.T) {
 	}
 }
 
+func TestExecuteWaitSuccessIgnoresMetadataPatchFailure(t *testing.T) {
+	dir := t.TempDir()
+	kubectlLog := filepath.Join(dir, "kubectl.log")
+	kubectlPath := filepath.Join(dir, "kubectl")
+	kubectlScript := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> " + shellQuote(kubectlLog) + "\n" +
+		"case \"$1\" in\n" +
+		"  apply)\n" +
+		"    cat >/dev/null\n" +
+		"    printf 'applied\\n'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"  -n)\n" +
+		"    if [ \"$3\" = \"wait\" ]; then\n" +
+		"      printf 'condition met\\n'\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    if [ \"$3\" = \"get\" ] && [ \"$4\" = \"job\" ]; then\n" +
+		"      printf 'uid-123\\n'\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    if [ \"$3\" = \"get\" ] && [ \"$4\" = \"pods\" ]; then\n" +
+		"      printf 'demo-pod\\n'\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    if [ \"$3\" = \"patch\" ] && [ \"$4\" = \"pvc\" ]; then\n" +
+		"      printf 'patched\\n'\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    if [ \"$3\" = \"patch\" ] && { [ \"$4\" = \"job\" ] || [ \"$4\" = \"pod\" ]; }; then\n" +
+		"      printf 'metadata patch failed\\n' >&2\n" +
+		"      exit 1\n" +
+		"    fi\n" +
+		"    if [ \"$3\" = \"logs\" ]; then\n" +
+		"      printf 'job logs\\n'\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    if [ \"$3\" = \"delete\" ]; then\n" +
+		"      printf 'deleted\\n'\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    if [ \"$3\" = \"exec\" ] && [ \"$6\" = \"test\" ]; then\n" +
+		"      exit 1\n" +
+		"    fi\n" +
+		"    ;;\n" +
+		"esac\n" +
+		"exit 97\n"
+	if err := os.WriteFile(kubectlPath, []byte(kubectlScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	originalCopyWorkdir := copyWorkdirFromPodFn
+	copyWorkdirFromPodFn = func(_ context.Context, _ Options, _ string, destination string) error {
+		return os.MkdirAll(destination, 0o755)
+	}
+	defer func() { copyWorkdirFromPodFn = originalCopyWorkdir }()
+
+	originalKubectlCopy := kubectlCopyFn
+	kubectlCopyFn = func(_ context.Context, _ Options, _ string, _ string) error { return nil }
+	defer func() { kubectlCopyFn = originalKubectlCopy }()
+
+	opts := Options{
+		RunID:        "run-wait-success-patch-warn",
+		SpecPath:     "specs/demo.yaml",
+		Project:      "demo",
+		Image:        "repo/image@sha256:abcdef",
+		Namespace:    "fabrik-runs",
+		PVCSize:      "1Gi",
+		JobCommand:   "echo hi",
+		WaitTimeout:  "5m",
+		Wait:         true,
+		Interactive:  false,
+		OutputSubdir: "k8s/job-sync",
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := Execute(context.Background(), strings.NewReader(""), &out, &errOut, opts); err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "completed job fabrik-run-wait-success-patch-warn") {
+		t.Fatalf("expected completion output, got %q", out.String())
+	}
+	if !strings.Contains(errOut.String(), "warning: failed to update Fabrik run metadata") {
+		t.Fatalf("expected metadata warning, got %q", errOut.String())
+	}
+}
+
+func TestExecuteWaitFailureReturnsWaitErrorEvenIfMetadataPatchFails(t *testing.T) {
+	dir := t.TempDir()
+	kubectlLog := filepath.Join(dir, "kubectl.log")
+	kubectlPath := filepath.Join(dir, "kubectl")
+	kubectlScript := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> " + shellQuote(kubectlLog) + "\n" +
+		"case \"$1\" in\n" +
+		"  apply)\n" +
+		"    cat >/dev/null\n" +
+		"    printf 'applied\\n'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"  -n)\n" +
+		"    if [ \"$3\" = \"wait\" ]; then\n" +
+		"      printf 'deadline exceeded\\n' >&2\n" +
+		"      exit 1\n" +
+		"    fi\n" +
+		"    if [ \"$3\" = \"get\" ] && [ \"$4\" = \"job\" ]; then\n" +
+		"      printf 'uid-123\\n'\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    if [ \"$3\" = \"get\" ] && [ \"$4\" = \"pods\" ]; then\n" +
+		"      printf 'demo-pod\\n'\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    if [ \"$3\" = \"patch\" ] && [ \"$4\" = \"pvc\" ]; then\n" +
+		"      printf 'patched\\n'\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    if [ \"$3\" = \"patch\" ] && { [ \"$4\" = \"job\" ] || [ \"$4\" = \"pod\" ]; }; then\n" +
+		"      printf 'metadata patch failed\\n' >&2\n" +
+		"      exit 1\n" +
+		"    fi\n" +
+		"    if [ \"$3\" = \"logs\" ]; then\n" +
+		"      printf 'recent failure log\\n'\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    ;;\n" +
+		"esac\n" +
+		"exit 97\n"
+	if err := os.WriteFile(kubectlPath, []byte(kubectlScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	opts := Options{
+		RunID:        "run-wait-failure-patch-warn",
+		SpecPath:     "specs/demo.yaml",
+		Project:      "demo",
+		Image:        "repo/image@sha256:abcdef",
+		Namespace:    "fabrik-runs",
+		PVCSize:      "1Gi",
+		JobCommand:   "echo hi",
+		WaitTimeout:  "5m",
+		Wait:         true,
+		Interactive:  false,
+		OutputSubdir: "k8s/job-sync",
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	err := Execute(context.Background(), strings.NewReader(""), &out, &errOut, opts)
+	if err == nil {
+		t.Fatalf("expected wait failure")
+	}
+	if !strings.Contains(err.Error(), "wait --for=condition=complete") {
+		t.Fatalf("expected native wait error, got %v", err)
+	}
+	if !strings.Contains(errOut.String(), "warning: failed to update Fabrik run metadata") {
+		t.Fatalf("expected metadata warning, got %q", errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "recent logs for demo-pod:") {
+		t.Fatalf("expected pod logs in stderr, got %q", errOut.String())
+	}
+}
+
 func TestExecuteDryRunWorkflowRequiresCodexAuthFiles(t *testing.T) {
 	dir := t.TempDir()
 	workflowPath := filepath.Join(dir, "workflow.tsx")

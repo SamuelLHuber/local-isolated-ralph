@@ -29,6 +29,9 @@ var syncWorkdirExcludes = []string{
 	".jj",
 }
 
+var copyWorkdirFromPodFn = copyWorkdirFromPod
+var kubectlCopyFn = kubectlCopy
+
 func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opts Options) error {
 	resolved, err := ResolveOptions(ctx, stdin, stdout, opts)
 	if err != nil {
@@ -135,9 +138,7 @@ func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opt
 	if err != nil {
 		return err
 	}
-	if err := patchCompletedRunMetadata(ctx, resolved, manifests.JobName, podName); err != nil {
-		return err
-	}
+	writeRunMetadataWarning(stderr, patchRunMetadata(ctx, resolved, manifests.JobName, podName, "complete", "finished", "done", "succeeded", 1, 1))
 
 	syncDir, err := syncArtifacts(ctx, resolved, manifests, podName)
 	if err != nil {
@@ -281,34 +282,40 @@ func patchPVCOwnerReference(ctx context.Context, opts Options, jobName, pvcName 
 	return err
 }
 
-func patchCompletedRunMetadata(ctx context.Context, opts Options, jobName, podName string) error {
+func patchRunMetadata(ctx context.Context, opts Options, jobName, podName, phase, status, task, outcome string, finished, total int) error {
 	finishedAt := buildStartedAt()
 	statusJSON, err := json.Marshal(map[string]any{
-		"phase":        "complete",
-		"current_task": "done",
+		"phase":        phase,
+		"current_task": task,
 		"attempt":      1,
 		"progress": map[string]int{
-			"finished": 1,
-			"total":    1,
+			"finished": finished,
+			"total":    total,
 		},
 	})
 	if err != nil {
 		return err
 	}
 
-	progressJSON := `{"finished":1,"total":1}`
+	progressJSON, err := json.Marshal(map[string]int{
+		"finished": finished,
+		"total":    total,
+	})
+	if err != nil {
+		return err
+	}
 	patch, err := json.Marshal(map[string]any{
 		"metadata": map[string]any{
 			"labels": map[string]string{
-				"fabrik.sh/phase":  "complete",
-				"fabrik.sh/status": "finished",
-				"fabrik.sh/task":   "done",
+				"fabrik.sh/phase":  phase,
+				"fabrik.sh/status": status,
+				"fabrik.sh/task":   task,
 			},
 			"annotations": map[string]string{
 				"fabrik.sh/status":      string(statusJSON),
 				"fabrik.sh/finished-at": finishedAt,
-				"fabrik.sh/outcome":     "succeeded",
-				"fabrik.sh/progress":    progressJSON,
+				"fabrik.sh/outcome":     outcome,
+				"fabrik.sh/progress":    string(progressJSON),
 			},
 		},
 	})
@@ -326,11 +333,19 @@ func patchCompletedRunMetadata(ctx context.Context, opts Options, jobName, podNa
 func handleWaitFailure(ctx context.Context, stderr io.Writer, opts Options, jobName string, waitErr error) error {
 	podName, podErr := getJobPodName(ctx, opts, jobName)
 	if podErr == nil {
+		writeRunMetadataWarning(stderr, patchRunMetadata(ctx, opts, jobName, podName, "complete", "finished", "done", "failed", 1, 1))
 		if logs, logErr := runKubectl(ctx, opts, "", "-n", opts.Namespace, "logs", podName, "--tail=200"); logErr == nil {
-			fmt.Fprintf(stderr, "recent logs for %s:\n%s\n", podName, logs)
+			_, _ = fmt.Fprintf(stderr, "recent logs for %s:\n%s\n", podName, logs)
 		}
 	}
 	return waitErr
+}
+
+func writeRunMetadataWarning(stderr io.Writer, err error) {
+	if err == nil || stderr == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(stderr, "warning: failed to update Fabrik run metadata; use native Kubernetes Job/Pod status as source of truth: %v\n", err)
 }
 
 func verifyDispatchedJob(ctx context.Context, opts Options, jobName string) (string, string, error) {
@@ -485,7 +500,7 @@ func syncArtifacts(ctx context.Context, opts Options, manifests Manifests, podNa
 	// explicit local-only files ahead of execution.
 	workdir := filepath.Join(targetDir, "workdir")
 	_ = os.RemoveAll(workdir)
-	if err := copyWorkdirFromPod(ctx, opts, syncPodName, workdir); err != nil {
+	if err := copyWorkdirFromPodFn(ctx, opts, syncPodName, workdir); err != nil {
 		return "", err
 	}
 	stateDB := filepath.Join(targetDir, "state.db")
@@ -494,7 +509,7 @@ func syncArtifacts(ctx context.Context, opts Options, manifests Manifests, podNa
 		return "", err
 	}
 	if exists {
-		if err := kubectlCopy(ctx, opts, syncPodName+":/workspace/.smithers/state.db", stateDB); err != nil {
+		if err := kubectlCopyFn(ctx, opts, syncPodName+":/workspace/.smithers/state.db", stateDB); err != nil {
 			return "", err
 		}
 	}
