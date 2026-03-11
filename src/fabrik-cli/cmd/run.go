@@ -24,8 +24,10 @@ func newRunCommand(runMode string) *cobra.Command {
 		Short: "Dispatch a Fabrik run to Kubernetes",
 		Long: "Dispatch a Fabrik run to Kubernetes.\n\n" +
 			"The default live behavior applies the PVC and Job, verifies that the Job " +
-			"has started on the cluster, and then returns. Use --wait when you need " +
-			"completion tracking and local artifact sync.\n\n" +
+			"has started on the cluster, and then returns. When --cron is set, the " +
+			"command creates a CronJob and verifies the scheduled object exists. Use " +
+			"--wait when you need completion tracking and local artifact sync for a " +
+			"one-shot Job.\n\n" +
 			"Workflow runs sync logs and filtered artifacts back locally only when " +
 			"--wait is enabled. VCS metadata such as .git and .jj is intentionally " +
 			"excluded from artifact sync; preserve repo state via JJ/Git inside the " +
@@ -41,7 +43,9 @@ func newRunCommand(runMode string) *cobra.Command {
 	flags.StringVar(&opts.RunID, "run-id", "", "Run identifier")
 	flags.StringVar(&opts.SpecPath, "spec", "", "Path to the run spec")
 	flags.StringVar(&opts.Project, "project", "", "Project ID (DNS-1123)")
+	flags.StringVar(&opts.Environment, "env", "", "Project environment name to inject from fabrik-system")
 	flags.StringVar(&opts.Image, "image", "", "Immutable image reference for the job; optional in workflow mode when GHCR auto-resolution is configured")
+	flags.StringVar(&opts.CronSchedule, "cron", "", "Cron schedule for a recurring CronJob instead of a one-shot Job")
 	flags.StringVar(&opts.WorkflowPath, "workflow-path", "", "Path to a local workflow file to mount into the job")
 	flags.StringVar(&opts.InputJSON, "input-json", "", "JSON input passed to Smithers when using --workflow-path")
 	flags.StringVar(&opts.FabrikSyncFile, "fabrik-sync-file", "", "Optional path to a .fabrik-sync manifest listing explicit small non-VCS file paths to inject before the workflow starts")

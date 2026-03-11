@@ -172,6 +172,72 @@ Verification path used for this implementation:
 - render tests verify the Secret mount and bootstrap extraction command
 - live smoke tests dispatch the sample workflow to `k3d-dev-single` and `k3d-dev-multi`, then verify the injected files exist in the synced artifacts while blocked trees remain excluded
 
+## Current Execution Model
+
+The CLI currently supports two execution inputs on the same `fabrik run` surface:
+
+- `--job-command` for a direct shell-command Job or CronJob
+- `--workflow-path` for a Smithers workflow-backed Job or CronJob
+
+The reasoning is simple:
+
+- one-shot runs and scheduled runs should share the same operator-facing command
+- command mode keeps smoke tests and simple maintenance tasks easy to reason about
+- workflow mode exercises the real Smithers runtime path we care about for production-like execution
+
+Default live behavior for one-shot `fabrik run` is:
+
+- apply resources
+- verify the Job has started
+- return
+
+`--wait` is the explicit opt-in for completion tracking and local artifact sync.
+
+## Cron Storage Model
+
+`run --cron` creates Kubernetes `CronJob` objects.
+
+Scheduled child runs do not reuse a single shared PVC. Instead, the CronJob pod template uses a generic ephemeral volume with a `volumeClaimTemplate`, so each spawned pod gets its own PVC.
+
+We use this shape because:
+
+- a shared PVC on the CronJob would couple unrelated scheduled runs
+- `ReadWriteOnce` claims do not fit overlapping or back-to-back scheduled executions well
+- per-run storage is easier to inspect, clean up, and reason about
+- it stays close to the orchestrator spec without introducing a custom controller
+
+The practical result is:
+
+- one-shot Jobs: standalone per-run PVC objects
+- CronJobs: one PVC per spawned pod, named by Kubernetes as `<pod-name>-workspace`
+
+On k3d and k3s, this relies on the cluster storage class supporting generic ephemeral volumes. Our local `local-path` storage class supports this, so the k3d verification suite asserts it directly.
+
+## Environment Model
+
+Project environment data lives in Kubernetes Secrets in `fabrik-system`, named as `fabrik-env-<project>-<env>`.
+
+The CLI now exposes the first env-management slice directly:
+
+- `fabrik env set` to create or update a project environment Secret from a dotenv file or inline `KEY=value` pairs
+- `fabrik env ls` and `fabrik env validate` to inspect the stored shape without printing secret values
+- `fabrik env pull` to materialize a local dotenv file for developer workflows
+- `fabrik env diff` and `fabrik env promote` to compare and copy named environments
+- `fabrik env run -- <command>` to run a local command with the selected project environment injected
+
+The reasoning follows the orchestrator spec:
+
+- Kubernetes is the source of truth for runtime env state
+- named environments such as `dev`, `staging`, and `prod` stay explicit
+- local pull is for developer ergonomics, not a second source of truth
+- reserved runtime keys such as `SMITHERS_*` are not managed through project env Secrets
+
+The current CLI slice is intentionally narrow:
+
+- it manages project env Secrets only
+- it does not yet implement the broader permission and audit model from the spec
+- `env run` is local developer convenience, not cluster-side Job injection
+
 ## Design Rules
 
 The CLI must follow the existing Fabrik specs, especially:
@@ -370,7 +436,9 @@ For local cluster verification with `k3d`:
 2. run unit + command tests:
    - `go test ./...`
 3. run env-gated `k3d` integration test layer:
-   - `FABRIK_K3D_E2E=1 go test ./internal/run -run TestK3dRenderAndDryRun -v`
+   - `FABRIK_K3D_E2E=1 go test ./internal/run -run 'TestK3d' -v`
+   - this covers both manual command flows and the sample Smithers workflow at `examples/counter-local/workflow.tsx`
+   - for workflow-backed k3d verification, set `FABRIK_SMITHERS_IMAGE` to a cluster-compatible image and ensure `~/.codex/auth.json` plus `~/.codex/config.toml` exist
 4. run CLI checks manually when needed:
    - `go run . run --render ...`
    - `go run . run --dry-run ...`

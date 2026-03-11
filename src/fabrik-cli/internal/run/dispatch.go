@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	runenv "fabrik-cli/internal/env"
 	"fmt"
 	"io"
 	"os"
@@ -45,6 +46,9 @@ func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opt
 	}
 
 	if resolved.DryRun {
+		if err := ensureProjectEnvSecretExists(ctx, resolved); err != nil {
+			return err
+		}
 		if strings.TrimSpace(resolved.WorkflowPath) != "" {
 			if _, _, err := ensureCodexAuthFilesExist(); err != nil {
 				return err
@@ -84,6 +88,9 @@ func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opt
 			}
 		}
 	}
+	if err := ensureProjectEnvSecretExists(ctx, resolved); err != nil {
+		return err
+	}
 	if strings.TrimSpace(resolved.WorkflowPath) != "" {
 		if err := applyCodexSecret(ctx, resolved); err != nil {
 			return err
@@ -91,6 +98,15 @@ func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opt
 	}
 
 	if _, err := runKubectl(ctx, resolved, manifests.AllYAML(), "apply", "-f", "-"); err != nil {
+		return err
+	}
+
+	if resolved.IsCron() {
+		cronJobName, schedule, err := verifyScheduledCronJob(ctx, resolved, manifests.CronJobName)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, "scheduled cronjob %s in namespace %s\nschedule: %s\n", cronJobName, resolved.Namespace, schedule)
 		return err
 	}
 
@@ -166,6 +182,26 @@ func ResolveOptions(ctx context.Context, in io.Reader, out io.Writer, opts Optio
 		return Options{}, err
 	}
 	return opts, nil
+}
+
+func ensureProjectEnvSecretExists(ctx context.Context, opts Options) error {
+	if strings.TrimSpace(opts.Environment) == "" {
+		return nil
+	}
+
+	_, err := runenv.GetSecretData(ctx, runenv.Options{
+		Project:   opts.Project,
+		Env:       opts.Environment,
+		Namespace: envSecretNamespace,
+		Context:   opts.KubeContext,
+	})
+	if err != nil {
+		if runenv.IsSecretNotFound(err) {
+			return fmt.Errorf("missing project env secret %s in namespace %s", opts.EnvSecretName(), envSecretNamespace)
+		}
+		return fmt.Errorf("resolve project env secret %s: %w", opts.EnvSecretName(), err)
+	}
+	return nil
 }
 
 func runKubectl(ctx context.Context, opts Options, stdin string, args ...string) (string, error) { /* unchanged */
@@ -334,6 +370,30 @@ func verifyDispatchedJob(ctx context.Context, opts Options, jobName string) (str
 	}
 }
 
+func verifyScheduledCronJob(ctx context.Context, opts Options, cronJobName string) (string, string, error) {
+	verifyTimeout := dispatchVerificationTimeout(opts.WaitTimeout)
+	verifyCtx, cancel := context.WithTimeout(ctx, verifyTimeout)
+	defer cancel()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	var lastErr error
+	for {
+		schedule, err := getCronJobSchedule(verifyCtx, opts, cronJobName)
+		if err == nil {
+			return cronJobName, schedule, nil
+		}
+		lastErr = err
+
+		select {
+		case <-verifyCtx.Done():
+			return "", "", fmt.Errorf("cronjob %s did not become readable within %s: %w", cronJobName, verifyTimeout, lastErr)
+		case <-ticker.C:
+		}
+	}
+}
+
 func getJobPodName(ctx context.Context, opts Options, jobName string) (string, error) { /* unchanged */
 	out, err := runKubectl(ctx, opts, "", "-n", opts.Namespace, "get", "pods", "-l", "job-name="+jobName, "-o", "jsonpath={.items[0].metadata.name}")
 	if err != nil {
@@ -356,6 +416,18 @@ func getPodPhase(ctx context.Context, opts Options, podName string) (string, err
 		return "", fmt.Errorf("failed to resolve phase for pod %s", podName)
 	}
 	return phase, nil
+}
+
+func getCronJobSchedule(ctx context.Context, opts Options, cronJobName string) (string, error) {
+	out, err := runKubectl(ctx, opts, "", "-n", opts.Namespace, "get", "cronjob", cronJobName, "-o", "jsonpath={.spec.schedule}")
+	if err != nil {
+		return "", err
+	}
+	schedule := strings.TrimSpace(out)
+	if schedule == "" {
+		return "", fmt.Errorf("failed to resolve schedule for cronjob %s", cronJobName)
+	}
+	return schedule, nil
 }
 
 func dispatchVerificationTimeout(waitTimeout string) time.Duration {

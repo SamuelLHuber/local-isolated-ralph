@@ -8,4 +8,4 @@ verify-cli-unit:
 	cd src/fabrik-cli && go test ./...
 
 verify-cli-k3d:
-	cd src/fabrik-cli && FABRIK_K3D_E2E=1 go test ./internal/run -run TestK3dRenderAndDryRun -v
+	cd src/fabrik-cli && FABRIK_K3D_E2E=1 go test ./internal/run -run 'TestK3d' -v
