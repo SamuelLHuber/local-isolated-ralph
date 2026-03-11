@@ -239,6 +239,60 @@ func TestExecuteDryRunWorkflowDoesNotApplyCodexSecret(t *testing.T) {
 	}
 }
 
+func TestExecuteDryRunWithEnvFileValidatesLocallyWithoutClusterSecretLookup(t *testing.T) {
+	dir := t.TempDir()
+	envFile := filepath.Join(dir, ".env.dispatch")
+	if err := os.WriteFile(envFile, []byte("DATABASE_URL=postgres://dry-run\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	kubectlLog := filepath.Join(dir, "kubectl.log")
+	kubectlPath := filepath.Join(dir, "kubectl")
+	kubectlScript := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> " + shellQuote(kubectlLog) + "\n" +
+		"case \"$1\" in\n" +
+		"  apply)\n" +
+		"    cat >/dev/null\n" +
+		"    printf 'kind: Job\\n'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"  -n)\n" +
+		"    printf 'unexpected secret lookup\\n' >&2\n" +
+		"    exit 99\n" +
+		"    ;;\n" +
+		"esac\n" +
+		"exit 97\n"
+	if err := os.WriteFile(kubectlPath, []byte(kubectlScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	opts := Options{
+		RunID:       "run-dry-env-file",
+		SpecPath:    "specs/demo.yaml",
+		Project:     "demo",
+		Environment: "dev",
+		EnvFile:     envFile,
+		Image:       "repo/image@sha256:abcdef",
+		Namespace:   "fabrik-runs",
+		PVCSize:     "1Gi",
+		JobCommand:  "echo hi",
+		WaitTimeout: "5m",
+		DryRun:      true,
+		Interactive: false,
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := Execute(context.Background(), strings.NewReader(""), &out, &errOut, opts); err != nil {
+		t.Fatalf("dry-run execute failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "kind: Job") {
+		t.Fatalf("expected dry-run output to include Job")
+	}
+}
+
 func TestExecuteDryRunWithMissingProjectEnvFailsBeforeKubectlApply(t *testing.T) {
 	dir := t.TempDir()
 	kubectlLog := filepath.Join(dir, "kubectl.log")
@@ -373,6 +427,99 @@ func TestExecuteLiveDispatchWithoutWaitVerifiesPodStartAndDoesNotSync(t *testing
 	logText := string(logData)
 	if strings.Contains(logText, " wait ") || strings.Contains(logText, " logs ") || strings.Contains(logText, " exec ") {
 		t.Fatalf("expected non-wait dispatch to skip wait/log/sync calls, got kubectl calls: %s", logText)
+	}
+}
+
+func TestExecuteLiveDispatchWithEnvFileAppliesEnvSecretsInSourceAndRunNamespaces(t *testing.T) {
+	dir := t.TempDir()
+	envFile := filepath.Join(dir, ".env.dispatch")
+	if err := os.WriteFile(envFile, []byte("DATABASE_URL=postgres://live-run\nAPI_BASE_URL=https://env.test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	kubectlLog := filepath.Join(dir, "kubectl.log")
+	applyLog := filepath.Join(dir, "kubectl-apply.log")
+	kubectlPath := filepath.Join(dir, "kubectl")
+	kubectlScript := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> " + shellQuote(kubectlLog) + "\n" +
+		"case \"$1\" in\n" +
+		"  apply)\n" +
+		"    payload=$(mktemp)\n" +
+		"    cat > \"$payload\"\n" +
+		"    printf 'ARGS:%s\\n' \"$*\" >> " + shellQuote(applyLog) + "\n" +
+		"    cat \"$payload\" >> " + shellQuote(applyLog) + "\n" +
+		"    printf '\\n---\\n' >> " + shellQuote(applyLog) + "\n" +
+		"    rm -f \"$payload\"\n" +
+		"    printf 'applied\\n'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"  -n)\n" +
+		"    if [ \"$2\" = \"fabrik-system\" ] && [ \"$3\" = \"get\" ] && [ \"$4\" = \"secret\" ]; then\n" +
+		"      printf '{\"data\":{\"DATABASE_URL\":\"cG9zdGdyZXM6Ly9saXZlLXJ1bg==\",\"API_BASE_URL\":\"aHR0cHM6Ly9lbnYudGVzdA==\"}}\\n'\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    if [ \"$3\" = \"patch\" ] && [ \"$4\" = \"pvc\" ]; then\n" +
+		"      printf 'patched\\n'\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    if [ \"$3\" = \"get\" ] && [ \"$4\" = \"pods\" ]; then\n" +
+		"      printf 'demo-pod\\n'\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    if [ \"$3\" = \"get\" ] && [ \"$4\" = \"pod\" ]; then\n" +
+		"      printf 'Running\\n'\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    if [ \"$3\" = \"get\" ] && [ \"$4\" = \"job\" ]; then\n" +
+		"      printf 'uid-123\\n'\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    ;;\n" +
+		"esac\n" +
+		"exit 97\n"
+	if err := os.WriteFile(kubectlPath, []byte(kubectlScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	opts := Options{
+		RunID:       "run-live-env-file",
+		SpecPath:    "specs/demo.yaml",
+		Project:     "demo",
+		Environment: "dev",
+		EnvFile:     envFile,
+		Image:       "repo/image@sha256:abcdef",
+		Namespace:   "fabrik-runs",
+		PVCSize:     "1Gi",
+		JobCommand:  "echo hi",
+		WaitTimeout: "5m",
+		Wait:        false,
+		Interactive: false,
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := Execute(context.Background(), strings.NewReader(""), &out, &errOut, opts); err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+
+	applyData, err := os.ReadFile(applyLog)
+	if err != nil {
+		t.Fatalf("read apply log: %v", err)
+	}
+	applyText := string(applyData)
+	if !strings.Contains(applyText, "namespace: fabrik-system") {
+		t.Fatalf("expected source env secret apply in fabrik-system, got %s", applyText)
+	}
+	if !strings.Contains(applyText, "namespace: fabrik-runs") {
+		t.Fatalf("expected mirrored env secret apply in fabrik-runs, got %s", applyText)
+	}
+	if !strings.Contains(applyText, "kind: Job") {
+		t.Fatalf("expected job apply in log, got %s", applyText)
+	}
+	if !strings.Contains(applyText, "secretName: fabrik-env-demo-dev") {
+		t.Fatalf("expected job to reference mirrored env secret, got %s", applyText)
 	}
 }
 

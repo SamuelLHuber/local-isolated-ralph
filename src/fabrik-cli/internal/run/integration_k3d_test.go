@@ -5,6 +5,7 @@ import (
 	"context"
 	runenv "fabrik-cli/internal/env"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -256,6 +257,93 @@ func TestK3dRunInjectsProjectEnvForCommandAndWorkflow(t *testing.T) {
 	assertProjectEnvInjectionOnJob(t, opts, workflowJobName, project, environment)
 }
 
+func TestK3dWorkflowDispatchWithEnvFileAndGitHubRepoAcrossNamedClusters(t *testing.T) {
+	if os.Getenv("FABRIK_K3D_E2E") != "1" {
+		t.Skip("set FABRIK_K3D_E2E=1 to run k3d integration tests")
+	}
+
+	if _, err := exec.LookPath("kubectl"); err != nil {
+		t.Skip("kubectl not available")
+	}
+	if _, err := exec.LookPath("k3d"); err != nil {
+		t.Skip("k3d not available")
+	}
+	if _, _, err := ensureCodexAuthFilesExist(); err != nil {
+		t.Skipf("workflow integration needs local Codex auth files: %v", err)
+	}
+
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+	specPath := filepath.Join(repoRoot, "specs", "051-k3s-orchestrator.md")
+	if _, err := os.Stat(specPath); err != nil {
+		t.Fatalf("expected spec file for test fixture: %v", err)
+	}
+
+	for _, clusterName := range []string{"dev-single", "dev-multi"} {
+		t.Run(clusterName, func(t *testing.T) {
+			kubeconfigPath := writeK3dKubeconfig(t, clusterName)
+			t.Setenv("KUBECONFIG", kubeconfigPath)
+			workflowImage := ensureK3dRegistryWorkflowImage(t, clusterName)
+
+			opts := Options{
+				Namespace:   "fabrik-runs",
+				PVCSize:     "1Gi",
+				WaitTimeout: "180s",
+				Interactive: false,
+				Wait:        true,
+				OutputSubdir: filepath.Join(
+					"k8s",
+					"job-sync",
+					"k3d-e2e",
+					clusterName,
+				),
+			}
+			ensureNamespaces(t, opts)
+
+			runID := fmt.Sprintf("it-k3d-env-repo-%s-%d", strings.TrimPrefix(clusterName, "dev-"), time.Now().Unix())
+			envDir := t.TempDir()
+			envFile := filepath.Join(envDir, ".env.dispatch")
+			if err := os.WriteFile(envFile, []byte("DATABASE_URL=postgres://"+clusterName+"\nAPI_BASE_URL=https://"+clusterName+".example.test\n"), 0o644); err != nil {
+				t.Fatalf("write env file: %v", err)
+			}
+			workflowPath := writeRepoEnvWorkflow(t)
+
+			cleanupJobRun(t, opts, runID)
+			t.Cleanup(func() {
+				cleanupJobRun(t, opts, runID)
+			})
+
+			runOpts := opts
+			runOpts.RunID = runID
+			runOpts.SpecPath = specPath
+			runOpts.Project = "demo"
+			runOpts.Environment = "dev"
+			runOpts.EnvFile = envFile
+			runOpts.Image = workflowImage
+			runOpts.WorkflowPath = workflowPath
+			runOpts.InputJSON = fmt.Sprintf(`{"clusterName":%q}`, clusterName)
+			runOpts.JJRepo = "https://github.com/octocat/Hello-World.git"
+			runOpts.AcceptFilteredSync = true
+
+			var out bytes.Buffer
+			var errOut bytes.Buffer
+			if err := Execute(context.Background(), strings.NewReader(""), &out, &errOut, runOpts); err != nil {
+				t.Fatalf("workflow execute failed: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errOut.String())
+			}
+			if !strings.Contains(out.String(), "completed job fabrik-") {
+				t.Fatalf("expected completion output, got %q", out.String())
+			}
+
+			jobName := trimK8sName("fabrik-" + sanitizeName(runID))
+			assertProjectEnvInjectionOnJob(t, opts, jobName, runOpts.Project, runOpts.Environment)
+			assertMirroredProjectEnvSecret(t, opts, runOpts.Project, runOpts.Environment, clusterName)
+			assertWorkflowRepoEnvArtifacts(t, opts.OutputSubdir, runID, clusterName)
+		})
+	}
+}
+
 func currentK3dContext(t *testing.T) string {
 	t.Helper()
 
@@ -430,4 +518,178 @@ func assertProjectEnvInjectionOnJob(t *testing.T, opts Options, jobName, project
 	if lines[2] != secretName {
 		t.Fatalf("expected mounted secret %s on job %s, got %q", secretName, jobName, lines[2])
 	}
+}
+
+func ensureNamespaces(t *testing.T, opts Options) {
+	t.Helper()
+
+	for _, namespace := range []string{envSecretNamespace, opts.Namespace} {
+		manifest := fmt.Sprintf("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n", namespace)
+		if _, err := runKubectl(context.Background(), opts, manifest, "apply", "-f", "-"); err != nil {
+			t.Fatalf("ensure namespace %s: %v", namespace, err)
+		}
+	}
+}
+
+func writeK3dKubeconfig(t *testing.T, clusterName string) string {
+	t.Helper()
+
+	out, err := exec.Command("k3d", "kubeconfig", "get", clusterName).Output()
+	if err != nil {
+		t.Fatalf("resolve kubeconfig for %s: %v", clusterName, err)
+	}
+
+	path := filepath.Join(t.TempDir(), clusterName+".kubeconfig")
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatalf("write kubeconfig for %s: %v", clusterName, err)
+	}
+	return path
+}
+
+func writeRepoEnvWorkflow(t *testing.T) string {
+	t.Helper()
+
+	workflow := "/** @jsxImportSource smithers-orchestrator */\n" +
+		"import { $ } from \"bun\";\n" +
+		"import { existsSync, mkdirSync, writeFileSync } from \"node:fs\";\n" +
+		"import { join } from \"node:path\";\n" +
+		"import { createSmithers, Workflow, Task } from \"smithers-orchestrator\";\n" +
+		"import { z } from \"zod\";\n\n" +
+		"const { smithers, outputs } = createSmithers(\n" +
+		"  {\n" +
+		"    report: z.object({\n" +
+		"      repoCloned: z.boolean(),\n" +
+		"      databaseURL: z.string(),\n" +
+		"      clusterName: z.string(),\n" +
+		"    }),\n" +
+		"  },\n" +
+		"  { dbPath: \"workflows/repo-env-check.db\" },\n" +
+		");\n\n" +
+		"export default smithers((ctx) => {\n" +
+		"  const workdir = process.cwd();\n" +
+		"  const clusterName = String(ctx.input.clusterName ?? \"unknown\");\n" +
+		"  const repoURL = process.env.SMITHERS_JJ_REPO ?? \"\";\n" +
+		"  const repoDir = join(workdir, \"repo-check\");\n\n" +
+		"  return (\n" +
+		"    <Workflow name=\"repo-env-check\">\n" +
+		"      <Task id=\"verify-repo-and-env\" output={outputs.report}>\n" +
+		"        {async () => {\n" +
+		"          mkdirSync(join(workdir, \"artifacts\"), { recursive: true });\n" +
+		"          const databaseURL = process.env.DATABASE_URL ?? \"\";\n" +
+		"          if (!databaseURL) {\n" +
+		"            throw new Error(\"DATABASE_URL missing from workflow env\");\n" +
+		"          }\n\n" +
+		"          let repoCloned = false;\n" +
+		"          if (repoURL) {\n" +
+		"            await $`git clone --depth=1 ${repoURL} ${repoDir}`.cwd(workdir);\n" +
+		"            repoCloned = existsSync(join(repoDir, \".git\")) || existsSync(join(repoDir, \".jj\"));\n" +
+		"            if (!repoCloned) {\n" +
+		"              throw new Error(\"repo clone missing .git/.jj metadata\");\n" +
+		"            }\n" +
+		"          }\n\n" +
+		"          const report = { repoCloned, databaseURL, clusterName };\n" +
+		"          writeFileSync(join(workdir, \"artifacts\", \"report.json\"), JSON.stringify(report, null, 2));\n" +
+		"          return report;\n" +
+		"        }}\n" +
+		"      </Task>\n" +
+		"    </Workflow>\n" +
+		"  );\n" +
+		"});\n"
+
+	path := filepath.Join(t.TempDir(), "repo-env-check.tsx")
+	if err := os.WriteFile(path, []byte(workflow), 0o644); err != nil {
+		t.Fatalf("write workflow fixture: %v", err)
+	}
+	return path
+}
+
+func assertMirroredProjectEnvSecret(t *testing.T, opts Options, project, environment, clusterName string) {
+	t.Helper()
+
+	data, err := runenv.GetSecretData(context.Background(), runenv.Options{
+		Project:   project,
+		Env:       environment,
+		Namespace: opts.Namespace,
+		Context:   opts.KubeContext,
+	})
+	if err != nil {
+		t.Fatalf("resolve mirrored env secret in %s: %v", opts.Namespace, err)
+	}
+	expected := "postgres://" + clusterName
+	if value := data["DATABASE_URL"]; value != expected {
+		t.Fatalf("expected mirrored env secret DATABASE_URL %q, got %q", expected, value)
+	}
+}
+
+func assertWorkflowRepoEnvArtifacts(t *testing.T, outputSubdir, runID, clusterName string) {
+	t.Helper()
+
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+
+	reportPath := filepath.Join(repoRoot, outputSubdir, sanitizeName(runID), "workdir", "artifacts", "report.json")
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatalf("read workflow artifact report %s: %v", reportPath, err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `"repoCloned": true`) {
+		t.Fatalf("expected cloned repo in report, got %s", text)
+	}
+	if !strings.Contains(text, `"databaseURL": "postgres://`+clusterName+`"`) {
+		t.Fatalf("expected cluster-specific DATABASE_URL in report, got %s", text)
+	}
+	if !strings.Contains(text, `"clusterName": "`+clusterName+`"`) {
+		t.Fatalf("expected cluster name in report, got %s", text)
+	}
+}
+
+func ensureK3dRegistryWorkflowImage(t *testing.T, clusterName string) string {
+	t.Helper()
+
+	sourceImage := strings.TrimSpace(os.Getenv("FABRIK_K3D_SOURCE_IMAGE"))
+	if sourceImage == "" {
+		sourceImage = "fabrik-smithers:dev"
+	}
+
+	port := "5111"
+	switch clusterName {
+	case "dev-single":
+		port = "5111"
+	case "dev-multi":
+		port = "5112"
+	default:
+		t.Fatalf("unsupported k3d cluster %s", clusterName)
+	}
+
+	hostRef := "localhost:" + port + "/fabrik-smithers:dev"
+	if out, err := exec.Command("docker", "tag", sourceImage, hostRef).CombinedOutput(); err != nil {
+		t.Fatalf("tag workflow image for %s: %v\n%s", clusterName, err, strings.TrimSpace(string(out)))
+	}
+	if out, err := exec.Command("docker", "push", hostRef).CombinedOutput(); err != nil {
+		t.Fatalf("push workflow image for %s: %v\n%s", clusterName, err, strings.TrimSpace(string(out)))
+	}
+
+	req, err := http.NewRequest(http.MethodHead, "http://localhost:"+port+"/v2/fabrik-smithers/manifests/dev", nil)
+	if err != nil {
+		t.Fatalf("build registry digest request for %s: %v", clusterName, err)
+	}
+	req.Header.Set("Accept", manifestAcceptHeader)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("resolve registry digest for %s: %v", clusterName, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("resolve registry digest for %s: unexpected status %s", clusterName, resp.Status)
+	}
+
+	digest := strings.TrimSpace(resp.Header.Get("Docker-Content-Digest"))
+	if digest == "" {
+		t.Fatalf("registry digest response for %s did not include Docker-Content-Digest", clusterName)
+	}
+
+	return clusterName + "-registry:" + port + "/fabrik-smithers@" + digest
 }

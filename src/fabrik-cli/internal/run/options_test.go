@@ -2,6 +2,8 @@ package run
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -235,5 +237,28 @@ func TestValidateOptionsRejectsInvalidEnvironmentName(t *testing.T) {
 	}
 	if err := validateOptions(opts); err == nil {
 		t.Fatalf("expected validation error for invalid environment name")
+	}
+}
+
+func TestValidateOptionsRequiresEnvWhenEnvFileIsSet(t *testing.T) {
+	dir := t.TempDir()
+	envFile := filepath.Join(dir, ".env.dispatch")
+	if err := os.WriteFile(envFile, []byte("DATABASE_URL=postgres://demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := Options{
+		RunID:       "r1",
+		SpecPath:    "specs/a.yaml",
+		Project:     "demo",
+		EnvFile:     envFile,
+		Image:       "repo/image@sha256:abcdef",
+		Namespace:   "fabrik-runs",
+		PVCSize:     "1Gi",
+		JobCommand:  "echo hi",
+		WaitTimeout: "5m",
+	}
+	if err := validateOptions(opts); err == nil {
+		t.Fatalf("expected validation error when --env-file is set without --env")
 	}
 }

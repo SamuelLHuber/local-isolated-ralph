@@ -44,6 +44,7 @@ func newRunCommand(runMode string) *cobra.Command {
 	flags.StringVar(&opts.SpecPath, "spec", "", "Path to the run spec")
 	flags.StringVar(&opts.Project, "project", "", "Project ID (DNS-1123)")
 	flags.StringVar(&opts.Environment, "env", "", "Project environment name to inject from fabrik-system")
+	flags.StringVar(&opts.EnvFile, "env-file", "", "Optional dotenv file to upsert into fabrik-system for --project/--env before dispatch")
 	flags.StringVar(&opts.Image, "image", "", "Immutable image reference for the job; optional in workflow mode when GHCR auto-resolution is configured")
 	flags.StringVar(&opts.CronSchedule, "cron", "", "Cron schedule for a recurring CronJob instead of a one-shot Job")
 	flags.StringVar(&opts.WorkflowPath, "workflow-path", "", "Path to a local workflow file to mount into the job")

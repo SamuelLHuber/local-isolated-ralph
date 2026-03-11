@@ -18,8 +18,10 @@ type Options struct {
 	SpecPath           string
 	Project            string
 	Environment        string
+	EnvFile            string
 	Image              string
 	WorkflowPath       string
+	WorkflowBundle     *WorkflowBundle
 	CronSchedule       string
 	InputJSON          string
 	FabrikSyncFile     string
@@ -61,6 +63,14 @@ func validateOptions(opts Options) error {
 	if strings.TrimSpace(opts.Environment) != "" {
 		if !projectIDPattern.MatchString(opts.Environment) || len(opts.Environment) > 63 {
 			return errors.New("environment name must be DNS-1123 compliant: lowercase alphanumeric + hyphens, max 63 chars")
+		}
+	}
+	if strings.TrimSpace(opts.EnvFile) != "" {
+		if strings.TrimSpace(opts.Environment) == "" {
+			return errors.New("missing required flag: --env when --env-file is set")
+		}
+		if _, err := os.Stat(opts.EnvFile); err != nil {
+			return fmt.Errorf("failed to read env file %q: %w", opts.EnvFile, err)
 		}
 	}
 	if strings.TrimSpace(opts.Image) == "" {
@@ -123,7 +133,7 @@ func (opts Options) Summary() string {
 		target = trimK8sName("fabrik-cron-" + opts.RunID)
 	}
 	return fmt.Sprintf(
-		"run draft\n  mode: %s\n  target: %s\n  run-id: %s\n  spec: %s\n  project: %s\n  image: %s\n  namespace: %s\n  context: %s\n  pvc-size: %s\n  cron: %s\n  pre-clean: %t\n  jj-repo: %s\n  jj-bookmark: %s",
+		"run draft\n  mode: %s\n  target: %s\n  run-id: %s\n  spec: %s\n  project: %s\n  image: %s\n  namespace: %s\n  context: %s\n  pvc-size: %s\n  cron: %s\n  pre-clean: %t\n  env-file: %s\n  jj-repo: %s\n  jj-bookmark: %s",
 		mode,
 		target,
 		opts.RunID,
@@ -135,6 +145,7 @@ func (opts Options) Summary() string {
 		emptyDefault(opts.PVCSize, "<none>"),
 		emptyDefault(opts.CronSchedule, "<none>"),
 		opts.PreClean,
+		emptyDefault(opts.EnvFile, "<none>"),
 		emptyDefault(opts.JJRepo, "<none>"),
 		emptyDefault(opts.JJBookmark, "<none>"),
 	)
