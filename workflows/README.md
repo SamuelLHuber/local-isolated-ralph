@@ -35,6 +35,7 @@ Required runtime inputs:
 - `SMITHERS_JJ_REPO` via `--jj-repo`
 - `FIREWORKS_API_KEY` in `--env-file` for the PI agent model
 - `GITHUB_TOKEN` or `GH_TOKEN` in `--env-file` if the repo is private
+- `JJ_USER_NAME` and `JJ_USER_EMAIL` in `--env-file` when the workflow is expected to create or push commits
 
 Optional runtime inputs:
 

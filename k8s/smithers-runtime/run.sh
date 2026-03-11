@@ -54,6 +54,19 @@ if [ -n "${FIREWORKS_API_KEY:-}" ]; then
 EOF
 fi
 
+VCS_USER_NAME="${JJ_USER_NAME:-${GIT_AUTHOR_NAME:-${GIT_COMMITTER_NAME:-}}}"
+VCS_USER_EMAIL="${JJ_USER_EMAIL:-${GIT_AUTHOR_EMAIL:-${GIT_COMMITTER_EMAIL:-}}}"
+if [ -n "$VCS_USER_NAME" ] && [ -n "$VCS_USER_EMAIL" ]; then
+  export GIT_AUTHOR_NAME="$VCS_USER_NAME"
+  export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-$VCS_USER_NAME}"
+  export GIT_AUTHOR_EMAIL="$VCS_USER_EMAIL"
+  export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-$VCS_USER_EMAIL}"
+  git config --global user.name "$VCS_USER_NAME"
+  git config --global user.email "$VCS_USER_EMAIL"
+  jj config set --user user.name "$VCS_USER_NAME" >/dev/null
+  jj config set --user user.email "$VCS_USER_EMAIL" >/dev/null
+fi
+
 GITHUB_AUTH_TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
 if [ -n "$GITHUB_AUTH_TOKEN" ]; then
   ASKPASS_PATH="/tmp/fabrik-git-askpass.sh"
