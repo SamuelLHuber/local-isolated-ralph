@@ -1,11 +1,9 @@
 package run
 
 import (
-	"context"
 	"errors"
 	runenv "fabrik-cli/internal/env"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -203,58 +201,4 @@ func resolveLocalPath(path string) (string, error) {
 		return candidate, nil
 	}
 	return filepath.Abs(path)
-}
-
-func guideGitHubEnvAuth(ctx context.Context, in io.Reader, out io.Writer, opts Options) error {
-	if strings.TrimSpace(opts.WorkflowPath) == "" || strings.TrimSpace(opts.JJRepo) == "" || !isGitHubRepoURL(opts.JJRepo) {
-		return nil
-	}
-
-	if strings.TrimSpace(opts.EnvFile) == "" {
-		if _, err := fmt.Fprintln(out, "note: this workflow clones a GitHub repo via --jj-repo. Public repos work without extra auth, but private GitHub repos need GITHUB_TOKEN or GH_TOKEN in --env-file so the Job pod can clone non-interactively."); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	data, err := runenv.LoadDotenvFile(opts.EnvFile)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(data["GITHUB_TOKEN"]) != "" || strings.TrimSpace(data["GH_TOKEN"]) != "" {
-		return nil
-	}
-
-	note := fmt.Sprintf("GitHub auth is not present in %s. Public repos work without it, but private GitHub repos need GITHUB_TOKEN or GH_TOKEN in that env file for in-cluster clone auth.", opts.EnvFile)
-	if !opts.Interactive {
-		_, err := fmt.Fprintln(out, "note: "+note)
-		return err
-	}
-
-	addToken, err := confirmAction(ctx, in, out, opts, note+" Add GITHUB_TOKEN to this env file now?", "Write token")
-	if err != nil || !addToken {
-		return err
-	}
-
-	defaultToken := strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
-	if defaultToken == "" {
-		defaultToken = strings.TrimSpace(os.Getenv("GH_TOKEN"))
-	}
-	token, err := promptSecretValue(ctx, in, out, opts, "GitHub token", defaultToken)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(token) == "" {
-		return errors.New("github token input was empty")
-	}
-	if err := runenv.UpsertDotenvValue(opts.EnvFile, "GITHUB_TOKEN", token); err != nil {
-		return fmt.Errorf("update env file %s with GITHUB_TOKEN: %w", opts.EnvFile, err)
-	}
-	_, err = fmt.Fprintf(out, "updated %s with GITHUB_TOKEN for GitHub workflow auth\n", opts.EnvFile)
-	return err
-}
-
-func isGitHubRepoURL(raw string) bool {
-	value := strings.ToLower(strings.TrimSpace(raw))
-	return strings.Contains(value, "github.com/")
 }

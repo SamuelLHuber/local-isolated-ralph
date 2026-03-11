@@ -156,52 +156,21 @@ func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opt
 }
 
 func ResolveOptions(ctx context.Context, in io.Reader, out io.Writer, opts Options) (Options, error) {
-	var err error
-	if opts.Interactive {
-		opts, err = promptForMissing(ctx, in, out, opts)
-		if err != nil {
-			return Options{}, err
-		}
-	}
-	if strings.TrimSpace(opts.WorkflowPath) != "" {
-		opts.WorkflowPath, err = resolveLocalPath(opts.WorkflowPath)
-		if err != nil {
-			return Options{}, err
-		}
-		opts.WorkflowBundle, err = resolveWorkflowBundle(opts.WorkflowPath)
-		if err != nil {
-			return Options{}, err
-		}
-		opts.SyncBundle, err = resolveSyncBundle(opts)
-		if err != nil {
-			return Options{}, err
-		}
-		if strings.TrimSpace(opts.Image) == "" {
-			opts.Image, err = resolveDefaultWorkflowImage(ctx)
-			if err != nil {
-				return Options{}, err
-			}
-		}
-	}
-	if strings.TrimSpace(opts.EnvFile) != "" {
-		opts.EnvFile, err = resolveLocalPath(opts.EnvFile)
-		if err != nil {
-			return Options{}, err
-		}
-	}
-	if err := guideGitHubEnvAuth(ctx, in, out, opts); err != nil {
+	preflight, err := runPreflight(ctx, in, out, opts)
+	if err != nil {
 		return Options{}, err
 	}
-	if !opts.RenderOnly && !isImmutableImageReference(opts.Image) {
-		opts.Image, err = resolveImmutableImage(ctx, opts.Image)
+	resolved := preflight.Options
+	if !resolved.RenderOnly && !isImmutableImageReference(resolved.Image) {
+		resolved.Image, err = resolveImmutableImage(ctx, resolved.Image)
 		if err != nil {
 			return Options{}, fmt.Errorf("resolve immutable image for dispatch: %w", err)
 		}
 	}
-	if err := validateOptions(opts); err != nil {
+	if err := validateOptions(resolved); err != nil {
 		return Options{}, err
 	}
-	return opts, nil
+	return resolved, nil
 }
 
 func ensureProjectEnvSecretExists(ctx context.Context, opts Options) error {
