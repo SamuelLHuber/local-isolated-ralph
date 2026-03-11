@@ -109,7 +109,7 @@ func Pull(ctx context.Context, stdout io.Writer, opts PullOptions) error {
 		_, err := io.WriteString(stdout, content)
 		return err
 	}
-	return os.WriteFile(opts.OutputPath, []byte(content), 0o600)
+	return writePrivateFile(opts.OutputPath, []byte(content))
 }
 
 func Validate(ctx context.Context, stdout io.Writer, opts Options) error {
@@ -411,7 +411,7 @@ func parseDotenv(content string) (map[string]string, error) {
 		if _, exists := data[key]; exists {
 			return nil, fmt.Errorf("duplicate key %s in dotenv input", key)
 		}
-		data[key] = strings.Trim(value, `"'`)
+		data[key] = normalizeDotenvValue(value)
 	}
 	return data, nil
 }
@@ -500,4 +500,48 @@ func mergeEnv(base []string, overlay map[string]string) []string {
 
 func strconvQuote(value string) string {
 	return fmt.Sprintf("%q", value)
+}
+
+func writePrivateFile(path string, content []byte) error {
+	dir := filepath.Dir(path)
+	file, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp file for %s: %w", path, err)
+	}
+
+	tempPath := file.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tempPath)
+		}
+	}()
+
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("chmod temp file for %s: %w", path, err)
+	}
+	if _, err := file.Write(content); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close temp file for %s: %w", path, err)
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return fmt.Errorf("replace %s: %w", path, err)
+	}
+	cleanup = false
+	return nil
+}
+
+func normalizeDotenvValue(value string) string {
+	if len(value) >= 2 {
+		first := value[0]
+		last := value[len(value)-1]
+		if (first == '\'' || first == '"') && last == first {
+			return value[1 : len(value)-1]
+		}
+	}
+	return value
 }

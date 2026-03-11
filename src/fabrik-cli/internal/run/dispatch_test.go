@@ -269,7 +269,7 @@ func TestExecuteDryRunWithMissingProjectEnvFailsBeforeKubectlApply(t *testing.T)
 		SpecPath:    "specs/demo.yaml",
 		Project:     "demo",
 		Environment: "dev",
-		Image:       "repo/image:v1.2.3",
+		Image:       "repo/image@sha256:abcdef",
 		Namespace:   "fabrik-runs",
 		PVCSize:     "1Gi",
 		JobCommand:  "echo hi",
