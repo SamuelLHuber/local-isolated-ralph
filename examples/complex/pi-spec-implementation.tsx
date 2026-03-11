@@ -12,7 +12,7 @@ import {
 import { $ } from "bun";
 import { existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { z } from "zod";
 import { prepareWorkspaces, pushBookmark, snapshotChange } from "./utils/jj-shell";
 
@@ -713,7 +713,7 @@ export default smithers((ctx) => {
                 "Missing FIREWORKS_API_KEY. Sync it through `--env-file` so the PI agent can use the Fireworks-backed Kimi model inside the Job pod.",
               );
             }
-            await $`jj git clone ${jjRepo} ${REPO_ROOT}`.cwd(WORKDIR_ROOT);
+            await $`jj git clone ${jjRepo} ${basename(REPO_ROOT)}`.cwd(dirname(REPO_ROOT));
             return {
               ticketId: "prepare-repo",
               status: "done",
