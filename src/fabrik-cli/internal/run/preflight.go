@@ -10,24 +10,41 @@ import (
 	"strings"
 )
 
+// RequirementKind identifies a promptable or advisory preflight concern that can
+// be derived from generic CLI inputs before Kubernetes dispatch starts.
 type RequirementKind string
 
 const (
 	requirementGitHubToken RequirementKind = "github_token"
 )
 
+// Requirement describes one actionable preflight item.
+//
+// Requirements are intentionally workflow-agnostic. The CLI should only model
+// concerns it can infer from generic dispatch inputs, such as GitHub clone auth
+// for a GitHub-backed --jj-repo. Workflow-specific secrets stay in workflow code.
 type Requirement struct {
 	Kind    RequirementKind
 	Message string
 	EnvFile string
 }
 
+// PreflightResult contains the resolved options plus any advisory notes and
+// actionable requirements discovered before validation and dispatch.
 type PreflightResult struct {
 	Options      Options
 	Notes        []string
 	Requirements []Requirement
 }
 
+// runPreflight resolves local inputs and interactive requirements before
+// immutable-image resolution and final option validation.
+//
+// The sequencing is intentional:
+// 1. prompt for generic missing inputs,
+// 2. resolve local workflow/env paths and bundles,
+// 3. derive advisory notes and promptable requirements,
+// 4. satisfy interactive requirements, such as writing GitHub auth into --env-file.
 func runPreflight(ctx context.Context, in io.Reader, out io.Writer, opts Options) (PreflightResult, error) {
 	var err error
 	if opts.Interactive {
@@ -103,6 +120,8 @@ func resolveEnvInputs(opts Options) (Options, error) {
 	return opts, nil
 }
 
+// collectPreflightRequirements derives notes and requirements from generic
+// dispatch inputs without interpreting workflow-specific runtime needs.
 func collectPreflightRequirements(opts Options) (PreflightResult, error) {
 	result := PreflightResult{Options: opts}
 
@@ -141,6 +160,9 @@ func emitPreflightNotes(out io.Writer, notes []string) error {
 	return nil
 }
 
+// satisfyPreflightRequirements applies the ordered set of requirements to the
+// current options. Each requirement may emit notes, prompt the user, or update
+// local inputs such as the selected env file.
 func satisfyPreflightRequirements(ctx context.Context, in io.Reader, out io.Writer, opts Options, requirements []Requirement) (Options, error) {
 	for _, requirement := range requirements {
 		var err error
@@ -161,6 +183,9 @@ func satisfyPreflightRequirement(ctx context.Context, in io.Reader, out io.Write
 	}
 }
 
+// satisfyGitHubTokenRequirement handles the one GitHub-specific preflight rule
+// the CLI can infer generically: a GitHub-backed repo clone may need GitHub auth
+// in the synced env file for private repos. Public repos remain valid without it.
 func satisfyGitHubTokenRequirement(ctx context.Context, in io.Reader, out io.Writer, opts Options, requirement Requirement) (Options, error) {
 	if !opts.Interactive {
 		if _, err := fmt.Fprintln(out, "note: "+requirement.Message); err != nil {
@@ -197,6 +222,9 @@ func satisfyGitHubTokenRequirement(ctx context.Context, in io.Reader, out io.Wri
 	return opts, nil
 }
 
+// isGitHubRepoWorkflow reports whether generic dispatch inputs imply GitHub repo
+// clone behavior. This is the boundary where the CLI can help without hardcoding
+// workflow-specific provider or model secrets.
 func isGitHubRepoWorkflow(opts Options) bool {
 	if strings.TrimSpace(opts.WorkflowPath) == "" || strings.TrimSpace(opts.JJRepo) == "" {
 		return false
