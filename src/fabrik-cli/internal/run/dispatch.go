@@ -172,7 +172,7 @@ func ResolveOptions(ctx context.Context, in io.Reader, out io.Writer, opts Optio
 			}
 		}
 	}
-	if !opts.RenderOnly && !opts.DryRun && !isImmutableImageReference(opts.Image) {
+	if !opts.RenderOnly && !isImmutableImageReference(opts.Image) {
 		opts.Image, err = resolveImmutableImage(ctx, opts.Image)
 		if err != nil {
 			return Options{}, fmt.Errorf("resolve immutable image for dispatch: %w", err)

@@ -82,8 +82,8 @@ func TestValidateOptionsAllowsPinnedTagForDryRun(t *testing.T) {
 		WaitTimeout: "5m",
 		DryRun:      true,
 	}
-	if err := validateOptions(opts); err != nil {
-		t.Fatalf("expected dry-run validation success, got error: %v", err)
+	if err := validateOptions(opts); err == nil {
+		t.Fatalf("expected dry-run validation error for mutable image")
 	}
 }
 
@@ -153,8 +153,10 @@ func TestResolveOptionsDoesNotConvertTaggedImageForRenderOnly(t *testing.T) {
 func TestResolveOptionsDoesNotConvertTaggedImageForDryRun(t *testing.T) {
 	originalResolver := resolveImmutableImage
 	resolveImmutableImage = func(_ context.Context, image string) (string, error) {
-		t.Fatalf("did not expect dry-run flow to resolve image %q", image)
-		return "", nil
+		if image != "repo/image:v1.2.3" {
+			t.Fatalf("expected original image to be resolved, got %q", image)
+		}
+		return "repo/image@sha256:abcdef", nil
 	}
 	defer func() {
 		resolveImmutableImage = originalResolver
@@ -176,8 +178,8 @@ func TestResolveOptionsDoesNotConvertTaggedImageForDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected resolution success, got error: %v", err)
 	}
-	if resolved.Image != "repo/image:v1.2.3" {
-		t.Fatalf("expected original tagged image, got %q", resolved.Image)
+	if resolved.Image != "repo/image@sha256:abcdef" {
+		t.Fatalf("expected immutable image, got %q", resolved.Image)
 	}
 }
 

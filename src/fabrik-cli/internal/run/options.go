@@ -66,7 +66,7 @@ func validateOptions(opts Options) error {
 	if strings.TrimSpace(opts.Image) == "" {
 		return errors.New("missing required flag: --image")
 	}
-	if !opts.RenderOnly && !opts.DryRun && !isImmutableImageReference(opts.Image) {
+	if !opts.RenderOnly && !isImmutableImageReference(opts.Image) {
 		return errors.New("image must be immutable: use a digest reference like repo/image@sha256:<digest>")
 	}
 	if strings.TrimSpace(opts.Namespace) == "" {
