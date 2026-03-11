@@ -206,9 +206,9 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 	if strings.TrimSpace(opts.WorkflowPath) == "" {
 		b.WriteString(indent + "        command: [\"sh\", \"-lc\", " + yamlQuote(opts.JobCommand) + "]\n")
 	} else {
-		bootstrap := "mkdir -p /workspace/workdir/workflows /workspace/.smithers"
+		bootstrap := "mkdir -p /workspace/workdir /workspace/.fabrik /workspace/.smithers"
 		if workflowSecretName != "" {
-			bootstrap += " && if [ -f /opt/fabrik-workflow/bundle.tgz ]; then tar -xzf /opt/fabrik-workflow/bundle.tgz -C /workspace/workdir; fi"
+			bootstrap += " && if [ -f /opt/fabrik-workflow/bundle.tgz ]; then tar -xzf /opt/fabrik-workflow/bundle.tgz -C /workspace/.fabrik; fi"
 		}
 		if syncSecretName != "" {
 			bootstrap += " && if [ -f /opt/fabrik-sync/bundle.tgz ]; then tar -xzf /opt/fabrik-sync/bundle.tgz -C /workspace/workdir; fi"
@@ -229,7 +229,7 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 	}
 	if strings.TrimSpace(opts.WorkflowPath) != "" {
 		b.WriteString(indent + "          - name: SMITHERS_WORKFLOW_PATH\n")
-		b.WriteString(indent + "            value: " + yamlQuote("/workspace/workdir/"+opts.WorkflowBundle.WorkdirPath) + "\n")
+		b.WriteString(indent + "            value: " + yamlQuote("/workspace/.fabrik/"+opts.WorkflowBundle.WorkdirPath) + "\n")
 		b.WriteString(indent + "          - name: SMITHERS_INPUT_JSON\n")
 		b.WriteString(indent + "            value: " + yamlQuote(opts.InputJSON) + "\n")
 		if strings.TrimSpace(opts.JJRepo) != "" {

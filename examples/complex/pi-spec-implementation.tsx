@@ -17,9 +17,10 @@ import { z } from "zod";
 import { prepareWorkspaces, pushBookmark, snapshotChange } from "./utils/jj-shell";
 
 const WORKDIR_ROOT = process.cwd();
-const REPO_ROOT = resolve(WORKDIR_ROOT, "repo");
-const WORKSPACES_DIR = resolve(WORKDIR_ROOT, "workspaces", ".jj-workspaces");
-const DB_PATH = resolve(WORKDIR_ROOT, "workflows", "pi-spec-implementation.db");
+const CONTROL_ROOT = "/workspace/.fabrik";
+const REPO_ROOT = WORKDIR_ROOT;
+const WORKSPACES_DIR = resolve(CONTROL_ROOT, "workspaces", ".jj-workspaces");
+const DB_PATH = resolve(CONTROL_ROOT, "workflows", "pi-spec-implementation.db");
 const jjRepo = process.env.SMITHERS_JJ_REPO?.trim() ?? "";
 const jjBookmark = process.env.SMITHERS_JJ_BOOKMARK?.trim() ?? "";
 
@@ -704,7 +705,7 @@ export default smithers((ctx) => {
             }
             if (!jjRepo) {
               throw new Error(
-                "Missing SMITHERS_JJ_REPO. This sample expects `fabrik run --jj-repo <repo-url>` so it can clone the target repo into /workspace/workdir/repo.",
+                "Missing SMITHERS_JJ_REPO. This sample expects `fabrik run --jj-repo <repo-url>` so it can clone the target repo into /workspace/workdir.",
               );
             }
             if (!process.env.FIREWORKS_API_KEY?.trim()) {

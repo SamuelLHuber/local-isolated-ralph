@@ -174,7 +174,7 @@ Rules enforced by the CLI:
 - files larger than 256 KiB are rejected
 - total injected content larger than 1 MiB is rejected
 
-When present, `.fabrik-sync` is bundled locally, mounted into the Job as a Secret, and extracted into `/workspace/workdir` before the workflow starts. You can override the manifest location with `--fabrik-sync-file`.
+When present, `.fabrik-sync` is bundled locally, mounted into the Job as a Secret, and extracted into `/workspace/workdir` before the workflow starts. Workflow source code is staged separately under `/workspace/.fabrik/workflows` so repo-backed workflows can clone directly into `/workspace/workdir` and let Smithers see the JJ/Git repository at its execution root. You can override the sync manifest location with `--fabrik-sync-file`.
 
 Verification path used for this implementation:
 

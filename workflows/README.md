@@ -22,7 +22,8 @@ fabrik run \
 
 What it does:
 
-- clones the target repo into `/workspace/workdir/repo`
+- stages workflow code under `/workspace/.fabrik/workflows`
+- clones the target repo into `/workspace/workdir`
 - reads `todo.md` from the cloned repo root
 - selects the next highest-priority unfinished todo item
 - blocks if the todo item is missing `Spec tie-in`, `Guarantees`, `Verification to build first`, or `Required checks`
