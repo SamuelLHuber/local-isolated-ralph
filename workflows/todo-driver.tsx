@@ -12,6 +12,7 @@ import { $ } from "bun";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
+import { runVerificationJob } from "./utils/k8s-jobs";
 import { prepareWorkspaces, pushBookmark, snapshotChange } from "./utils/jj-shell";
 
 const WORKDIR_ROOT = process.cwd();
@@ -172,6 +173,85 @@ function piWriteAt(workdir: string): PiAgent {
 
 function itemWorkspace(itemId: string): string {
   return resolve(WORKSPACES_DIR, itemId);
+}
+
+function sanitizeK8sName(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 63);
+}
+
+function requiredSetting(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`Missing required environment setting ${name}.`);
+  }
+  return value;
+}
+
+function verifierCommands(item: TodoItem, workdir: string): string[] {
+  if (item.id === "runs-inspection") {
+    return [
+      `cd ${workdir}/src/fabrik-cli`,
+      "go test ./...",
+      "go build -o /tmp/fabrik-verify .",
+      "VERIFY_RUN_ID=fabrik-verify-runs-$(date +%s)",
+      "/tmp/fabrik-verify run --run-id \"$VERIFY_RUN_ID\" --spec specs/verify-runs.yaml --project verify --image \"$FABRIK_RUN_IMAGE\" --namespace \"$KUBERNETES_NAMESPACE\" --pvc-size 1Gi --job-command 'echo cluster-verify' --interactive=false",
+      "kubectl -n \"$KUBERNETES_NAMESPACE\" wait --for=condition=complete \"job/fabrik-$VERIFY_RUN_ID\" --timeout=180s",
+      "/tmp/fabrik-verify runs list --namespace \"$KUBERNETES_NAMESPACE\"",
+      "/tmp/fabrik-verify runs show --run-id \"$VERIFY_RUN_ID\" --namespace \"$KUBERNETES_NAMESPACE\"",
+      "/tmp/fabrik-verify run logs --run-id \"$VERIFY_RUN_ID\" --namespace \"$KUBERNETES_NAMESPACE\"",
+      "kubectl -n \"$KUBERNETES_NAMESPACE\" delete job \"fabrik-$VERIFY_RUN_ID\" --ignore-not-found",
+      "kubectl -n \"$KUBERNETES_NAMESPACE\" delete pvc \"data-fabrik-$VERIFY_RUN_ID\" --ignore-not-found",
+    ];
+  }
+
+  throw new Error(`No deterministic verifier is wired for todo item ${item.id}.`);
+}
+
+async function runTodoValidation(item: TodoItem): Promise<Validate> {
+  const workdir = itemWorkspace(item.id);
+  const namespace = requiredSetting("KUBERNETES_NAMESPACE");
+  const nodeName = requiredSetting("KUBERNETES_NODE_NAME");
+  const image = requiredSetting("FABRIK_RUN_IMAGE");
+  const pvcName = requiredSetting("FABRIK_WORKSPACE_PVC");
+  const runID = requiredSetting("SMITHERS_RUN_ID");
+  const serviceAccountName = sanitizeK8sName(`fabrik-runner-${runID}`);
+  const commands = verifierCommands(item, workdir);
+  const jobName = sanitizeK8sName(`${runID}-${item.id}-verify`);
+
+  const verification = await runVerificationJob({
+    name: jobName,
+    image,
+    namespace,
+    serviceAccountName,
+    pvcName,
+    nodeName,
+    workspacePath: workdir,
+    commands,
+    labels: {
+      "fabrik.sh/run-id": runID,
+      "fabrik.sh/verify-target": item.id,
+    },
+  });
+
+  const evidence = [
+    `Verification job: ${verification.jobName}`,
+    `Verification pod: ${verification.podName || "pending"}`,
+    verification.summary,
+  ];
+  if (verification.logs.trim() !== "") {
+    evidence.push(`Verifier logs:\n${verification.logs.trim()}`);
+  }
+
+  return {
+    allPassed: verification.passed,
+    commands,
+    evidence,
+    failingSummary: verification.passed ? null : verification.summary,
+  };
 }
 
 function latestPlannedItems(ctx: WorkflowCtx): TodoItem[] {
@@ -484,28 +564,10 @@ Return ONLY JSON matching the schema.`}
           <Task
             id={`${item.id}:validate`}
             output={outputs.validate}
-            agent={piWriteAt(workdir)}
             timeoutMs={TASK_TIMEOUT_MS}
             retries={1}
           >
-            {`Validate this todo item from the workspace:
-${workdir}
-
-Todo item:
-${item.title}
-
-Verification that must exist:
-${item.verificationToBuildFirst.map((entry) => `- ${entry}`).join("\n")}
-
-Required checks:
-${item.requiredChecks.map((entry) => `- ${entry}`).join("\n")}
-
-Rules:
-- Execute the required checks exactly unless the repo makes one impossible, in which case fail validation and explain why.
-- Confirm the verification layer required by the todo item now exists.
-- Report concrete command evidence. Do not claim success without it.
-
-Return ONLY JSON matching the schema.`}
+            {() => runTodoValidation(item)}
           </Task>
 
           <ReviewGroup item={item} ctx={ctx} />

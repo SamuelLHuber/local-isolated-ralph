@@ -132,6 +132,21 @@ func TestExecuteRenderOnlyWithFabrikSyncRendersSecretAndBootstrap(t *testing.T) 
 	if !strings.Contains(rendered, "tar -xzf /opt/fabrik-workflow/bundle.tgz -C /workspace/.fabrik") {
 		t.Fatalf("expected workflow bundle extraction into control staging dir")
 	}
+	if !strings.Contains(rendered, "kind: ServiceAccount") {
+		t.Fatalf("expected rendered manifest to include workflow service account")
+	}
+	if !strings.Contains(rendered, "kind: RoleBinding") {
+		t.Fatalf("expected rendered manifest to include workflow role binding")
+	}
+	if !strings.Contains(rendered, "serviceAccountName: fabrik-runner-run-2") {
+		t.Fatalf("expected workflow pod to use per-run service account")
+	}
+	if !strings.Contains(rendered, "name: KUBERNETES_NAMESPACE") {
+		t.Fatalf("expected workflow pod to receive downward API namespace env")
+	}
+	if !strings.Contains(rendered, "name: FABRIK_WORKSPACE_PVC") {
+		t.Fatalf("expected workflow pod to receive workspace pvc env")
+	}
 }
 
 func TestExecuteRenderOnlyWithProjectEnvRendersSecretMountAndEnvFrom(t *testing.T) {
