@@ -1,0 +1,22 @@
+{
+  "v": 1,
+  "id": "spec-template",
+  "title": "Spec Title",
+  "status": "draft",
+  "version": "1.0.0",
+  "lastUpdated": "2026-02-25",
+  "supersedes": [],
+  "dependsOn": [],
+  "goals": [],
+  "nonGoals": [],
+  "req": {
+    "api": [],
+    "behavior": [],
+    "obs": []
+  },
+  "cfg": {
+    "env": []
+  },
+  "accept": [],
+  "assume": []
+}

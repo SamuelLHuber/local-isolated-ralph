@@ -1,0 +1,6 @@
+{"type":"RunStarted","runId":"local-run","timestampMs":1773223350963}
+{"type":"FrameCommitted","runId":"local-run","frameNo":1,"xmlHash":"b9e3b83bee66ca0cea11137f3ae622bf7d9f4b87a19a3b768b1d3c0bcd7f8a5c","timestampMs":1773223350984}
+{"type":"NodeStarted","runId":"local-run","nodeId":"prepare-repo","iteration":0,"attempt":1,"timestampMs":1773223351000}
+{"type":"NodeFailed","runId":"local-run","nodeId":"prepare-repo","iteration":0,"attempt":1,"error":{"name":"Error","message":"Missing SMITHERS_JJ_REPO. This sample expects `fabrik run --jj-repo <repo-url>` so it can clone the target repo into /workspace/workdir/repo.","stack":"Error: Missing SMITHERS_JJ_REPO. This sample expects `fabrik run --jj-repo <repo-url>` so it can clone the target repo into /workspace/workdir/repo.\n    at <anonymous> (/workspace/workdir/examples/complex/pi-spec-implementation.tsx:714:25)\n    at processTicksAndRejections (native:7:39)"},"timestampMs":1773223351627}
+{"type":"FrameCommitted","runId":"local-run","frameNo":2,"xmlHash":"b9e3b83bee66ca0cea11137f3ae622bf7d9f4b87a19a3b768b1d3c0bcd7f8a5c","timestampMs":1773223351632}
+{"type":"RunFailed","runId":"local-run","error":"Task failed","timestampMs":1773223351640}

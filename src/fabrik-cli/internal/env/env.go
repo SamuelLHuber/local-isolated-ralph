@@ -309,6 +309,27 @@ func GetSecretData(ctx context.Context, opts Options) (map[string]string, error)
 	return data, nil
 }
 
+func LoadDotenvFile(path string) (map[string]string, error) {
+	data, err := parseDotenvFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateSecretData(data); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func ApplySecretData(ctx context.Context, opts Options, data map[string]string) error {
+	if err := ValidateOptions(opts); err != nil {
+		return err
+	}
+	if err := validateSecretData(data); err != nil {
+		return err
+	}
+	return applySecret(ctx, opts, data)
+}
+
 func IsSecretNotFound(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "NotFound")
 }

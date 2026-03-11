@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "id": "spec-template",
+  "tdd": true,
+  "dod": [
+    "Tests written and passing",
+    "Lint/typecheck clean",
+    "Docs updated"
+  ],
+  "tasks": []
+}

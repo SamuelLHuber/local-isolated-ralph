@@ -1,0 +1,9 @@
+{"type":"RunStarted","runId":"local-private-clone-1","timestampMs":1773223575987}
+{"type":"FrameCommitted","runId":"local-private-clone-1","frameNo":1,"xmlHash":"b9e3b83bee66ca0cea11137f3ae622bf7d9f4b87a19a3b768b1d3c0bcd7f8a5c","timestampMs":1773223576008}
+{"type":"NodeStarted","runId":"local-private-clone-1","nodeId":"prepare-repo","iteration":0,"attempt":1,"timestampMs":1773223576022}
+{"type":"NodeFinished","runId":"local-private-clone-1","nodeId":"prepare-repo","iteration":0,"attempt":1,"timestampMs":1773223580535}
+{"type":"FrameCommitted","runId":"local-private-clone-1","frameNo":2,"xmlHash":"b9e3b83bee66ca0cea11137f3ae622bf7d9f4b87a19a3b768b1d3c0bcd7f8a5c","timestampMs":1773223580540}
+{"type":"NodeStarted","runId":"local-private-clone-1","nodeId":"validate-repo-layout","iteration":0,"attempt":1,"timestampMs":1773223580550}
+{"type":"NodeFailed","runId":"local-private-clone-1","nodeId":"validate-repo-layout","iteration":0,"attempt":1,"error":{"name":"Error","message":"Repo at /workspace/workdir/repo is missing specs/README.md. This sample expects a spec-driven repo cloned via --jj-repo.","stack":"Error: Repo at /workspace/workdir/repo is missing specs/README.md. This sample expects a spec-driven repo cloned via --jj-repo.\n    at children (/workspace/workdir/examples/complex/pi-spec-implementation.tsx:734:25)\n    at processTicksAndRejections (native:7:39)"},"timestampMs":1773223580996}
+{"type":"FrameCommitted","runId":"local-private-clone-1","frameNo":3,"xmlHash":"b9e3b83bee66ca0cea11137f3ae622bf7d9f4b87a19a3b768b1d3c0bcd7f8a5c","timestampMs":1773223581001}
+{"type":"RunFailed","runId":"local-private-clone-1","error":"Task failed","timestampMs":1773223581016}

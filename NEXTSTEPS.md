@@ -28,3 +28,11 @@ and ensure it's all properly tagged and indexible
 --
 
 and the rest of all the specs so far as they make sense. simplify where ever we can
+
+
+
+
+› › add a little README.md to the complex sample highlighting how we use .fabrik-sync files, env
+  variables/
+
+make sure our example repo is self contained so anyone using the example, installing fabrik cli and pointing it at their repo will get a valid job dispatch and run provided fabrik run command goes through. the smithers workflow, docker image etc need to be properly preparred so that's the contract a user of fabrik cli gets. Define workflow, point to repo -> GO GO GO

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["v", "id", "tdd", "dod", "tasks"],
+  "additionalProperties": false,
+  "properties": {
+    "v": { "type": "integer", "const": 1 },
+    "id": { "type": "string" },
+    "tdd": { "type": "boolean" },
+    "dod": { "type": "array", "items": { "type": "string" } },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "do", "verify"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "do": { "type": "string" },
+          "verify": { "type": "string" }
+        }
+      }
+    }
+  }
+}

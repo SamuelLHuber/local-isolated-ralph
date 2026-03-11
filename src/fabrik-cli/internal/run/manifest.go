@@ -3,7 +3,6 @@ package run
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -15,7 +14,7 @@ type Manifests struct {
 	JobName        string
 	CronJobName    string
 	PVCName        string
-	WorkflowConfig string
+	WorkflowSecret string
 	SyncSecret     string
 	PVCYAML        string
 	JobYAML        string
@@ -24,8 +23,8 @@ type Manifests struct {
 
 func (m Manifests) AllYAML() string {
 	parts := []string{}
-	if m.WorkflowConfig != "" {
-		parts = append(parts, m.WorkflowConfig)
+	if m.WorkflowSecret != "" {
+		parts = append(parts, m.WorkflowSecret)
 	}
 	if m.SyncSecret != "" {
 		parts = append(parts, m.SyncSecret)
@@ -92,17 +91,13 @@ func BuildManifests(opts Options) (Manifests, error) {
 		annotations["fabrik.sh/cron-schedule"] = opts.CronSchedule
 	}
 
-	workflowConfigName := ""
-	workflowConfig := ""
+	workflowSecretName := ""
+	workflowSecret := ""
 	syncSecretName := ""
 	syncSecret := ""
 	if strings.TrimSpace(opts.WorkflowPath) != "" {
-		source, err := os.ReadFile(opts.WorkflowPath)
-		if err != nil {
-			return Manifests{}, err
-		}
-		workflowConfigName = trimK8sName("fabrik-workflow-" + safeRunID)
-		workflowConfig = buildWorkflowConfigMap(opts.Namespace, workflowConfigName, string(source))
+		workflowSecretName = trimK8sName("fabrik-workflow-" + safeRunID)
+		workflowSecret = buildWorkflowSecret(opts.Namespace, workflowSecretName, opts.WorkflowBundle)
 		annotations["fabrik.sh/workflow-path"] = opts.WorkflowPath
 		if opts.SyncBundle != nil {
 			syncSecretName = trimK8sName("fabrik-sync-" + safeRunID)
@@ -112,25 +107,25 @@ func BuildManifests(opts Options) (Manifests, error) {
 	}
 
 	if opts.IsCron() {
-		cronJobYAML := buildCronJobYAML(opts, cronJobName, workflowConfigName, syncSecretName, labels, annotations)
+		cronJobYAML := buildCronJobYAML(opts, cronJobName, workflowSecretName, syncSecretName, labels, annotations)
 		return Manifests{
 			Kind:           "CronJob",
 			CronJobName:    cronJobName,
 			PVCName:        opts.CronSchedule,
-			WorkflowConfig: workflowConfig,
+			WorkflowSecret: workflowSecret,
 			SyncSecret:     syncSecret,
 			CronJobYAML:    cronJobYAML,
 		}, nil
 	}
 
 	pvcYAML := buildPVCYAML(opts, pvcName, labels)
-	jobYAML := buildJobYAML(opts, jobName, pvcName, workflowConfigName, syncSecretName, labels, annotations)
+	jobYAML := buildJobYAML(opts, jobName, pvcName, workflowSecretName, syncSecretName, labels, annotations)
 
 	return Manifests{
 		Kind:           "Job",
 		JobName:        jobName,
 		PVCName:        pvcName,
-		WorkflowConfig: workflowConfig,
+		WorkflowSecret: workflowSecret,
 		SyncSecret:     syncSecret,
 		PVCYAML:        pvcYAML,
 		JobYAML:        jobYAML,
@@ -157,7 +152,7 @@ func buildPVCYAML(opts Options, pvcName string, labels map[string]string) string
 	return b.String()
 }
 
-func buildJobYAML(opts Options, jobName, pvcName, workflowConfigName, syncSecretName string, labels, annotations map[string]string) string {
+func buildJobYAML(opts Options, jobName, pvcName, workflowSecretName, syncSecretName string, labels, annotations map[string]string) string {
 	var b strings.Builder
 	b.WriteString("apiVersion: batch/v1\n")
 	b.WriteString("kind: Job\n")
@@ -169,11 +164,11 @@ func buildJobYAML(opts Options, jobName, pvcName, workflowConfigName, syncSecret
 	b.WriteString("spec:\n")
 	b.WriteString("  ttlSecondsAfterFinished: 604800\n")
 	b.WriteString("  backoffLimit: 0\n")
-	writePodTemplate(&b, "  ", opts, labels, annotations, workflowConfigName, syncSecretName, pvcName)
+	writePodTemplate(&b, "  ", opts, labels, annotations, workflowSecretName, syncSecretName, pvcName)
 	return b.String()
 }
 
-func buildCronJobYAML(opts Options, cronJobName, workflowConfigName, syncSecretName string, labels, annotations map[string]string) string {
+func buildCronJobYAML(opts Options, cronJobName, workflowSecretName, syncSecretName string, labels, annotations map[string]string) string {
 	var b strings.Builder
 	b.WriteString("apiVersion: batch/v1\n")
 	b.WriteString("kind: CronJob\n")
@@ -190,11 +185,11 @@ func buildCronJobYAML(opts Options, cronJobName, workflowConfigName, syncSecretN
 	b.WriteString("  jobTemplate:\n")
 	b.WriteString("    spec:\n")
 	b.WriteString("      backoffLimit: 0\n")
-	writePodTemplate(&b, "      ", opts, labels, annotations, workflowConfigName, syncSecretName, "")
+	writePodTemplate(&b, "      ", opts, labels, annotations, workflowSecretName, syncSecretName, "")
 	return b.String()
 }
 
-func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, annotations map[string]string, workflowConfigName, syncSecretName, pvcName string) {
+func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, annotations map[string]string, workflowSecretName, syncSecretName, pvcName string) {
 	envSecretName := opts.EnvSecretName()
 	b.WriteString(indent + "template:\n")
 	b.WriteString(indent + "  metadata:\n")
@@ -212,6 +207,9 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 		b.WriteString(indent + "        command: [\"sh\", \"-lc\", " + yamlQuote(opts.JobCommand) + "]\n")
 	} else {
 		bootstrap := "mkdir -p /workspace/workdir/workflows /workspace/.smithers"
+		if workflowSecretName != "" {
+			bootstrap += " && if [ -f /opt/fabrik-workflow/bundle.tgz ]; then tar -xzf /opt/fabrik-workflow/bundle.tgz -C /workspace/workdir; fi"
+		}
 		if syncSecretName != "" {
 			bootstrap += " && if [ -f /opt/fabrik-sync/bundle.tgz ]; then tar -xzf /opt/fabrik-sync/bundle.tgz -C /workspace/workdir; fi"
 		}
@@ -230,6 +228,8 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 		b.WriteString(indent + "            value: " + yamlQuote(opts.CronSchedule) + "\n")
 	}
 	if strings.TrimSpace(opts.WorkflowPath) != "" {
+		b.WriteString(indent + "          - name: SMITHERS_WORKFLOW_PATH\n")
+		b.WriteString(indent + "            value: " + yamlQuote("/workspace/workdir/"+opts.WorkflowBundle.WorkdirPath) + "\n")
 		b.WriteString(indent + "          - name: SMITHERS_INPUT_JSON\n")
 		b.WriteString(indent + "            value: " + yamlQuote(opts.InputJSON) + "\n")
 		if strings.TrimSpace(opts.JJRepo) != "" {
@@ -256,8 +256,9 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 	}
 	if strings.TrimSpace(opts.WorkflowPath) != "" {
 		b.WriteString(indent + "          - name: workflow\n")
-		b.WriteString(indent + "            mountPath: /opt/smithers-runtime/workflow.tsx\n")
-		b.WriteString(indent + "            subPath: workflow.tsx\n")
+		b.WriteString(indent + "            mountPath: /opt/fabrik-workflow/bundle.tgz\n")
+		b.WriteString(indent + "            subPath: bundle.tgz\n")
+		b.WriteString(indent + "            readOnly: true\n")
 		b.WriteString(indent + "          - name: codex-auth\n")
 		b.WriteString(indent + "            mountPath: /root/.codex/auth.json\n")
 		b.WriteString(indent + "            subPath: auth.json\n")
@@ -283,8 +284,9 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 	}
 	if strings.TrimSpace(opts.WorkflowPath) != "" {
 		b.WriteString(indent + "      - name: workflow\n")
-		b.WriteString(indent + "        configMap:\n")
-		b.WriteString(indent + "          name: " + workflowConfigName + "\n")
+		b.WriteString(indent + "        secret:\n")
+		b.WriteString(indent + "          secretName: " + workflowSecretName + "\n")
+		b.WriteString(indent + "          defaultMode: 0400\n")
 		b.WriteString(indent + "      - name: codex-auth\n")
 		b.WriteString(indent + "        secret:\n")
 		b.WriteString(indent + "          secretName: codex-auth\n")
@@ -321,18 +323,16 @@ func writeWorkspaceVolume(b *strings.Builder, indent string, opts Options, label
 	b.WriteString(indent + "    claimName: " + pvcName + "\n")
 }
 
-func buildWorkflowConfigMap(namespace, configMapName, workflowSource string) string {
+func buildWorkflowSecret(namespace, secretName string, bundle *WorkflowBundle) string {
 	var b strings.Builder
 	b.WriteString("apiVersion: v1\n")
-	b.WriteString("kind: ConfigMap\n")
+	b.WriteString("kind: Secret\n")
 	b.WriteString("metadata:\n")
-	b.WriteString("  name: " + configMapName + "\n")
+	b.WriteString("  name: " + secretName + "\n")
 	b.WriteString("  namespace: " + namespace + "\n")
+	b.WriteString("type: Opaque\n")
 	b.WriteString("data:\n")
-	b.WriteString("  workflow.tsx: |-\n")
-	for _, line := range strings.Split(strings.ReplaceAll(workflowSource, "\r\n", "\n"), "\n") {
-		b.WriteString("    " + line + "\n")
-	}
+	b.WriteString("  bundle.tgz: " + yamlQuote(bundle.ArchiveBase64) + "\n")
 	return b.String()
 }
 

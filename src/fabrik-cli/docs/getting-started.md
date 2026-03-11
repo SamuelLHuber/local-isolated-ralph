@@ -100,6 +100,8 @@ fabrik run \
   --run-id counter-rootserver \
   --spec specs/051-k3s-orchestrator.md \
   --project counter \
+  --env dev \
+  --env-file .env.counter \
   --workflow-path examples/counter-local/workflow.tsx \
   --input-json '{"appName":"counter-rootserver-app"}' \
   --jj-repo https://github.com/example/counter-app.git \
@@ -109,6 +111,12 @@ fabrik run \
 ```
 
 This maps to the workflow's existing `SMITHERS_JJ_REPO` / `SMITHERS_JJ_BOOKMARK` support in [`examples/counter-local/workflow.tsx`](/Users/samuel/git/local-isolated-ralph/examples/counter-local/workflow.tsx). The local sync output remains useful for logs and artifacts, but VCS fidelity should come from the repo-aware workflow path.
+
+When `--env-file` is provided together with `--project` and `--env`, the CLI updates the canonical env Secret in `fabrik-system` from that dotenv file and mirrors the validated data into the run namespace before dispatch. `fabrik-system` remains the source of truth; the run-namespace Secret exists so the Job Pod can consume it through standard `envFrom` / Secret volume wiring.
+
+If the workflow clones a private GitHub repo over HTTPS, include `GITHUB_TOKEN=` (or `GH_TOKEN=`) in that env file. The Smithers runtime configures `GIT_ASKPASS` from those env vars so `git` / `jj git clone` can authenticate non-interactively inside the Job pod.
+
+The PI sample workflow at [`examples/complex/pi-spec-implementation.tsx`](/Users/samuel/git/local-isolated-ralph/examples/complex/pi-spec-implementation.tsx) also expects `FIREWORKS_API_KEY=` in that same env file. The runtime materializes a self-contained Pi `models.json` for Fireworks-backed `accounts/fireworks/models/kimi-k2p5`, so the sample can clone a private GitHub repo and run PI against it without any extra in-pod setup.
 
 ## Filtered Workflow Sync
 
@@ -224,6 +232,7 @@ The CLI now exposes the first env-management slice directly:
 - `fabrik env pull` to materialize a local dotenv file for developer workflows
 - `fabrik env diff` and `fabrik env promote` to compare and copy named environments
 - `fabrik env run -- <command>` to run a local command with the selected project environment injected
+- `fabrik run --env <name> --env-file <path>` when a dispatch should upsert the canonical env Secret from a local dotenv file before the Job is created
 
 The reasoning follows the orchestrator spec:
 

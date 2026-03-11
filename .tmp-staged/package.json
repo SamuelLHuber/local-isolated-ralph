@@ -1,0 +1,9 @@
+{
+  "name": "smithers-runtime",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "smithers-orchestrator": "0.9.1",
+    "zod": "4.3.6"
+  }
+}

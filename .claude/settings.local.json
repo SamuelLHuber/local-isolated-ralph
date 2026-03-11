@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(nix flake check:*)",
+      "Bash(nix flake update:*)",
+      "WebSearch",
+      "WebFetch(domain:docs.orbstack.dev)",
+      "Bash(nix-instantiate:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd jj \\(Jujutsu\\) support to Nix module and fix aarch64 install\n\n- Add jujutsu package to ralph.nix using overlay from nixpkgs-unstable\n  \\(24.11 version is marked insecure due to GHSA-794x-2rpg-rfgr\\)\n- Fix setup-base-vm.sh to detect architecture and download correct binary\n  for both x86_64 and aarch64\n- Clean up redundant comments in flake.nix\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(bash:*)",
+      "Bash(git commit:*)",
+      "Bash(tree:*)",
+      "Bash(nix flake show:*)",
+      "Bash(nix --version:*)",
+      "Bash(limactl:*)",
+      "Bash(nix build:*)",
+      "Bash(nix show-config:*)",
+      "Bash(darwin-rebuild:*)",
+      "Bash(echo:*)",
+      "Bash(gh release view:*)",
+      "Bash(git push:*)",
+      "Bash(./scripts/create-ralph.sh:*)",
+      "Bash(curl:*)",
+      "Bash(tail:*)",
+      "Bash(file:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(git -C /Users/samuel/git/local-isolated-ralph add nix/modules/lima.nix)",
+      "Bash(xargs:*)",
+      "Bash(npx @playwright/mcp@latest --help:*)",
+      "Bash(lmactl status:*)",
+      "Bash(./scripts/sync-credentials.sh:*)"
+    ]
+  }
+}

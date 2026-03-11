@@ -141,22 +141,38 @@ func validateSyncRelativePath(path string) error {
 }
 
 func buildSyncArchive(baseDir string, files []string) ([]byte, error) {
+	entries := make([]archiveEntry, 0, len(files))
+	for _, rel := range files {
+		entries = append(entries, archiveEntry{
+			SourceRel:   rel,
+			ArchivePath: rel,
+		})
+	}
+	return buildArchive(baseDir, entries)
+}
+
+type archiveEntry struct {
+	SourceRel   string
+	ArchivePath string
+}
+
+func buildArchive(baseDir string, entries []archiveEntry) ([]byte, error) {
 	var totalSize int64
 	var buffer bytes.Buffer
 	gzipWriter := gzip.NewWriter(&buffer)
 	tarWriter := tar.NewWriter(gzipWriter)
 
-	for _, rel := range files {
-		abs := filepath.Join(baseDir, rel)
+	for _, entry := range entries {
+		abs := filepath.Join(baseDir, entry.SourceRel)
 		info, err := os.Lstat(abs)
 		if err != nil {
 			return nil, err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("symlinks are not allowed in .fabrik-sync: %s", rel)
+			return nil, fmt.Errorf("symlinks are not allowed in .fabrik-sync: %s", entry.SourceRel)
 		}
 		if info.Size() > maxFabrikSyncFileSize {
-			return nil, fmt.Errorf("file %q exceeds .fabrik-sync per-file limit of %d bytes", rel, maxFabrikSyncFileSize)
+			return nil, fmt.Errorf("file %q exceeds .fabrik-sync per-file limit of %d bytes", entry.SourceRel, maxFabrikSyncFileSize)
 		}
 		totalSize += info.Size()
 		if totalSize > maxFabrikSyncTotal {
@@ -167,7 +183,7 @@ func buildSyncArchive(baseDir string, files []string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		header.Name = filepath.ToSlash(rel)
+		header.Name = filepath.ToSlash(entry.ArchivePath)
 		if err := tarWriter.WriteHeader(header); err != nil {
 			return nil, err
 		}

@@ -49,8 +49,14 @@ func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opt
 	}
 
 	if resolved.DryRun {
-		if err := ensureProjectEnvSecretExists(ctx, resolved); err != nil {
-			return err
+		if strings.TrimSpace(resolved.EnvFile) != "" {
+			if _, err := runenv.LoadDotenvFile(resolved.EnvFile); err != nil {
+				return err
+			}
+		} else {
+			if err := ensureProjectEnvSecretExists(ctx, resolved); err != nil {
+				return err
+			}
 		}
 		if strings.TrimSpace(resolved.WorkflowPath) != "" {
 			if _, _, err := ensureCodexAuthFilesExist(); err != nil {
@@ -91,7 +97,7 @@ func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opt
 			}
 		}
 	}
-	if err := ensureProjectEnvSecretExists(ctx, resolved); err != nil {
+	if err := syncProjectEnvSecret(ctx, resolved); err != nil {
 		return err
 	}
 	if strings.TrimSpace(resolved.WorkflowPath) != "" {
@@ -162,6 +168,10 @@ func ResolveOptions(ctx context.Context, in io.Reader, out io.Writer, opts Optio
 		if err != nil {
 			return Options{}, err
 		}
+		opts.WorkflowBundle, err = resolveWorkflowBundle(opts.WorkflowPath)
+		if err != nil {
+			return Options{}, err
+		}
 		opts.SyncBundle, err = resolveSyncBundle(opts)
 		if err != nil {
 			return Options{}, err
@@ -171,6 +181,12 @@ func ResolveOptions(ctx context.Context, in io.Reader, out io.Writer, opts Optio
 			if err != nil {
 				return Options{}, err
 			}
+		}
+	}
+	if strings.TrimSpace(opts.EnvFile) != "" {
+		opts.EnvFile, err = resolveLocalPath(opts.EnvFile)
+		if err != nil {
+			return Options{}, err
 		}
 	}
 	if !opts.RenderOnly && !isImmutableImageReference(opts.Image) {
@@ -201,6 +217,48 @@ func ensureProjectEnvSecretExists(ctx context.Context, opts Options) error {
 			return fmt.Errorf("missing project env secret %s in namespace %s", opts.EnvSecretName(), envSecretNamespace)
 		}
 		return fmt.Errorf("resolve project env secret %s: %w", opts.EnvSecretName(), err)
+	}
+	return nil
+}
+
+func syncProjectEnvSecret(ctx context.Context, opts Options) error {
+	if strings.TrimSpace(opts.Environment) == "" {
+		return nil
+	}
+
+	sourceOpts := runenv.Options{
+		Project:   opts.Project,
+		Env:       opts.Environment,
+		Namespace: envSecretNamespace,
+		Context:   opts.KubeContext,
+	}
+	if strings.TrimSpace(opts.EnvFile) != "" {
+		if err := runenv.Set(ctx, io.Discard, runenv.SetOptions{
+			Options:  sourceOpts,
+			FromFile: opts.EnvFile,
+			Replace:  true,
+		}); err != nil {
+			return fmt.Errorf("upsert project env secret %s from %s: %w", opts.EnvSecretName(), opts.EnvFile, err)
+		}
+	}
+	if err := ensureProjectEnvSecretExists(ctx, opts); err != nil {
+		return err
+	}
+	if opts.Namespace == envSecretNamespace {
+		return nil
+	}
+
+	data, err := runenv.GetSecretData(ctx, sourceOpts)
+	if err != nil {
+		return fmt.Errorf("resolve project env secret %s for namespace sync: %w", opts.EnvSecretName(), err)
+	}
+	if err := runenv.ApplySecretData(ctx, runenv.Options{
+		Project:   opts.Project,
+		Env:       opts.Environment,
+		Namespace: opts.Namespace,
+		Context:   opts.KubeContext,
+	}, data); err != nil {
+		return fmt.Errorf("apply project env secret %s in namespace %s: %w", opts.EnvSecretName(), opts.Namespace, err)
 	}
 	return nil
 }
