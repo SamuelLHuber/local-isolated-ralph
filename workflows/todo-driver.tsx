@@ -489,10 +489,23 @@ export default smithers((ctx) => {
               );
             }
             await $`jj git clone ${jjRepo} ${REPO_ROOT}`.cwd(WORKDIR_ROOT);
+            if (jjBookmark) {
+              const checkout = await $`git checkout ${jjBookmark}`.cwd(REPO_ROOT).nothrow().quiet();
+              if (checkout.exitCode !== 0) {
+                const track = await $`git checkout -b ${jjBookmark} --track origin/${jjBookmark}`.cwd(REPO_ROOT).nothrow().quiet();
+                if (track.exitCode !== 0) {
+                  throw new Error(
+                    `Failed to check out JJ bookmark '${jjBookmark}' after cloning ${jjRepo}. Ensure the remote branch exists before dispatch.`,
+                  );
+                }
+              }
+            }
             return {
               ticketId: "prepare-repo",
               status: "done",
-              summary: `Cloned ${jjRepo} into ${REPO_ROOT}`,
+              summary: jjBookmark
+                ? `Cloned ${jjRepo} into ${REPO_ROOT} and checked out ${jjBookmark}`
+                : `Cloned ${jjRepo} into ${REPO_ROOT}`,
             };
           }}
         </Task>
