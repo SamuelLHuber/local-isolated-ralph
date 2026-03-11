@@ -27,11 +27,15 @@ ensure_js_runtime() {
   fi
 }
 
-ensure_js_runtime "$WORKDIR"
-
 WORKFLOW_DIR="$(dirname "$WORKFLOW_PATH")"
 WORKFLOW_RUNTIME_DIR="$(dirname "$WORKFLOW_DIR")"
-if [ "$WORKFLOW_RUNTIME_DIR" != "$WORKDIR" ]; then
+REPO_CLONE_SOURCE="${SMITHERS_JJ_REPO:-}"
+
+if [ -z "$REPO_CLONE_SOURCE" ]; then
+  ensure_js_runtime "$WORKDIR"
+fi
+
+if [ "$WORKFLOW_RUNTIME_DIR" != "$WORKDIR" ] || [ -n "$REPO_CLONE_SOURCE" ]; then
   ensure_js_runtime "$WORKFLOW_RUNTIME_DIR"
 fi
 
