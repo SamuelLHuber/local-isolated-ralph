@@ -24,6 +24,14 @@ jobs:
   verify-cli-k3d:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    env:
+      FABRIK_K3D_E2E: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        shape:
+          - single
+          - multi
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -32,9 +40,26 @@ jobs:
       - name: Install k3d
         run: |
           curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
-      - name: Create k3d single-node cluster
-        run: scripts/k3d/cluster.sh create single dev
-      - name: Verify k3d single-node cluster
-        run: scripts/k3d/cluster.sh verify single dev
-      - name: Run k3d-gated Fabrik CLI integration test
-        run: cd src/fabrik-cli && FABRIK_K3D_E2E=1 go test ./internal/run -run TestK3dRenderAndDryRun -v
+      - name: Create k3d cluster
+        run: scripts/k3d/cluster.sh create ${{ matrix.shape }} dev-${{ matrix.shape }}
+      - name: Verify k3d cluster
+        run: scripts/k3d/cluster.sh verify ${{ matrix.shape }} dev-${{ matrix.shape }}
+      - name: Seed fake Codex auth for workflow tests
+        run: |
+          mkdir -p "$HOME/.codex"
+          printf '%s\n' '{}' > "$HOME/.codex/auth.json"
+          printf '%s\n' 'model = "ci"' > "$HOME/.codex/config.toml"
+      - name: Build and push local Smithers image for k3d
+        env:
+          REGISTRY: ${{ matrix.shape == 'single' && 'localhost:5111' || 'localhost:5112' }}
+          IMAGE: ${{ matrix.shape == 'single' && 'localhost:5111/fabrik-smithers:ci' || 'localhost:5112/fabrik-smithers:ci' }}
+        run: |
+          docker build -f k8s/Dockerfile -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "FABRIK_SMITHERS_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+      - name: Run k3d-gated Fabrik CLI integration suite
+        run: |
+          KUBECONFIG="$(mktemp)"
+          k3d kubeconfig get "dev-${{ matrix.shape }}" > "$KUBECONFIG"
+          cd src/fabrik-cli
+          KUBECONFIG="$KUBECONFIG" go test ./internal/run -run 'TestK3d' -v

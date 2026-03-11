@@ -40,6 +40,44 @@ func TestExecuteRenderOnlyNoClusterMutation(t *testing.T) {
 	}
 }
 
+func TestExecuteRenderOnlyCronRendersCronJobWithoutPVC(t *testing.T) {
+	in := strings.NewReader("")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	opts := Options{
+		RunID:        "cron-render",
+		SpecPath:     "specs/demo.yaml",
+		Project:      "demo",
+		Image:        "repo/image@sha256:abcdef",
+		CronSchedule: "*/10 * * * *",
+		Namespace:    "fabrik-runs",
+		PVCSize:      "1Gi",
+		JobCommand:   "echo hi",
+		WaitTimeout:  "5m",
+		RenderOnly:   true,
+		Interactive:  false,
+	}
+
+	if err := Execute(context.Background(), in, &out, &errOut, opts); err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+
+	rendered := out.String()
+	if !strings.Contains(rendered, "kind: CronJob") {
+		t.Fatalf("expected rendered manifest to include CronJob")
+	}
+	if strings.Contains(rendered, "kind: PersistentVolumeClaim") {
+		t.Fatalf("expected cron render to skip stand-alone PVC manifests")
+	}
+	if !strings.Contains(rendered, "schedule: \"*/10 * * * *\"") {
+		t.Fatalf("expected rendered manifest to include cron schedule")
+	}
+	if !strings.Contains(rendered, "volumeClaimTemplate:") {
+		t.Fatalf("expected cron render to include ephemeral pvc template")
+	}
+}
+
 func TestExecuteRenderOnlyWithFabrikSyncRendersSecretAndBootstrap(t *testing.T) {
 	dir := t.TempDir()
 	workflowPath := filepath.Join(dir, "workflow.tsx")
@@ -90,6 +128,41 @@ func TestExecuteRenderOnlyWithFabrikSyncRendersSecretAndBootstrap(t *testing.T) 
 	}
 	if !strings.Contains(rendered, "tar -xzf /opt/fabrik-sync/bundle.tgz -C /workspace/workdir") {
 		t.Fatalf("expected bootstrap extraction command in rendered manifest")
+	}
+}
+
+func TestExecuteRenderOnlyWithProjectEnvRendersSecretMountAndEnvFrom(t *testing.T) {
+	in := strings.NewReader("")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	opts := Options{
+		RunID:       "run-env-render",
+		SpecPath:    "specs/demo.yaml",
+		Project:     "demo",
+		Environment: "dev",
+		Image:       "repo/image@sha256:abcdef",
+		Namespace:   "fabrik-runs",
+		PVCSize:     "1Gi",
+		JobCommand:  "echo hi",
+		WaitTimeout: "5m",
+		RenderOnly:  true,
+		Interactive: false,
+	}
+
+	if err := Execute(context.Background(), in, &out, &errOut, opts); err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+
+	rendered := out.String()
+	if !strings.Contains(rendered, "secretName: fabrik-env-demo-dev") {
+		t.Fatalf("expected rendered manifest to reference project env secret, got %s", rendered)
+	}
+	if !strings.Contains(rendered, "mountPath: /etc/fabrik/env") {
+		t.Fatalf("expected rendered manifest to mount project env secret")
+	}
+	if !strings.Contains(rendered, "envFrom:") {
+		t.Fatalf("expected rendered manifest to include envFrom for project env secret")
 	}
 }
 
@@ -163,6 +236,65 @@ func TestExecuteDryRunWorkflowDoesNotApplyCodexSecret(t *testing.T) {
 	}
 	if !strings.Contains(logText, "apply --dry-run=client -o yaml -f -") {
 		t.Fatalf("expected dry-run kubectl apply call, got %s", logText)
+	}
+}
+
+func TestExecuteDryRunWithMissingProjectEnvFailsBeforeKubectlApply(t *testing.T) {
+	dir := t.TempDir()
+	kubectlLog := filepath.Join(dir, "kubectl.log")
+	kubectlPath := filepath.Join(dir, "kubectl")
+	kubectlScript := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> " + shellQuote(kubectlLog) + "\n" +
+		"case \"$1\" in\n" +
+		"  -n)\n" +
+		"    if [ \"$3\" = \"get\" ] && [ \"$4\" = \"secret\" ]; then\n" +
+		"      printf 'Error from server (NotFound): secrets \"fabrik-env-demo-dev\" not found\\n' >&2\n" +
+		"      exit 1\n" +
+		"    fi\n" +
+		"    ;;\n" +
+		"  apply)\n" +
+		"    printf 'unexpected apply\\n' >&2\n" +
+		"    exit 99\n" +
+		"    ;;\n" +
+		"esac\n" +
+		"exit 97\n"
+	if err := os.WriteFile(kubectlPath, []byte(kubectlScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	opts := Options{
+		RunID:       "run-dry-env-missing",
+		SpecPath:    "specs/demo.yaml",
+		Project:     "demo",
+		Environment: "dev",
+		Image:       "repo/image:v1.2.3",
+		Namespace:   "fabrik-runs",
+		PVCSize:     "1Gi",
+		JobCommand:  "echo hi",
+		WaitTimeout: "5m",
+		DryRun:      true,
+		Interactive: false,
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	err := Execute(context.Background(), strings.NewReader(""), &out, &errOut, opts)
+	if err == nil {
+		t.Fatalf("expected dry-run to fail when project env secret is missing")
+	}
+	if !strings.Contains(err.Error(), "missing project env secret fabrik-env-demo-dev in namespace fabrik-system") {
+		t.Fatalf("expected missing env secret error, got %v", err)
+	}
+
+	logData, readErr := os.ReadFile(kubectlLog)
+	if readErr != nil {
+		t.Fatalf("read kubectl log: %v", readErr)
+	}
+	logText := string(logData)
+	if strings.Contains(logText, "apply --dry-run=client") {
+		t.Fatalf("expected dry-run to fail before kubectl apply, got kubectl calls: %s", logText)
 	}
 }
 
@@ -241,6 +373,128 @@ func TestExecuteLiveDispatchWithoutWaitVerifiesPodStartAndDoesNotSync(t *testing
 	logText := string(logData)
 	if strings.Contains(logText, " wait ") || strings.Contains(logText, " logs ") || strings.Contains(logText, " exec ") {
 		t.Fatalf("expected non-wait dispatch to skip wait/log/sync calls, got kubectl calls: %s", logText)
+	}
+}
+
+func TestExecuteLiveCronCreateVerifiesCronJobAndSkipsJobFlow(t *testing.T) {
+	dir := t.TempDir()
+	kubectlLog := filepath.Join(dir, "kubectl.log")
+	kubectlPath := filepath.Join(dir, "kubectl")
+	kubectlScript := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> " + shellQuote(kubectlLog) + "\n" +
+		"case \"$1\" in\n" +
+		"  apply)\n" +
+		"    cat >/dev/null\n" +
+		"    printf 'applied\\n'\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"  -n)\n" +
+		"    if [ \"$3\" = \"get\" ] && [ \"$4\" = \"cronjob\" ]; then\n" +
+		"      printf '*/15 * * * *\\n'\n" +
+		"      exit 0\n" +
+		"    fi\n" +
+		"    ;;\n" +
+		"esac\n" +
+		"exit 97\n"
+	if err := os.WriteFile(kubectlPath, []byte(kubectlScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	opts := Options{
+		RunID:        "cron-live-no-wait",
+		SpecPath:     "specs/demo.yaml",
+		Project:      "demo",
+		Image:        "repo/image@sha256:abcdef",
+		CronSchedule: "*/15 * * * *",
+		Namespace:    "fabrik-runs",
+		PVCSize:      "1Gi",
+		JobCommand:   "echo hi",
+		WaitTimeout:  "5m",
+		Interactive:  false,
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := Execute(context.Background(), strings.NewReader(""), &out, &errOut, opts); err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "scheduled cronjob fabrik-cron-cron-live-no-wait in namespace fabrik-runs") {
+		t.Fatalf("expected cron creation message, got %q", output)
+	}
+	if !strings.Contains(output, "schedule: */15 * * * *") {
+		t.Fatalf("expected cron schedule in output, got %q", output)
+	}
+
+	logData, err := os.ReadFile(kubectlLog)
+	if err != nil {
+		t.Fatalf("read kubectl log: %v", err)
+	}
+	logText := string(logData)
+	if strings.Contains(logText, " patch pvc ") || strings.Contains(logText, " get pods ") || strings.Contains(logText, " wait ") {
+		t.Fatalf("expected cron creation to skip job wait/pvc calls, got kubectl calls: %s", logText)
+	}
+}
+
+func TestExecuteLiveCronWithMissingProjectEnvFailsBeforeApply(t *testing.T) {
+	dir := t.TempDir()
+	kubectlLog := filepath.Join(dir, "kubectl.log")
+	kubectlPath := filepath.Join(dir, "kubectl")
+	kubectlScript := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> " + shellQuote(kubectlLog) + "\n" +
+		"case \"$1\" in\n" +
+		"  -n)\n" +
+		"    if [ \"$3\" = \"get\" ] && [ \"$4\" = \"secret\" ]; then\n" +
+		"      printf 'Error from server (NotFound): secrets \"fabrik-env-demo-dev\" not found\\n' >&2\n" +
+		"      exit 1\n" +
+		"    fi\n" +
+		"    ;;\n" +
+		"  apply)\n" +
+		"    printf 'unexpected apply\\n' >&2\n" +
+		"    exit 99\n" +
+		"    ;;\n" +
+		"esac\n" +
+		"exit 97\n"
+	if err := os.WriteFile(kubectlPath, []byte(kubectlScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	opts := Options{
+		RunID:        "cron-live-env-missing",
+		SpecPath:     "specs/demo.yaml",
+		Project:      "demo",
+		Environment:  "dev",
+		Image:        "repo/image@sha256:abcdef",
+		CronSchedule: "*/15 * * * *",
+		Namespace:    "fabrik-runs",
+		PVCSize:      "1Gi",
+		JobCommand:   "echo hi",
+		WaitTimeout:  "5m",
+		Interactive:  false,
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	err := Execute(context.Background(), strings.NewReader(""), &out, &errOut, opts)
+	if err == nil {
+		t.Fatalf("expected live cron create to fail when project env secret is missing")
+	}
+	if !strings.Contains(err.Error(), "missing project env secret fabrik-env-demo-dev in namespace fabrik-system") {
+		t.Fatalf("expected missing env secret error, got %v", err)
+	}
+
+	logData, readErr := os.ReadFile(kubectlLog)
+	if readErr != nil {
+		t.Fatalf("read kubectl log: %v", readErr)
+	}
+	logText := string(logData)
+	if strings.Contains(logText, "apply -f -") {
+		t.Fatalf("expected live cron create to fail before kubectl apply, got kubectl calls: %s", logText)
 	}
 }
 

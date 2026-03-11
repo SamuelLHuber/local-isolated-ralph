@@ -2,6 +2,7 @@ package run
 
 import (
 	"errors"
+	runenv "fabrik-cli/internal/env"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,8 +17,10 @@ type Options struct {
 	RunID              string
 	SpecPath           string
 	Project            string
+	Environment        string
 	Image              string
 	WorkflowPath       string
+	CronSchedule       string
 	InputJSON          string
 	FabrikSyncFile     string
 	SyncBundle         *SyncBundle
@@ -40,6 +43,8 @@ type Options struct {
 	NonInteractive     bool
 }
 
+const envSecretNamespace = "fabrik-system"
+
 func validateOptions(opts Options) error {
 	if strings.TrimSpace(opts.RunID) == "" {
 		return errors.New("missing required flag: --run-id")
@@ -52,6 +57,11 @@ func validateOptions(opts Options) error {
 	}
 	if !projectIDPattern.MatchString(opts.Project) || len(opts.Project) > 63 {
 		return errors.New("project ID must be DNS-1123 compliant: lowercase alphanumeric + hyphens, max 63 chars")
+	}
+	if strings.TrimSpace(opts.Environment) != "" {
+		if !projectIDPattern.MatchString(opts.Environment) || len(opts.Environment) > 63 {
+			return errors.New("environment name must be DNS-1123 compliant: lowercase alphanumeric + hyphens, max 63 chars")
+		}
 	}
 	if strings.TrimSpace(opts.Image) == "" {
 		return errors.New("missing required flag: --image")
@@ -67,6 +77,14 @@ func validateOptions(opts Options) error {
 	}
 	if strings.TrimSpace(opts.JobCommand) == "" && strings.TrimSpace(opts.WorkflowPath) == "" && !opts.RenderOnly && !opts.DryRun {
 		return errors.New("missing required flag: --job-command")
+	}
+	if opts.IsCron() {
+		if strings.TrimSpace(opts.CronSchedule) == "" {
+			return errors.New("missing required flag: --cron")
+		}
+		if opts.Wait {
+			return errors.New("--wait is not supported with --cron; cron creation applies the CronJob and returns after verifying it exists")
+		}
 	}
 	if strings.TrimSpace(opts.WorkflowPath) != "" {
 		if _, err := os.Stat(opts.WorkflowPath); err != nil {
@@ -89,24 +107,44 @@ func validateOptions(opts Options) error {
 	return nil
 }
 
+func (opts Options) IsCron() bool {
+	return strings.TrimSpace(opts.CronSchedule) != ""
+}
+
 func isImmutableImageReference(image string) bool {
 	return strings.Contains(image, "@sha256:")
 }
 
 func (opts Options) Summary() string {
+	mode := "job"
+	target := trimK8sName("fabrik-" + opts.RunID)
+	if opts.IsCron() {
+		mode = "cronjob"
+		target = trimK8sName("fabrik-cron-" + opts.RunID)
+	}
 	return fmt.Sprintf(
-		"run draft\n  run-id: %s\n  spec: %s\n  project: %s\n  image: %s\n  namespace: %s\n  context: %s\n  pvc-size: %s\n  pre-clean: %t\n  jj-repo: %s\n  jj-bookmark: %s",
+		"run draft\n  mode: %s\n  target: %s\n  run-id: %s\n  spec: %s\n  project: %s\n  image: %s\n  namespace: %s\n  context: %s\n  pvc-size: %s\n  cron: %s\n  pre-clean: %t\n  jj-repo: %s\n  jj-bookmark: %s",
+		mode,
+		target,
 		opts.RunID,
 		opts.SpecPath,
 		opts.Project,
 		opts.Image,
 		opts.Namespace,
 		emptyDefault(opts.KubeContext, "<current>"),
-		opts.PVCSize,
+		emptyDefault(opts.PVCSize, "<none>"),
+		emptyDefault(opts.CronSchedule, "<none>"),
 		opts.PreClean,
 		emptyDefault(opts.JJRepo, "<none>"),
 		emptyDefault(opts.JJBookmark, "<none>"),
 	)
+}
+
+func (opts Options) EnvSecretName() string {
+	if strings.TrimSpace(opts.Environment) == "" {
+		return ""
+	}
+	return runenv.SecretName(opts.Project, opts.Environment)
 }
 
 func emptyDefault(value, fallback string) string {

@@ -200,3 +200,38 @@ func TestValidateOptionsRequiresAcceptanceForWorkflowSyncBundle(t *testing.T) {
 		t.Fatalf("expected validation error for missing filtered-sync acknowledgement")
 	}
 }
+
+func TestValidateOptionsRejectsWaitWithCron(t *testing.T) {
+	opts := Options{
+		RunID:        "cron-1",
+		SpecPath:     "specs/a.yaml",
+		Project:      "demo",
+		Image:        "repo/image@sha256:abcdef",
+		CronSchedule: "*/5 * * * *",
+		Namespace:    "fabrik-runs",
+		PVCSize:      "1Gi",
+		JobCommand:   "echo hi",
+		WaitTimeout:  "5m",
+		Wait:         true,
+	}
+	if err := validateOptions(opts); err == nil {
+		t.Fatalf("expected validation error for --wait with --cron")
+	}
+}
+
+func TestValidateOptionsRejectsInvalidEnvironmentName(t *testing.T) {
+	opts := Options{
+		RunID:       "r1",
+		SpecPath:    "specs/a.yaml",
+		Project:     "demo",
+		Environment: "Dev",
+		Image:       "repo/image@sha256:abcdef",
+		Namespace:   "fabrik-runs",
+		PVCSize:     "1Gi",
+		JobCommand:  "echo hi",
+		WaitTimeout: "5m",
+	}
+	if err := validateOptions(opts); err == nil {
+		t.Fatalf("expected validation error for invalid environment name")
+	}
+}

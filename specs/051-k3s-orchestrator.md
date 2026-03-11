@@ -450,12 +450,195 @@ fabrik schedule create --spec specs/nightly.json --cron "0 2 * * *"
 
 # Environment
 fabrik env set --project myapp --env dev --from-file .env
+fabrik env set --project myapp --env dev DATABASE_URL=postgres://...
+fabrik env ls --project myapp --env dev
+fabrik env pull --project myapp --env dev .env.local
+fabrik env run --project myapp --env dev -- npm test
+fabrik env diff --project myapp --from dev --to prod
+fabrik env promote --project myapp --from dev --to staging
 fabrik env validate --project myapp --env dev
 
 # Admin
 fabrik doctor                           # Check cluster health
 fabrik doctor --fix                     # Auto-fix common issues
 ```
+
+### Environment Management Model
+
+Environment handling is Kubernetes-native, but the developer experience should feel similar to Vercel:
+
+- `fabrik env set` writes cluster state
+- `fabrik env pull` gives developers a local file view
+- `fabrik run --env <name>` selects a named environment for execution
+
+Kubernetes is the source of truth for runtime configuration. Local `.env` files are an import/export format, not the canonical store.
+
+#### Design inspiration
+
+The intended mental model is a deliberate combination of a few existing systems that already work well:
+
+- Vercel-style developer experience:
+  - named environments are first-class (`dev`, `preview`, `staging`, `prod`)
+  - `env pull` exists for local developer workflows
+  - local files are a convenience view of remote state, not the source of truth
+  - `env run -- <command>` is a useful local compatibility path
+- Doppler-style hierarchy and access model:
+  - project-scoped configuration is distinct from shared machine credentials
+  - runtime read access should be narrower than human mutation access
+  - missing or divergent keys across environments should be visible and explicit
+- GitHub Environments-style protection model:
+  - production-like environments are more protected than development ones
+  - approval or elevated permissions for production mutation is expected
+  - environment boundaries are part of the product model, not just naming convention
+- Kubernetes-native storage and runtime wiring:
+  - Secrets are the canonical backing store
+  - Jobs and CronJobs consume env through Secret mounts and, where needed, env projection
+  - Fabrik should not invent a separate secret database or scheduler-local configuration source
+
+This means Fabrik is not trying to copy Vercel exactly. Vercel is deployment-platform-first, while Fabrik is cluster/job-first. The inspiration we keep is the operator experience around named environments and local pull. The parts we intentionally keep Kubernetes-native are storage, runtime injection, and access boundaries.
+
+#### Goals
+
+- Named environments such as `dev`, `preview`, `staging`, and `prod`
+- Per-project environment isolation
+- Clear separation between shared platform credentials and project env
+- Local developer pull flow without making local files the source of truth
+- Environment promotion between stages with explicit diff visibility
+- Protected production writes
+
+#### Secret classes
+
+Two distinct secret classes are required:
+
+1. `fabrik-credentials`
+   - Shared machine/runtime credentials
+   - Examples: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`
+   - Managed by operators, not normal project workflows
+
+2. `fabrik-env-<project>-<env>`
+   - Project-scoped runtime configuration
+   - Examples: `DATABASE_URL`, `API_BASE_URL`, `LAOS_*`, app-level secrets
+   - Selected by `fabrik run --project <p> --env <e>`
+
+#### Runtime injection rules
+
+At runtime, jobs consume both secret classes:
+
+- `fabrik-credentials` mounted read-only at `/etc/fabrik/credentials/`
+- `fabrik-env-<project>-<env>` mounted read-only at `/etc/fabrik/env/`
+- `fabrik-env-<project>-<env>` may also be projected into environment variables for compatibility
+
+Security preference:
+
+- secrets should be mounted as files where practical
+- env var projection exists for ecosystem compatibility and simple tools
+- sensitive values should not be echoed in logs or surfaced in command output
+
+#### Precedence rules
+
+The precedence model must be deterministic:
+
+1. platform runtime metadata injected by Fabrik (`SMITHERS_*`)
+2. project env secret (`fabrik-env-<project>-<env>`)
+3. shared credentials (`fabrik-credentials`) only for keys not already provided by project env
+
+Project env wins over shared credentials for conflicting keys because project-specific overrides are easier to reason about than hidden global defaults.
+
+#### CLI semantics
+
+`fabrik env set` supports two write modes:
+
+- whole-file import:
+  - `fabrik env set --project myapp --env dev --from-file .env`
+- explicit key writes:
+  - `fabrik env set --project myapp --env dev KEY=value`
+
+Write behavior is merge-by-default:
+
+- keys provided in the command are updated or inserted
+- unspecified existing keys are preserved
+- `--replace` replaces the entire secret payload
+- `--unset KEY` removes a key
+
+`fabrik env pull` is the local read path:
+
+- `fabrik env pull --project myapp --env dev .env.local`
+- writes a dotenv-style file for local tooling
+- should redact output from terminal logs unless explicitly requested
+
+`fabrik env run` is the no-file local execution path:
+
+- `fabrik env run --project myapp --env dev -- npm test`
+- materializes env values only for the child process
+
+`fabrik env diff` and `fabrik env promote` support stage movement:
+
+- `env diff` shows missing, changed, and extra keys between two environments
+- `env promote` copies values from one environment to another
+- `env promote` requires explicit target selection and should default to previewing the diff first
+
+#### Environment naming
+
+Environment names are first-class identifiers, inspired by Vercel-style developer experience:
+
+- `dev`
+- `preview`
+- `staging`
+- `prod`
+- additional custom names are allowed if DNS-safe
+
+Secret names remain:
+
+- `fabrik-env-<project>-<env>`
+
+#### Permission model
+
+The v1 permission model should be simple and explicit:
+
+- Developers may read/write non-production environments for their project
+- Production environment mutation is restricted to elevated maintainers/operators
+- Runtime jobs get read-only access only to the selected environment
+- Shared `fabrik-credentials` mutation is restricted to cluster operators
+
+Protected environment rules:
+
+- `prod` writes should require explicit confirmation at minimum
+- cluster or API-backed implementations may add required-reviewer gates later
+- `env pull` for production may be restricted or audited more tightly than non-production pulls
+
+This mirrors the best parts of Vercel, GitHub Environments, and Doppler:
+
+- Vercel-style `env pull` / named environments / local developer flow
+- GitHub-style protected production environments
+- Doppler-style separation between human write access and runtime read access
+
+#### Audit and validation
+
+Environment changes must be auditable:
+
+- who changed it
+- when it changed
+- which keys changed
+- whether the operation was merge or replace
+
+Validation requirements:
+
+- invalid dotenv lines are rejected clearly
+- duplicate keys in the same import are rejected
+- reserved `SMITHERS_*` keys cannot be written through project env
+- secret names and project/env identifiers must remain DNS-safe
+
+#### Operational guidance
+
+The easiest model to reason about and maintain is:
+
+- Kubernetes Secret is the runtime source of truth
+- local `.env` files are import/export helpers
+- explicit environment selection at run time
+- explicit promotion between stages
+- protected writes for production
+
+This avoids ambiguous local-vs-cluster drift and keeps runtime behavior aligned with Kubernetes-native execution.
 
 ---
 
@@ -672,7 +855,15 @@ spec:
 - [ ] `fabrik run resume --id <run-id>` deletes stuck pod, Job recreates it (Smithers resume)
 - [ ] PVC persists across pod restarts (Job deletes pod, keeps PVC)
 - [ ] `fabrik env set --project myapp --env dev` creates Secret `fabrik-env-myapp-dev`
+- [ ] `fabrik env pull --project myapp --env dev` writes dotenv-compatible output for local tooling
+- [ ] `fabrik env run --project myapp --env dev -- <cmd>` runs a local child process with project env injected
+- [ ] `fabrik env diff --project myapp --from dev --to staging` shows key-level differences
+- [ ] `fabrik env promote --project myapp --from dev --to staging` copies values with explicit preview/confirmation
 - [ ] Secrets are mounted as files in `/etc/fabrik/env/` and injected as env vars
+- [ ] `fabrik-credentials` and `fabrik-env-<project>-<env>` remain separate secret classes
+- [ ] Project env overrides shared credentials for conflicting keys
+- [ ] Reserved `SMITHERS_*` keys are rejected from project env writes
+- [ ] Production env mutation is protected more strongly than non-production env mutation
 - [ ] `--project` IDs validated against DNS-1123 (max 63 chars, lowercase alphanumeric + hyphens)
 - [ ] Invalid project IDs rejected with clear error: "Project ID must be DNS-1123 compliant: lowercase alphanumeric + hyphens, max 63 chars"
 - [ ] Base image `ghcr.io/fabrik/smithers:latest` pulls successfully
@@ -750,16 +941,27 @@ metadata:
   namespace: fabrik-system
 type: Opaque
 stringData:
-  # Required
-  ANTHROPIC_API_KEY: "sk-ant-..."
-  
-  # Optional - LAOS
-  LAOS_PROMETHEUS_URL: "http://prometheus:9090"
-  LAOS_LOKI_URL: "http://loki:3100"
-  
-  # Project-specific
+  # Project/application configuration
   DATABASE_URL: "postgres://..."
   API_BASE_URL: "https://api.example.com"
+
+  # Optional observability config
+  LAOS_PROMETHEUS_URL: "http://prometheus:9090"
+  LAOS_LOKI_URL: "http://loki:3100"
+```
+
+```yaml
+# fabrik-credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fabrik-credentials
+  namespace: fabrik-system
+type: Opaque
+stringData:
+  OPENAI_API_KEY: "sk-..."
+  ANTHROPIC_API_KEY: "sk-ant-..."
+  GITHUB_TOKEN: "ghp-..."
 ```
 
 ---

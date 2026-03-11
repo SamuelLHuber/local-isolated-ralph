@@ -31,6 +31,7 @@ func NewRootCommand(streams Streams, runMode string) *cobra.Command {
 	}
 
 	rootCmd.AddCommand(newRunCommand(runMode))
+	rootCmd.AddCommand(newEnvCommand())
 
 	return rootCmd
 }
