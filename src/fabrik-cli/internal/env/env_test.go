@@ -89,3 +89,26 @@ func TestWritePrivateFileTightensExistingPermissions(t *testing.T) {
 		t.Fatalf("expected updated content, got %q", string(content))
 	}
 }
+
+func TestUpsertDotenvValueUpdatesAndAppends(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	if err := os.WriteFile(path, []byte("A=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := UpsertDotenvValue(path, "B", "2"); err != nil {
+		t.Fatalf("append dotenv value: %v", err)
+	}
+	if err := UpsertDotenvValue(path, "A", "3"); err != nil {
+		t.Fatalf("update dotenv value: %v", err)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read dotenv: %v", err)
+	}
+	if got := string(content); got != "A=\"3\"\nB=\"2\"\n" {
+		t.Fatalf("unexpected dotenv content: %q", got)
+	}
+}

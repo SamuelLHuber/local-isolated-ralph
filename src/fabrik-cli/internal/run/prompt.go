@@ -50,7 +50,7 @@ func promptForMissing(ctx context.Context, in io.Reader, out io.Writer, opts Opt
 }
 
 func promptForMissingTestMode(in io.Reader, out io.Writer, opts Options) (Options, error) {
-	reader := bufio.NewReader(in)
+	reader := testPromptReader(in)
 	var err error
 	if strings.TrimSpace(opts.RunID) == "" {
 		opts.RunID, err = promptLine(reader, out, "Run ID")
@@ -96,6 +96,13 @@ func promptLine(reader *bufio.Reader, out io.Writer, label string) (string, erro
 	return strings.TrimSpace(line), nil
 }
 
+func testPromptReader(in io.Reader) *bufio.Reader {
+	if reader, ok := in.(*bufio.Reader); ok {
+		return reader
+	}
+	return bufio.NewReader(in)
+}
+
 func promptHuh(ctx context.Context, label, value string) (string, error) {
 	result := value
 	form := huh.NewForm(huh.NewGroup(huh.NewInput().Title(label).Value(&result)))
@@ -105,9 +112,60 @@ func promptHuh(ctx context.Context, label, value string) (string, error) {
 	return strings.TrimSpace(result), nil
 }
 
+func promptSecretValue(ctx context.Context, in io.Reader, out io.Writer, opts Options, label, value string) (string, error) {
+	if opts.RunMode == "test" {
+		reader := testPromptReader(in)
+		return promptLine(reader, out, label)
+	}
+
+	result := value
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title(label).
+				EchoMode(huh.EchoModePassword).
+				Value(&result),
+		),
+	)
+	if err := form.WithTheme(huh.ThemeBase()).Run(); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(result), nil
+}
+
+func confirmAction(ctx context.Context, in io.Reader, out io.Writer, opts Options, title string, affirmative string) (bool, error) {
+	if opts.RunMode == "test" {
+		reader := testPromptReader(in)
+		if _, err := fmt.Fprintf(out, "%s [y/N]: ", title); err != nil {
+			return false, err
+		}
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return false, err
+		}
+		normalized := strings.ToLower(strings.TrimSpace(line))
+		return normalized == "y" || normalized == "yes", nil
+	}
+
+	confirmed := false
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(title).
+				Affirmative(affirmative).
+				Negative("Skip").
+				Value(&confirmed),
+		),
+	)
+	if err := form.WithTheme(huh.ThemeBase()).Run(); err != nil {
+		return false, err
+	}
+	return confirmed, nil
+}
+
 func confirmDispatch(ctx context.Context, in io.Reader, out io.Writer, opts Options) (bool, error) {
 	if opts.RunMode == "test" {
-		reader := bufio.NewReader(in)
+		reader := testPromptReader(in)
 		prompt := "Apply resources to the cluster? [y/N]: "
 		if strings.TrimSpace(opts.WorkflowPath) != "" && !opts.AcceptFilteredSync {
 			prompt = "Workflow artifact sync excludes .git/.jj. Preserve repo state via JJ/Git in the workflow and use .fabrik-sync only for a few explicit local-only files. Continue? [y/N]: "
