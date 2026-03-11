@@ -116,6 +116,8 @@ When `--env-file` is provided together with `--project` and `--env`, the CLI upd
 
 If the workflow clones a private GitHub repo over HTTPS, include `GITHUB_TOKEN=` (or `GH_TOKEN=`) in that env file. The Smithers runtime configures `GIT_ASKPASS` from those env vars so `git` / `jj git clone` can authenticate non-interactively inside the Job pod.
 
+If a repo-backed workflow is expected to create or push commits, also include `JJ_USER_NAME=` and `JJ_USER_EMAIL=` in that env file. The runtime applies those values to both Git and JJ so commit creation and bookmark pushes do not fail on missing identity.
+
 The PI sample workflow at [`examples/complex/pi-spec-implementation.tsx`](/Users/samuel/git/local-isolated-ralph/examples/complex/pi-spec-implementation.tsx) also expects `FIREWORKS_API_KEY=` in that same env file. The runtime materializes a self-contained Pi `models.json` for Fireworks-backed `accounts/fireworks/models/kimi-k2p5`, so the sample can clone a private GitHub repo and run PI against it without any extra in-pod setup.
 
 ## Filtered Workflow Sync
