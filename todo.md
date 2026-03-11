@@ -10,7 +10,7 @@ Nothing in this file should be marked done until:
 2. the verification layer for that guarantee exists,
 3. the implementation is complete,
 4. the required checks pass locally,
-5. the relevant k3d verification passes,
+5. the relevant cluster verification passes in the right environment,
 6. the result matches the applicable spec.
 
 ## Core Rule
@@ -20,7 +20,7 @@ Build the verification layer first, then implement the feature, then check it of
 For every item below, "done" means:
 
 - unit or command-level verification exists for the deterministic logic,
-- k3d integration verification exists for cluster-facing behavior,
+- cluster-facing verification exists for the intended execution environment,
 - the user-facing contract is documented,
 - the implementation matches the spec intent rather than only passing one happy path.
 
@@ -95,7 +95,22 @@ Any feature touching scheduling, cron behavior, image distribution, or workflow 
 
 If a feature only passes on `dev-single`, it is not done.
 
-### Layer 5: production-parity check
+### Layer 5: same-cluster verifier Jobs
+
+Cloud-dispatched workflow runs must not guess about cluster behavior or claim that nested `k3d` passed.
+
+For cloud validation, the workflow should dispatch deterministic child verification Jobs into the same cluster and namespace family that the parent run is using.
+
+Those Jobs must:
+
+- use an immutable image digest,
+- mount the same workspace PVC when workspace state matters,
+- report success or failure from Kubernetes Job status and logs,
+- fail the parent validation when a required verifier Job is skipped or cannot run.
+
+This layer complements local `k3d` proof. It does not replace local single-node and multi-node verification for release readiness.
+
+### Layer 6: production-parity check
 
 For changes that materially affect execution semantics, the final check should eventually run against a real single-node `k3s` rootserver as described in:
 

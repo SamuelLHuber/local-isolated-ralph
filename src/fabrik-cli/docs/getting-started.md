@@ -444,18 +444,47 @@ For local cluster verification with `k3d`:
 1. create/verify cluster:
    - `scripts/k3d/cluster.sh create single dev`
    - `scripts/k3d/cluster.sh verify single dev`
+   - for the multi-node shape:
+     - `scripts/k3d/cluster.sh create multi dev`
+     - `scripts/k3d/cluster.sh verify multi dev`
 2. run unit + command tests:
    - `go test ./...`
 3. run env-gated `k3d` integration test layer:
    - `FABRIK_K3D_E2E=1 go test ./internal/run -run 'TestK3d' -v`
    - this covers both manual command flows and the sample Smithers workflow at `examples/counter-local/workflow.tsx`
-   - for workflow-backed k3d verification, set `FABRIK_SMITHERS_IMAGE` to a cluster-compatible image and ensure `~/.codex/auth.json` plus `~/.codex/config.toml` exist
+   - for workflow-backed k3d verification, set `FABRIK_SMITHERS_IMAGE` to a cluster-pullable immutable image and ensure `~/.codex/auth.json` plus `~/.codex/config.toml` exist
+   - when testing against local k3d registries, push the image into the cluster-local registry and use that registry digest, not a bare local tag:
+     - `docker tag fabrik-smithers:dev localhost:5111/fabrik-smithers:dev`
+     - `docker push localhost:5111/fabrik-smithers:dev`
+     - `docker tag fabrik-smithers:dev localhost:5112/fabrik-smithers:dev`
+     - `docker push localhost:5112/fabrik-smithers:dev`
+     - then dispatch with:
+       - `dev-single-registry:5111/fabrik-smithers@sha256:<digest>`
+       - `dev-multi-registry:5112/fabrik-smithers@sha256:<digest>`
 4. run CLI checks manually when needed:
    - `go run . run --render ...`
    - `go run . run --dry-run ...`
    - `go run . run ...`
    - `go run . run ... --wait`
 5. verify artifacts under `k8s/job-sync/<run-id>/` only for `--wait` flows
+
+### Workflow Validation In Clusters
+
+Workflow-backed validation is now cluster-native.
+
+- parent Smithers workflow Jobs get a per-run ServiceAccount, Role, and RoleBinding in `fabrik-runs`
+- the workflow pod receives downward-API identity:
+  - `KUBERNETES_NAMESPACE`
+  - `KUBERNETES_POD_NAME`
+  - `KUBERNETES_NODE_NAME`
+- validation can dispatch child verification Jobs into the same cluster instead of guessing from agent output
+- child verification Jobs mount the same workspace PVC, run deterministic commands, and return success/failure from Kubernetes Job state plus logs
+
+This means:
+
+- local development still uses `k3d` as the fast cluster proof
+- cloud runs on `k3s`/`hoth` do not need nested `k3d`
+- workflow validation should fail if a required verifier Job cannot be created or if its required checks do not pass
 
 ## Implementation Guidance
 
