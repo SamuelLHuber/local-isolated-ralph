@@ -320,6 +320,18 @@ func LoadDotenvFile(path string) (map[string]string, error) {
 	return data, nil
 }
 
+func UpsertDotenvValue(path, key, value string) error {
+	data, err := parseDotenvFile(path)
+	if err != nil {
+		return err
+	}
+	data[strings.TrimSpace(key)] = value
+	if err := validateSecretData(data); err != nil {
+		return err
+	}
+	return writePrivateFile(path, []byte(renderDotenv(data)))
+}
+
 func ApplySecretData(ctx context.Context, opts Options, data map[string]string) error {
 	if err := ValidateOptions(opts); err != nil {
 		return err

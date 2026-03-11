@@ -1,9 +1,12 @@
 package run
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -260,5 +263,86 @@ func TestValidateOptionsRequiresEnvWhenEnvFileIsSet(t *testing.T) {
 	}
 	if err := validateOptions(opts); err == nil {
 		t.Fatalf("expected validation error when --env-file is set without --env")
+	}
+}
+
+func TestResolveOptionsPrintsGitHubAuthGuidanceWhenEnvFileLacksToken(t *testing.T) {
+	dir := t.TempDir()
+	envFile := filepath.Join(dir, ".env.dispatch")
+	if err := os.WriteFile(envFile, []byte("DATABASE_URL=postgres://demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	workflowPath := filepath.Join(dir, "workflow.tsx")
+	if err := os.WriteFile(workflowPath, []byte("export default {};"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	opts := Options{
+		RunID:              "r1",
+		SpecPath:           "specs/a.yaml",
+		Project:            "demo",
+		Environment:        "dev",
+		EnvFile:            envFile,
+		Image:              "repo/image@sha256:abcdef",
+		WorkflowPath:       workflowPath,
+		InputJSON:          "{}",
+		JJRepo:             "https://github.com/example/private-repo",
+		Namespace:          "fabrik-runs",
+		PVCSize:            "1Gi",
+		WaitTimeout:        "5m",
+		Interactive:        false,
+		AcceptFilteredSync: true,
+	}
+
+	if _, err := ResolveOptions(context.Background(), strings.NewReader(""), &out, opts); err != nil {
+		t.Fatalf("resolve options: %v", err)
+	}
+	if !strings.Contains(out.String(), "private GitHub repos need GITHUB_TOKEN or GH_TOKEN") {
+		t.Fatalf("expected GitHub auth guidance, got %q", out.String())
+	}
+}
+
+func TestResolveOptionsInteractiveGitHubAuthCanWriteEnvFile(t *testing.T) {
+	dir := t.TempDir()
+	envFile := filepath.Join(dir, ".env.dispatch")
+	if err := os.WriteFile(envFile, []byte("DATABASE_URL=postgres://demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	workflowPath := filepath.Join(dir, "workflow.tsx")
+	if err := os.WriteFile(workflowPath, []byte("export default {};"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	opts := Options{
+		RunID:              "r1",
+		SpecPath:           "specs/a.yaml",
+		Project:            "demo",
+		Environment:        "dev",
+		EnvFile:            envFile,
+		Image:              "repo/image@sha256:abcdef",
+		WorkflowPath:       workflowPath,
+		InputJSON:          "{}",
+		JJRepo:             "https://github.com/example/private-repo",
+		Namespace:          "fabrik-runs",
+		KubeContext:        "k3d-dev",
+		PVCSize:            "1Gi",
+		WaitTimeout:        "5m",
+		Interactive:        true,
+		AcceptFilteredSync: true,
+		RunMode:            "test",
+	}
+
+	if _, err := ResolveOptions(context.Background(), bufio.NewReader(strings.NewReader("y\nghp_test_token\n")), &out, opts); err != nil {
+		t.Fatalf("resolve options: %v", err)
+	}
+
+	content, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("read env file: %v", err)
+	}
+	if !strings.Contains(string(content), "GITHUB_TOKEN=\"ghp_test_token\"") {
+		t.Fatalf("expected env file to contain GITHUB_TOKEN, got %q", string(content))
 	}
 }

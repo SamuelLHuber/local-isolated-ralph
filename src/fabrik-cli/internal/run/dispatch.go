@@ -189,6 +189,9 @@ func ResolveOptions(ctx context.Context, in io.Reader, out io.Writer, opts Optio
 			return Options{}, err
 		}
 	}
+	if err := guideGitHubEnvAuth(ctx, in, out, opts); err != nil {
+		return Options{}, err
+	}
 	if !opts.RenderOnly && !isImmutableImageReference(opts.Image) {
 		opts.Image, err = resolveImmutableImage(ctx, opts.Image)
 		if err != nil {
