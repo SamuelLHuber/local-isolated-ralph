@@ -15,12 +15,26 @@ else
 fi
 
 mkdir -p "$WORKDIR" "$(dirname "$DB_PATH")" "$PI_AGENT_DIR"
-if [ ! -e "$WORKDIR/node_modules" ]; then
-  ln -s "${RUNTIME_DIR}/node_modules" "$WORKDIR/node_modules"
+
+ensure_js_runtime() {
+  target_dir="$1"
+  mkdir -p "$target_dir"
+  if [ ! -e "$target_dir/node_modules" ]; then
+    ln -s "${RUNTIME_DIR}/node_modules" "$target_dir/node_modules"
+  fi
+  if [ ! -e "$target_dir/package.json" ]; then
+    cp "${RUNTIME_DIR}/package.json" "$target_dir/package.json"
+  fi
+}
+
+ensure_js_runtime "$WORKDIR"
+
+WORKFLOW_DIR="$(dirname "$WORKFLOW_PATH")"
+WORKFLOW_RUNTIME_DIR="$(dirname "$WORKFLOW_DIR")"
+if [ "$WORKFLOW_RUNTIME_DIR" != "$WORKDIR" ]; then
+  ensure_js_runtime "$WORKFLOW_RUNTIME_DIR"
 fi
-if [ ! -e "$WORKDIR/package.json" ]; then
-  cp "${RUNTIME_DIR}/package.json" "$WORKDIR/package.json"
-fi
+
 export PI_CODING_AGENT_DIR="$PI_AGENT_DIR"
 
 if [ -n "${FIREWORKS_API_KEY:-}" ]; then
