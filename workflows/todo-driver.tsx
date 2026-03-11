@@ -10,7 +10,7 @@ import {
 } from "smithers-orchestrator";
 import { $ } from "bun";
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { z } from "zod";
 import { prepareWorkspaces, pushBookmark, snapshotChange } from "./utils/jj-shell";
 
@@ -489,7 +489,7 @@ export default smithers((ctx) => {
                 "Missing FIREWORKS_API_KEY. Sync the workflow's model credential through `--env-file` before dispatch.",
               );
             }
-            await $`jj git clone ${jjRepo} ${REPO_ROOT}`.cwd(WORKDIR_ROOT);
+            await $`jj git clone ${jjRepo} ${basename(REPO_ROOT)}`.cwd(dirname(REPO_ROOT));
             if (jjBookmark) {
               const checkout = await $`git checkout ${jjBookmark}`.cwd(REPO_ROOT).nothrow().quiet();
               if (checkout.exitCode !== 0) {
