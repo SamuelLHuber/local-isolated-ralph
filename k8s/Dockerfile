@@ -1,10 +1,29 @@
 FROM node:20-alpine
 
 ARG JJ_VERSION=0.37.0
+ARG GO_VERSION=1.26.1
 
-RUN apk add --no-cache bash curl git go kubectl make
-RUN wget -qO- "https://github.com/jj-vcs/jj/releases/download/v${JJ_VERSION}/jj-v${JJ_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
-  | tar -xz -C /usr/local/bin ./jj
+RUN apk add --no-cache bash curl git kubectl make tar
+
+RUN arch="$(apk --print-arch)" \
+  && case "${arch}" in \
+    x86_64) go_arch="amd64" ;; \
+    aarch64) go_arch="arm64" ;; \
+    *) echo "unsupported apk architecture: ${arch}" >&2; exit 1 ;; \
+  esac \
+  && wget -qO- "https://go.dev/dl/go${GO_VERSION}.linux-${go_arch}.tar.gz" \
+    | tar -xz -C /usr/local \
+  && ln -sf /usr/local/go/bin/go /usr/local/bin/go \
+  && ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+
+RUN arch="$(apk --print-arch)" \
+  && case "${arch}" in \
+    x86_64) jj_arch="x86_64" ;; \
+    aarch64) jj_arch="aarch64" ;; \
+    *) echo "unsupported apk architecture: ${arch}" >&2; exit 1 ;; \
+  esac \
+  && wget -qO- "https://github.com/jj-vcs/jj/releases/download/v${JJ_VERSION}/jj-v${JJ_VERSION}-${jj_arch}-unknown-linux-musl.tar.gz" \
+    | tar -xz -C /usr/local/bin ./jj
 
 # Smithers CLI requires Bun at runtime (shebang: /usr/bin/env bun).
 RUN npm install --global \
