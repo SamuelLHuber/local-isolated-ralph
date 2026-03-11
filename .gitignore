@@ -1,5 +1,13 @@
 node_modules/
-/workflows/
+/workflows/*
+!/workflows/README.md
+!/workflows/*.ts
+!/workflows/*.tsx
+!/workflows/utils/
+!/workflows/utils/*.ts
+/workflows/*.db
+/workflows/*.db-shm
+/workflows/*.db-wal
 dist/
 src/fabrik-cli/.cache/
 .docker-ghcr/
