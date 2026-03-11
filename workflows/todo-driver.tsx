@@ -9,7 +9,7 @@ import {
   createSmithers,
 } from "smithers-orchestrator";
 import { $ } from "bun";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
 import { prepareWorkspaces, pushBookmark, snapshotChange } from "./utils/jj-shell";
@@ -24,7 +24,7 @@ const jjRepo = process.env.SMITHERS_JJ_REPO?.trim() ?? "";
 const jjBookmark = process.env.SMITHERS_JJ_BOOKMARK?.trim() ?? "";
 
 const MAX_ITERATIONS = Number(process.env.MAX_ITERATIONS ?? "80");
-const MAX_TODO_ITEMS = Number(process.env.MAX_TODO_ITEMS ?? "1");
+const MAX_TODO_ITEMS = Number(process.env.MAX_TODO_ITEMS ?? "0");
 const TASK_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const REVIEW_TIMEOUT_MS = 60 * 60 * 1000;
 const FEATURE_BOOKMARK = jjBookmark || "feat/todo-driver";
@@ -44,18 +44,19 @@ const todoItemSchema = z.object({
     .describe("Stable lowercase kebab-case item id"),
   title: z.string(),
   task: z.string(),
-  specTieIn: z.array(z.string()).min(1),
-  guarantees: z.array(z.string()).min(1),
-  verificationToBuildFirst: z.array(z.string()).min(1),
-  requiredChecks: z.array(z.string()).min(1),
+  specTieIn: z.array(z.string()),
+  guarantees: z.array(z.string()),
+  verificationToBuildFirst: z.array(z.string()),
+  requiredChecks: z.array(z.string()),
   documentationUpdates: z.array(z.string()),
   blockedReason: z.string().nullable(),
 });
 
-const discoverSchema = z.object({
+const todoPlanSchema = z.object({
   todoPath: z.string(),
-  reasoning: z.string(),
-  items: z.array(todoItemSchema).max(3),
+  totalItems: z.number().int().nonnegative(),
+  selectedItems: z.number().int().nonnegative(),
+  items: z.array(todoItemSchema),
 });
 
 const implementSchema = z.object({
@@ -92,7 +93,7 @@ const reportSchema = z.object({
 
 const { smithers, outputs } = createSmithers(
   {
-    discover: discoverSchema,
+    todoPlan: todoPlanSchema,
     implement: implementSchema,
     validate: validateSchema,
     review: reviewSchema,
@@ -141,18 +142,6 @@ const SYSTEM_PROMPT = [
   "Keep changes aligned to repo instructions, specs, and maintainable boundaries.",
 ].join("\n");
 
-const piReadRoot = new PiAgent({
-  provider: PI_PROVIDER,
-  model: PI_MODEL,
-  mode: "json",
-  noTools: false,
-  tools: ["read", "bash"],
-  noSession: true,
-  systemPrompt: SYSTEM_PROMPT,
-  cwd: REPO_ROOT,
-  env: PI_ENV,
-});
-
 function piReadAt(workdir: string): PiAgent {
   return new PiAgent({
     provider: PI_PROVIDER,
@@ -185,13 +174,12 @@ function itemWorkspace(itemId: string): string {
   return resolve(WORKSPACES_DIR, itemId);
 }
 
-function latestDiscoveredItems(ctx: WorkflowCtx): TodoItem[] {
-  const discoverRows =
-    (ctx.outputs as { discover?: unknown[] }).discover ?? ctx.outputs("discover");
-  const discover =
-    discoverRows.length > 0 ? discoverRows[discoverRows.length - 1] : null;
-  if (!discover || typeof discover !== "object") return [];
-  const row = discover as { items?: unknown };
+function latestPlannedItems(ctx: WorkflowCtx): TodoItem[] {
+  const planRows =
+    (ctx.outputs as { todoPlan?: unknown[] }).todoPlan ?? ctx.outputs("todoPlan");
+  const plan = planRows.length > 0 ? planRows[planRows.length - 1] : null;
+  if (!plan || typeof plan !== "object") return [];
+  const row = plan as { items?: unknown };
   if (!Array.isArray(row.items)) return [];
 
   const items: TodoItem[] = [];
@@ -199,6 +187,137 @@ function latestDiscoveredItems(ctx: WorkflowCtx): TodoItem[] {
     const parsed = todoItemSchema.safeParse(item);
     if (parsed.success) items.push(parsed.data);
   }
+  return items;
+}
+
+function slugifyTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/--+/g, "-");
+}
+
+function normalizeMarkdownList(lines: string[]): string[] {
+  const items: string[] = [];
+  let current = "";
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (line === "") continue;
+
+    const bullet = line.match(/^[-*]\s+(.*)$/);
+    const numbered = line.match(/^\d+\.\s+(.*)$/);
+    if (bullet || numbered) {
+      if (current !== "") items.push(current);
+      current = (bullet?.[1] ?? numbered?.[1] ?? "").trim();
+      continue;
+    }
+
+    if (current !== "") {
+      current += ` ${line}`;
+    } else {
+      current = line;
+    }
+  }
+
+  if (current !== "") items.push(current);
+  return items;
+}
+
+function normalizeParagraph(lines: string[]): string {
+  return lines
+    .map((line) => line.trim())
+    .filter((line) => line !== "")
+    .join("\n");
+}
+
+function buildTodoItem(title: string, lines: string[]): TodoItem {
+  const sections = new Map<string, string[]>();
+  let currentSection = "";
+
+  for (const line of lines) {
+    const heading = line.match(/^###\s+(.*)$/);
+    if (heading) {
+      currentSection = heading[1].trim().toLowerCase();
+      if (!sections.has(currentSection)) {
+        sections.set(currentSection, []);
+      }
+      continue;
+    }
+
+    if (currentSection !== "") {
+      sections.get(currentSection)?.push(line);
+    }
+  }
+
+  const task = normalizeParagraph(sections.get("task") ?? []);
+  const specTieIn = normalizeMarkdownList(sections.get("spec tie-in") ?? []);
+  const guarantees = normalizeMarkdownList(sections.get("guarantees") ?? []);
+  const verificationToBuildFirst = normalizeMarkdownList(
+    sections.get("verification to build first") ?? [],
+  );
+  const requiredChecks = normalizeMarkdownList(
+    sections.get("required checks") ?? [],
+  );
+  const documentationUpdates = normalizeMarkdownList(
+    sections.get("documentation updates") ?? [],
+  );
+
+  const missing: string[] = [];
+  if (task === "") missing.push("Task");
+  if (specTieIn.length === 0) missing.push("Spec tie-in");
+  if (guarantees.length === 0) missing.push("Guarantees");
+  if (verificationToBuildFirst.length === 0) {
+    missing.push("Verification to build first");
+  }
+  if (requiredChecks.length === 0) missing.push("Required checks");
+
+  return todoItemSchema.parse({
+    id: slugifyTitle(title),
+    title,
+    task,
+    specTieIn,
+    guarantees,
+    verificationToBuildFirst,
+    requiredChecks,
+    documentationUpdates,
+    blockedReason:
+      missing.length > 0
+        ? `Missing required sections in todo.md: ${missing.join(", ")}.`
+        : null,
+  });
+}
+
+function parseTodoItems(todoPath: string): TodoItem[] {
+  const content = readFileSync(todoPath, "utf8").replace(/\r/g, "");
+  const lines = content.split("\n");
+  const items: TodoItem[] = [];
+
+  let currentTitle = "";
+  let currentLines: string[] = [];
+
+  const flush = () => {
+    if (currentTitle === "") return;
+    items.push(buildTodoItem(currentTitle, currentLines));
+    currentTitle = "";
+    currentLines = [];
+  };
+
+  for (const line of lines) {
+    const heading = line.match(/^##\s+\d+\.\s+(.*)$/);
+    if (heading) {
+      flush();
+      currentTitle = heading[1].trim();
+      continue;
+    }
+
+    if (currentTitle !== "") {
+      currentLines.push(line);
+    }
+  }
+
+  flush();
   return items;
 }
 
@@ -458,9 +577,12 @@ Return ONLY JSON matching the schema.`}
 }
 
 export default smithers((ctx) => {
-  const items = latestDiscoveredItems(ctx);
-  const blockedItems = items.filter((item) => item.blockedReason);
-  const actionableItems = items.filter((item) => !item.blockedReason);
+  const items = latestPlannedItems(ctx);
+  const firstBlockedIndex = items.findIndex((item) => item.blockedReason);
+  const visibleItems =
+    firstBlockedIndex >= 0 ? items.slice(0, firstBlockedIndex + 1) : items;
+  const blockedItems = visibleItems.filter((item) => item.blockedReason);
+  const actionableItems = visibleItems.filter((item) => !item.blockedReason);
 
   return (
     <Workflow name="todo-driver" cache>
@@ -537,28 +659,23 @@ export default smithers((ctx) => {
         </Task>
 
         <Task
-          id="discover"
-          output={outputs.discover}
-          agent={piReadRoot}
-          timeoutMs={TASK_TIMEOUT_MS}
-          retries={2}
+          id="plan-todo"
+          output={outputs.todoPlan}
         >
-          {`Read ${TODO_PATH} and select the next ${MAX_TODO_ITEMS} highest-priority unfinished todo items.
+          {() => {
+            const parsedItems = parseTodoItems(TODO_PATH);
+            const limitedItems =
+              MAX_TODO_ITEMS > 0
+                ? parsedItems.slice(0, MAX_TODO_ITEMS)
+                : parsedItems;
 
-Rules:
-- Respect the order in todo.md. Do not skip a higher-priority item unless you can defend that it is already complete in the repo.
-- Each selected item must include:
-  - Task
-  - Spec tie-in
-  - Guarantees
-  - Verification to build first
-  - Required checks
-- If the next unfinished item is missing any of those sections, return it with blockedReason explaining exactly what is missing and do not skip to a lower-priority item.
-- Use a stable kebab-case id derived from the section title.
-- documentationUpdates should be an empty array when none are listed.
-- The repo itself is the source of truth for whether an item is already complete; look at tests, docs, and current command behavior before deciding.
-
-Return ONLY JSON matching the schema.`}
+            return {
+              todoPath: TODO_PATH,
+              totalItems: parsedItems.length,
+              selectedItems: limitedItems.length,
+              items: limitedItems,
+            };
+          }}
         </Task>
 
         <Sequence>
