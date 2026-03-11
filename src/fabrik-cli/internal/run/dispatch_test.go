@@ -129,6 +129,9 @@ func TestExecuteRenderOnlyWithFabrikSyncRendersSecretAndBootstrap(t *testing.T) 
 	if !strings.Contains(rendered, "tar -xzf /opt/fabrik-sync/bundle.tgz -C /workspace/workdir") {
 		t.Fatalf("expected bootstrap extraction command in rendered manifest")
 	}
+	if !strings.Contains(rendered, "tar -xzf /opt/fabrik-workflow/bundle.tgz -C /workspace/.fabrik") {
+		t.Fatalf("expected workflow bundle extraction into control staging dir")
+	}
 }
 
 func TestExecuteRenderOnlyWithProjectEnvRendersSecretMountAndEnvFrom(t *testing.T) {

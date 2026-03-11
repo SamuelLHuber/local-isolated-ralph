@@ -15,10 +15,11 @@ import { z } from "zod";
 import { prepareWorkspaces, pushBookmark, snapshotChange } from "./utils/jj-shell";
 
 const WORKDIR_ROOT = process.cwd();
-const REPO_ROOT = resolve(WORKDIR_ROOT, "repo");
+const CONTROL_ROOT = "/workspace/.fabrik";
+const REPO_ROOT = WORKDIR_ROOT;
 const TODO_PATH = resolve(REPO_ROOT, "todo.md");
-const WORKSPACES_DIR = resolve(WORKDIR_ROOT, "workspaces", ".jj-workspaces");
-const DB_PATH = resolve(WORKDIR_ROOT, "workflows", "todo-driver.db");
+const WORKSPACES_DIR = resolve(CONTROL_ROOT, "workspaces", ".jj-workspaces");
+const DB_PATH = resolve(CONTROL_ROOT, "workflows", "todo-driver.db");
 const jjRepo = process.env.SMITHERS_JJ_REPO?.trim() ?? "";
 const jjBookmark = process.env.SMITHERS_JJ_BOOKMARK?.trim() ?? "";
 
@@ -480,7 +481,7 @@ export default smithers((ctx) => {
             }
             if (!jjRepo) {
               throw new Error(
-                "Missing SMITHERS_JJ_REPO. Dispatch this workflow with `fabrik run --jj-repo <repo-url>` so the target repository is cloned into /workspace/workdir/repo.",
+                "Missing SMITHERS_JJ_REPO. Dispatch this workflow with `fabrik run --jj-repo <repo-url>` so the target repository is cloned into /workspace/workdir.",
               );
             }
             if (!process.env.FIREWORKS_API_KEY?.trim()) {
