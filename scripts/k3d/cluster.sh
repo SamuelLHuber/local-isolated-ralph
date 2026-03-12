@@ -197,6 +197,10 @@ case "$action" in
 
     k3d "${create_args[@]}"
 
+    # Apply RBAC configuration for fabrik-runner service accounts
+    echo "[k3d] applying RBAC configuration"
+    with_cluster_kubeconfig "$name" kubectl apply -f k8s/rbac.yaml
+
     verify_shape "$shape" "$name"
     echo "[k3d] done: cluster '$name' is ready"
     ;;
