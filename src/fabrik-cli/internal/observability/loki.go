@@ -93,3 +93,64 @@ func SanitizeLabelValue(value string) string {
 	// Trim spaces
 	return strings.TrimSpace(value)
 }
+
+// LabelsFromK8s converts Kubernetes metadata labels to Loki-compatible labels.
+// K8s labels use the format "fabrik.sh/X" which is converted to "fabrik_sh_X"
+// for Loki indexing. Only labels matching the reserved prefixes are converted.
+func LabelsFromK8s(k8sLabels map[string]string) map[string]string {
+	lokiLabels := make(map[string]string)
+	for k, v := range k8sLabels {
+		// Only convert labels with reserved Fabrik prefixes
+		if strings.HasPrefix(k, "fabrik.sh/") || strings.HasPrefix(k, "smithers.sh/") {
+			// Convert K8s label format (fabrik.sh/X) to Loki format (fabrik_sh_X)
+			lokiKey := strings.ReplaceAll(strings.ReplaceAll(k, ".", "_"), "/", "_")
+			lokiLabels[lokiKey] = v
+		}
+	}
+	return lokiLabels
+}
+
+// LabelsWithOutcome returns labels including the outcome for completed runs.
+// Outcome is only added if non-empty (succeeded, failed, cancelled).
+// This is useful for querying logs of finished jobs.
+func LabelsWithOutcome(runID, project, spec, phase, outcome string) map[string]string {
+	labels := Labels(runID, project, spec, phase)
+	if strings.TrimSpace(outcome) != "" {
+		labels["outcome"] = outcome
+	}
+	return labels
+}
+
+// LabelKeysWithOutcome returns the ordered list of label keys including outcome.
+// The order is: fabrik_run_id, project, spec, phase (when present), outcome (when present)
+func LabelKeysWithOutcome(phase, outcome string) []string {
+	keys := LabelKeys(phase)
+	if strings.TrimSpace(outcome) != "" {
+		keys = append(keys, "outcome")
+	}
+	return keys
+}
+
+// LokiQueryForRun returns a LogQL query string to filter logs by run ID.
+// This produces a query like: {fabrik_run_id="01JK7V8X..."}
+func LokiQueryForRun(runID string) string {
+	return fmt.Sprintf(`{fabrik_run_id=%q}`, runID)
+}
+
+// LokiQueryForProject returns a LogQL query string to filter logs by project.
+// This produces a query like: {project="myapp"}
+func LokiQueryForProject(project string) string {
+	return fmt.Sprintf(`{project=%q}`, project)
+}
+
+// LokiQueryForProjectPhase returns a LogQL query string to filter logs by project and phase.
+// This produces a query like: {project="myapp",phase="implement"}
+func LokiQueryForProjectPhase(project, phase string) string {
+	return fmt.Sprintf(`{project=%q,phase=%q}`, project, phase)
+}
+
+// LokiQueryForOutcome returns a LogQL query string to filter logs by outcome.
+// This produces a query like: {outcome="succeeded"}
+func LokiQueryForOutcome(outcome string) string {
+	return fmt.Sprintf(`{outcome=%q}`, outcome)
+}

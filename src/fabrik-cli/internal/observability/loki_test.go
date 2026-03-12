@@ -256,3 +256,187 @@ func TestLabelsAreIndexFriendly(t *testing.T) {
 		}
 	}
 }
+
+func TestLabelsFromK8sConvertsFabrikLabels(t *testing.T) {
+	k8sLabels := map[string]string{
+		"fabrik.sh/run-id":  "01JK7V8X1234567890ABCDEFGH",
+		"fabrik.sh/project": "myapp",
+		"fabrik.sh/spec":    "feature-x",
+		"fabrik.sh/phase":   "implement",
+		"fabrik.sh/status":  "running",
+	}
+
+	lokiLabels := LabelsFromK8s(k8sLabels)
+
+	expected := map[string]string{
+		"fabrik_sh_run-id":  "01JK7V8X1234567890ABCDEFGH",
+		"fabrik_sh_project": "myapp",
+		"fabrik_sh_spec":    "feature-x",
+		"fabrik_sh_phase":   "implement",
+		"fabrik_sh_status":  "running",
+	}
+
+	if len(lokiLabels) != len(expected) {
+		t.Errorf("expected %d labels, got %d", len(expected), len(lokiLabels))
+	}
+
+	for k, v := range expected {
+		if lokiLabels[k] != v {
+			t.Errorf("lokiLabels[%q] = %q, want %q", k, lokiLabels[k], v)
+		}
+	}
+}
+
+func TestLabelsFromK8sIgnoresNonFabrikLabels(t *testing.T) {
+	k8sLabels := map[string]string{
+		"fabrik.sh/run-id": "01JK7V8X1234567890ABCDEFGH",
+		"app.kubernetes.io/name": "smithers",
+		"helm.sh/chart": "fabrik-1.0.0",
+		"custom-label": "custom-value",
+	}
+
+	lokiLabels := LabelsFromK8s(k8sLabels)
+
+	// Should only include fabrik.sh labels
+	if len(lokiLabels) != 1 {
+		t.Errorf("expected 1 label, got %d: %v", len(lokiLabels), lokiLabels)
+	}
+
+	if _, exists := lokiLabels["fabrik_sh_run-id"]; !exists {
+		t.Error("expected fabrik_sh_run-id to be present")
+	}
+
+	// These should not be present
+	if _, exists := lokiLabels["app_kubernetes_io_name"]; exists {
+		t.Error("expected app.kubernetes.io/name to be ignored")
+	}
+}
+
+func TestLabelsFromK8sHandlesEmpty(t *testing.T) {
+	lokiLabels := LabelsFromK8s(map[string]string{})
+
+	if len(lokiLabels) != 0 {
+		t.Errorf("expected 0 labels for empty input, got %d", len(lokiLabels))
+	}
+}
+
+func TestLabelsFromK8sHandlesSmithersLabels(t *testing.T) {
+	k8sLabels := map[string]string{
+		"smithers.sh/version": "1.2.3",
+		"smithers.sh/task":    "16:impl",
+	}
+
+	lokiLabels := LabelsFromK8s(k8sLabels)
+
+	if len(lokiLabels) != 2 {
+		t.Errorf("expected 2 labels, got %d", len(lokiLabels))
+	}
+
+	if lokiLabels["smithers_sh_version"] != "1.2.3" {
+		t.Errorf("expected smithers_sh_version = '1.2.3', got %q", lokiLabels["smithers_sh_version"])
+	}
+}
+
+func TestLabelsWithOutcomeIncludesOutcome(t *testing.T) {
+	labels := LabelsWithOutcome("01JK7V8X1234567890ABCDEFGH", "myapp", "feature-x", "implement", "succeeded")
+
+	expected := map[string]string{
+		"fabrik_run_id": "01JK7V8X1234567890ABCDEFGH",
+		"project":       "myapp",
+		"spec":          "feature-x",
+		"phase":         "implement",
+		"outcome":       "succeeded",
+	}
+
+	for k, v := range expected {
+		if labels[k] != v {
+			t.Errorf("labels[%q] = %q, want %q", k, labels[k], v)
+		}
+	}
+
+	if len(labels) != 5 {
+		t.Errorf("expected 5 labels, got %d: %v", len(labels), labels)
+	}
+}
+
+func TestLabelsWithOutcomeOmitsEmptyOutcome(t *testing.T) {
+	// Empty outcome should not be included
+	labels := LabelsWithOutcome("01JK7V8X1234567890ABCDEFGH", "myapp", "feature-x", "implement", "")
+
+	if _, exists := labels["outcome"]; exists {
+		t.Error("expected outcome label to be omitted when empty")
+	}
+
+	if len(labels) != 4 {
+		t.Errorf("expected 4 labels (no outcome), got %d: %v", len(labels), labels)
+	}
+}
+
+func TestLabelsWithOutcomeOmitsWhitespaceOutcome(t *testing.T) {
+	// Whitespace-only outcome should not be included
+	labels := LabelsWithOutcome("01JK7V8X1234567890ABCDEFGH", "myapp", "feature-x", "implement", "   ")
+
+	if _, exists := labels["outcome"]; exists {
+		t.Error("expected outcome label to be omitted when whitespace")
+	}
+}
+
+func TestLabelKeysWithOutcomeIncludesOutcome(t *testing.T) {
+	keys := LabelKeysWithOutcome("implement", "succeeded")
+	expected := []string{"fabrik_run_id", "project", "spec", "phase", "outcome"}
+
+	if len(keys) != len(expected) {
+		t.Fatalf("expected %d keys, got %d: %v", len(expected), len(keys), keys)
+	}
+
+	for i, want := range expected {
+		if keys[i] != want {
+			t.Errorf("keys[%d] = %q, want %q", i, keys[i], want)
+		}
+	}
+}
+
+func TestLabelKeysWithOutcomeOmitsEmptyOutcome(t *testing.T) {
+	keys := LabelKeysWithOutcome("implement", "")
+	expected := []string{"fabrik_run_id", "project", "spec", "phase"}
+
+	if len(keys) != len(expected) {
+		t.Fatalf("expected %d keys, got %d: %v", len(expected), len(keys), keys)
+	}
+}
+
+func TestLokiQueryForRun(t *testing.T) {
+	query := LokiQueryForRun("01JK7V8X1234567890ABCDEFGH")
+	expected := `{fabrik_run_id="01JK7V8X1234567890ABCDEFGH"}`
+
+	if query != expected {
+		t.Errorf("LokiQueryForRun() = %q, want %q", query, expected)
+	}
+}
+
+func TestLokiQueryForProject(t *testing.T) {
+	query := LokiQueryForProject("myapp")
+	expected := `{project="myapp"}`
+
+	if query != expected {
+		t.Errorf("LokiQueryForProject() = %q, want %q", query, expected)
+	}
+}
+
+func TestLokiQueryForProjectPhase(t *testing.T) {
+	query := LokiQueryForProjectPhase("myapp", "implement")
+	expected := `{project="myapp",phase="implement"}`
+
+	if query != expected {
+		t.Errorf("LokiQueryForProjectPhase() = %q, want %q", query, expected)
+	}
+}
+
+func TestLokiQueryForOutcome(t *testing.T) {
+	query := LokiQueryForOutcome("succeeded")
+	expected := `{outcome="succeeded"}`
+
+	if query != expected {
+		t.Errorf("LokiQueryForOutcome() = %q, want %q", query, expected)
+	}
+}

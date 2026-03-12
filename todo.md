@@ -415,7 +415,11 @@ Move rendered workloads closer to the security posture in the hardening spec.
 - `make verify-cli`
 - k3d verification for rendered pod security posture
 
-## 8. Observability / Loki
+## 8. Observability / Loki [done]
+Status: done
+Verified by workflow run: hoth-todo-loop-e2e-20260312-39
+Verification summary: Verification job hoth-todo-loop-e2e-20260312-39-observability-loki-verify succeeded.
+
 
 ### Task
 

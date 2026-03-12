@@ -2,7 +2,6 @@ package observability
 
 import (
 	"os"
-	"strings"
 	"testing"
 )
 
@@ -75,7 +74,7 @@ func TestObservabilityConfigCaseSensitivity(t *testing.T) {
 
 
 func TestLokiLabelsFromK8sMetadata(t *testing.T) {
-	// Simulate extracting Loki-compatible labels from K8s labels
+	// LabelsFromK8s converts K8s metadata labels to Loki-compatible labels
 	k8sLabels := map[string]string{
 		"fabrik.sh/run-id":  "01JK7V8X1234567890ABCDEFGH",
 		"fabrik.sh/project": "myapp",
@@ -84,12 +83,7 @@ func TestLokiLabelsFromK8sMetadata(t *testing.T) {
 		"fabrik.sh/status":  "running",
 	}
 
-	lokiLabels := make(map[string]string)
-	for k, v := range k8sLabels {
-		// Convert K8s label format (fabrik.sh/X) to Loki format (fabrik_X)
-		lokiKey := strings.ReplaceAll(strings.ReplaceAll(k, ".", "_"), "/", "_")
-		lokiLabels[lokiKey] = v
-	}
+	lokiLabels := LabelsFromK8s(k8sLabels)
 
 	expected := map[string]string{
 		"fabrik_sh_run-id":  "01JK7V8X1234567890ABCDEFGH",
