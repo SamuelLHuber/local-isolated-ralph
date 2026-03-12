@@ -241,6 +241,7 @@ test("todo-driver wraps planning in a backlog Ralph loop", () => {
 test("repo reset command preserves smithers state", () => {
   const command = repoResetCommand("/workspace/workdir");
   expect(command).toContain("! -name .smithers");
+  expect(command).toContain("! -name .fabrik");
   expect(command).toContain("/workspace/workdir");
 });
 

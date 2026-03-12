@@ -24,6 +24,8 @@ What it does:
 
 - stages workflow code under `/workspace/.fabrik/workflows`
 - clones the target repo into `/workspace/workdir`
+- stores workflow control/runtime state under repo-local `.fabrik/`, including the Smithers DB at `.fabrik/smithers/todo-driver.db`
+- uses the same control-root layout in local and cluster environments so workflow state paths stay identical across verification contexts
 - reads `todo.md` from the cloned repo root
 - runs a single monolithic Ralph loop that always picks the next highest-priority unfinished todo item
 - blocks if the todo item is missing `Spec tie-in`, `Guarantees`, `Verification to build first`, or `Required checks`

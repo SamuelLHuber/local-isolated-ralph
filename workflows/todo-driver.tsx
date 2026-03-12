@@ -19,10 +19,10 @@ import { parseTodoItems, todoItemSchema, type TodoItem } from "./utils/todo-plan
 import { markTodoItemDone } from "./utils/todo-status";
 
 const WORKDIR_ROOT = process.cwd();
-const CONTROL_ROOT = "/workspace/.fabrik";
+const CONTROL_ROOT = resolve(WORKDIR_ROOT, ".fabrik");
 const REPO_ROOT = WORKDIR_ROOT;
 const TODO_PATH = resolve(REPO_ROOT, "todo.md");
-const DB_DIR = resolve(REPO_ROOT, ".smithers");
+const DB_DIR = resolve(CONTROL_ROOT, "smithers");
 mkdirSync(DB_DIR, { recursive: true });
 const DB_PATH = resolve(DB_DIR, "todo-driver.db");
 const jjRepo = process.env.SMITHERS_JJ_REPO?.trim() ?? "";
@@ -226,7 +226,7 @@ function itemWorkspace(itemId: string): string {
 }
 
 export function repoResetCommand(rootDir: string): string {
-  return `find ${rootDir} -mindepth 1 -maxdepth 1 ! -name .smithers -exec rm -rf -- {} +`;
+  return `find ${rootDir} -mindepth 1 -maxdepth 1 ! -name .smithers ! -name .fabrik -exec rm -rf -- {} +`;
 }
 
 export function isRuntimeArtifactPath(value: string): boolean {
