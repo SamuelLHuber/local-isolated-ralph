@@ -5,7 +5,8 @@
 **Status**: draft  
 **Version**: 1.2.0  
 **Last Updated**: 2026-02-16  
-**Supersedes**: All VM-based approaches
+**Supersedes**: All VM-based approaches  
+**Tie-in**: [`070-cli-verification-map.md`](./070-cli-verification-map.md) — see verification paths for all acceptance criteria
 
 ---
 

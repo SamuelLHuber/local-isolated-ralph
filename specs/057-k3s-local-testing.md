@@ -5,7 +5,8 @@
 **Status**: draft  
 **Version**: 1.0.0  
 **Last Updated**: 2026-02-25  
-**Provides**: Repeatable local/CI test environments for single-node and multi-node Kubernetes setups
+**Provides**: Repeatable local/CI test environments for single-node and multi-node Kubernetes setups  
+**Tie-in**: [`070-cli-verification-map.md`](./070-cli-verification-map.md) — see verification paths for all acceptance criteria
 
 ---
 
