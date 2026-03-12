@@ -421,7 +421,7 @@ func buildWorkflowRunnerRoleYAML(namespace, roleName string) string {
 	b.WriteString("  namespace: " + namespace + "\n")
 	b.WriteString("rules:\n")
 	b.WriteString("  - apiGroups: [\"batch\"]\n")
-	b.WriteString("    resources: [\"jobs\"]\n")
+	b.WriteString("    resources: [\"jobs\", \"cronjobs\"]\n")
 	b.WriteString("    verbs: [\"create\", \"delete\", \"get\", \"list\", \"watch\"]\n")
 	b.WriteString("  - apiGroups: [\"\"]\n")
 	b.WriteString("    resources: [\"persistentvolumeclaims\"]\n")
