@@ -7,6 +7,7 @@ export const todoItemSchema = z.object({
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
     .describe("Stable lowercase kebab-case item id"),
   title: z.string(),
+  status: z.enum(["pending", "done"]),
   task: z.string(),
   specTieIn: z.array(z.string()),
   guarantees: z.array(z.string()),
@@ -17,6 +18,11 @@ export const todoItemSchema = z.object({
 });
 
 export type TodoItem = z.infer<typeof todoItemSchema>;
+
+type TodoHeading = {
+  title: string;
+  status: "pending" | "done";
+};
 
 function slugifyTitle(title: string): string {
   return title
@@ -60,7 +66,23 @@ function normalizeParagraph(lines: string[]): string {
     .join("\n");
 }
 
-function buildTodoItem(title: string, lines: string[]): TodoItem {
+function parseTodoHeading(rawTitle: string): TodoHeading {
+  const title = rawTitle.trim();
+  const doneMatch = title.match(/^(.*)\s+\[(done)\]\s*$/i);
+  if (doneMatch) {
+    return {
+      title: doneMatch[1]?.trim() ?? title,
+      status: "done",
+    };
+  }
+
+  return {
+    title,
+    status: "pending",
+  };
+}
+
+function buildTodoItem(heading: TodoHeading, lines: string[]): TodoItem {
   const sections = new Map<string, string[]>();
   let currentSection = "";
 
@@ -102,8 +124,9 @@ function buildTodoItem(title: string, lines: string[]): TodoItem {
   if (requiredChecks.length === 0) missing.push("Required checks");
 
   return todoItemSchema.parse({
-    id: slugifyTitle(title),
-    title,
+    id: slugifyTitle(heading.title),
+    title: heading.title,
+    status: heading.status,
     task,
     specTieIn,
     guarantees,
@@ -121,13 +144,13 @@ export function parseTodoContent(content: string): TodoItem[] {
   const lines = content.replace(/\r/g, "").split("\n");
   const items: TodoItem[] = [];
 
-  let currentTitle = "";
+  let currentHeading: TodoHeading | null = null;
   let currentLines: string[] = [];
 
   const flush = () => {
-    if (currentTitle === "") return;
-    items.push(buildTodoItem(currentTitle, currentLines));
-    currentTitle = "";
+    if (!currentHeading) return;
+    items.push(buildTodoItem(currentHeading, currentLines));
+    currentHeading = null;
     currentLines = [];
   };
 
@@ -135,7 +158,7 @@ export function parseTodoContent(content: string): TodoItem[] {
     const numberedHeading = line.match(/^##\s+\d+\.\s+(.*)$/);
     if (numberedHeading) {
       flush();
-      currentTitle = numberedHeading[1].trim();
+      currentHeading = parseTodoHeading(numberedHeading[1] ?? "");
       continue;
     }
 
@@ -144,7 +167,7 @@ export function parseTodoContent(content: string): TodoItem[] {
       continue;
     }
 
-    if (currentTitle !== "") {
+    if (currentHeading) {
       currentLines.push(line);
     }
   }

@@ -132,6 +132,21 @@ func TestExecuteRenderOnlyWithFabrikSyncRendersSecretAndBootstrap(t *testing.T) 
 	if !strings.Contains(rendered, "tar -xzf /opt/fabrik-workflow/bundle.tgz -C /workspace/.fabrik") {
 		t.Fatalf("expected workflow bundle extraction into control staging dir")
 	}
+	if strings.Contains(rendered, "exec /opt/smithers-runtime/run.sh") {
+		t.Fatalf("expected workflow bootstrap to invoke smithers directly, not the runtime fallback script")
+	}
+	if !strings.Contains(rendered, "exec /opt/smithers-runtime/node_modules/.bin/smithers run") {
+		t.Fatalf("expected workflow bootstrap to invoke smithers directly")
+	}
+	if !strings.Contains(rendered, "WORKFLOW_PATH=${SMITHERS_WORKFLOW_PATH:-/workspace/.fabrik/") {
+		t.Fatalf("expected workflow bootstrap to resolve workflow path from the mounted bundle")
+	}
+	if !strings.Contains(rendered, "cat > /tmp/pi-agent/models.json <<'EOF'") {
+		t.Fatalf("expected workflow bootstrap to materialize Fireworks PI runtime config")
+	}
+	if !strings.Contains(rendered, "cat > /tmp/fabrik-git-askpass.sh <<'EOF'") {
+		t.Fatalf("expected workflow bootstrap to materialize GitHub askpass helper")
+	}
 	if !strings.Contains(rendered, "kind: ServiceAccount") {
 		t.Fatalf("expected rendered manifest to include workflow service account")
 	}

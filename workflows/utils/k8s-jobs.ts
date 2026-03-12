@@ -22,6 +22,7 @@ type VerificationJobOptions = {
   nodeName: string;
   workspacePath: string;
   commands: string[];
+  cleanupCommands?: string[];
   labels?: Record<string, string>;
   timeoutSeconds?: number;
 };
@@ -164,8 +165,21 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function buildVerifierScript(commands: readonly string[]): string {
-  return ["set -euo pipefail", ...commands].join("\n");
+function buildVerifierScript(
+  commands: readonly string[],
+  cleanupCommands: readonly string[] = [],
+): string {
+  const lines = ["set -euo pipefail"];
+  if (cleanupCommands.length > 0) {
+    lines.push("cleanup() {");
+    for (const command of cleanupCommands) {
+      lines.push(`  ${command}`);
+    }
+    lines.push("}");
+    lines.push("trap cleanup EXIT");
+  }
+  lines.push(...commands);
+  return lines.join("\n");
 }
 
 export async function runVerificationJob(
@@ -206,7 +220,14 @@ export async function runVerificationJob(
               name: "fabrik",
               image: options.image,
               imagePullPolicy: "IfNotPresent",
-              command: ["sh", "-lc", buildVerifierScript(options.commands)],
+              command: [
+                "sh",
+                "-lc",
+                buildVerifierScript(
+                  options.commands,
+                  options.cleanupCommands ?? [],
+                ),
+              ],
               workingDir: options.workspacePath,
               volumeMounts: [
                 {

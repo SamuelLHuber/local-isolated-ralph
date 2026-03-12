@@ -246,7 +246,20 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 		if syncSecretName != "" {
 			bootstrap += " && if [ -f /opt/fabrik-sync/bundle.tgz ]; then tar -xzf /opt/fabrik-sync/bundle.tgz -C /workspace/workdir; fi"
 		}
-		bootstrap += " && exec /opt/smithers-runtime/run.sh"
+		bootstrap += " && RUNTIME_DIR=${SMITHERS_RUNTIME_DIR:-/opt/smithers-runtime}"
+		bootstrap += " && WORKFLOW_PATH=${SMITHERS_WORKFLOW_PATH:-/workspace/.fabrik/" + opts.WorkflowBundle.WorkdirPath + "}"
+		bootstrap += " && WORKFLOW_DIR=$(dirname \"$WORKFLOW_PATH\")"
+		bootstrap += " && WORKFLOW_RUNTIME_DIR=$(dirname \"$WORKFLOW_DIR\")"
+		bootstrap += " && mkdir -p \"$WORKFLOW_RUNTIME_DIR\" /tmp/pi-agent"
+		bootstrap += " && if [ ! -e \"$WORKFLOW_RUNTIME_DIR/node_modules\" ]; then ln -s \"$RUNTIME_DIR/node_modules\" \"$WORKFLOW_RUNTIME_DIR/node_modules\"; fi"
+		bootstrap += " && if [ ! -e \"$WORKFLOW_RUNTIME_DIR/package.json\" ]; then cp \"$RUNTIME_DIR/package.json\" \"$WORKFLOW_RUNTIME_DIR/package.json\"; fi"
+		bootstrap += " && if [ -n \"${FIREWORKS_API_KEY:-}\" ]; then cat > /tmp/pi-agent/models.json <<'EOF'\n{\n  \"providers\": {\n    \"fireworks\": {\n      \"baseUrl\": \"https://api.fireworks.ai/inference/v1\",\n      \"api\": \"openai-completions\",\n      \"apiKey\": \"FIREWORKS_API_KEY\",\n      \"authHeader\": true,\n      \"models\": [\n        {\n          \"id\": \"accounts/fireworks/models/kimi-k2p5\",\n          \"name\": \"Fireworks Kimi K2.5\",\n          \"reasoning\": true,\n          \"input\": [\"text\"],\n          \"contextWindow\": 262144,\n          \"maxTokens\": 32768,\n          \"cost\": {\n            \"input\": 0,\n            \"output\": 0,\n            \"cacheRead\": 0,\n            \"cacheWrite\": 0\n          }\n        }\n      ]\n    }\n  }\n}\nEOF\nfi"
+		bootstrap += " && VCS_USER_NAME=${JJ_USER_NAME:-${GIT_AUTHOR_NAME:-${GIT_COMMITTER_NAME:-}}}"
+		bootstrap += " && VCS_USER_EMAIL=${JJ_USER_EMAIL:-${GIT_AUTHOR_EMAIL:-${GIT_COMMITTER_EMAIL:-}}}"
+		bootstrap += " && if [ -n \"$VCS_USER_NAME\" ] && [ -n \"$VCS_USER_EMAIL\" ]; then export GIT_AUTHOR_NAME=\"$VCS_USER_NAME\" GIT_COMMITTER_NAME=\"${GIT_COMMITTER_NAME:-$VCS_USER_NAME}\" GIT_AUTHOR_EMAIL=\"$VCS_USER_EMAIL\" GIT_COMMITTER_EMAIL=\"${GIT_COMMITTER_EMAIL:-$VCS_USER_EMAIL}\" && git config --global user.name \"$VCS_USER_NAME\" && git config --global user.email \"$VCS_USER_EMAIL\" && jj config set --user user.name \"$VCS_USER_NAME\" >/dev/null && jj config set --user user.email \"$VCS_USER_EMAIL\" >/dev/null; fi"
+		bootstrap += " && GITHUB_AUTH_TOKEN=${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+		bootstrap += " && if [ -n \"$GITHUB_AUTH_TOKEN\" ]; then cat > /tmp/fabrik-git-askpass.sh <<'EOF'\n#!/bin/sh\ncase \"$1\" in\n  *Username*) printf '%s\\n' \"x-access-token\" ;;\n  *Password*) printf '%s\\n' \"${GITHUB_AUTH_TOKEN:?}\" ;;\n  *) printf '\\n' ;;\nesac\nEOF\nchmod 700 /tmp/fabrik-git-askpass.sh && export GITHUB_AUTH_TOKEN GIT_ASKPASS=/tmp/fabrik-git-askpass.sh GIT_TERMINAL_PROMPT=0; fi"
+		bootstrap += " && exec /opt/smithers-runtime/node_modules/.bin/smithers run \"$WORKFLOW_PATH\" --run-id \"$SMITHERS_RUN_ID\" --input \"$SMITHERS_INPUT_JSON\" --root /workspace/workdir"
 		b.WriteString(indent + "        command: [\"sh\", \"-lc\", " + yamlQuote(bootstrap) + "]\n")
 	}
 	b.WriteString(indent + "        env:\n")
