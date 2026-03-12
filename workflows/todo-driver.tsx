@@ -28,6 +28,7 @@ const jjRepo = process.env.SMITHERS_JJ_REPO?.trim() ?? "";
 const jjBookmark = process.env.SMITHERS_JJ_BOOKMARK?.trim() ?? "";
 
 const MAX_ITERATIONS = Number(process.env.MAX_ITERATIONS ?? "80");
+const MAX_REVIEW_ROUNDS = Number(process.env.MAX_REVIEW_ROUNDS ?? "8");
 const MAX_TODO_ITEMS = Number(process.env.MAX_TODO_ITEMS ?? "1");
 const TASK_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const REVIEW_TIMEOUT_MS = 60 * 60 * 1000;
@@ -70,6 +71,12 @@ const reviewSchema = z.object({
   requiredFollowUps: z.array(z.string()),
 });
 
+const reviewFixSchema = z.object({
+  summary: z.string(),
+  fixesMade: z.array(z.string()),
+  unresolvedIssues: z.array(z.string()),
+});
+
 const reportSchema = z.object({
   ticketId: z.string(),
   status: z.enum(["done", "partial", "blocked"]),
@@ -82,12 +89,14 @@ const { smithers, outputs } = createSmithers(
     implement: implementSchema,
     validate: validateSchema,
     review: reviewSchema,
+    reviewFix: reviewFixSchema,
     report: reportSchema,
   },
   { dbPath: DB_PATH },
 );
 
 type Review = z.infer<typeof reviewSchema>;
+type ReviewFix = z.infer<typeof reviewFixSchema>;
 type Validate = z.infer<typeof validateSchema>;
 type WorkflowCtx = Parameters<Parameters<typeof smithers>[0]>[0];
 
@@ -420,6 +429,10 @@ function latestValidation(ctx: WorkflowCtx, itemId: string): Validate | undefine
   return latestOutputRow<Validate>(ctx, "validate", `${itemId}:validate`);
 }
 
+function latestReviewFix(ctx: WorkflowCtx, itemId: string): ReviewFix | undefined {
+  return latestOutputRow<ReviewFix>(ctx, "reviewFix", `${itemId}:review-fix`);
+}
+
 function latestReportDone(ctx: WorkflowCtx, taskId: string): boolean {
   const report = ctx.latest("report", taskId) as
     | z.infer<typeof reportSchema>
@@ -433,9 +446,21 @@ function hasImplementation(ctx: WorkflowCtx, itemId: string): boolean {
 
 function ReviewGroup({
   item,
+  ctx,
 }: {
   item: TodoItem;
+  ctx: WorkflowCtx;
 }) {
+  const workdir = itemWorkspace(item.id);
+  const latestImplement = latestOutputRow<z.infer<typeof implementSchema>>(
+    ctx,
+    "implement",
+    `${item.id}:implement`,
+  );
+  const latestValidate = latestValidation(ctx, item.id);
+
+  if (!latestValidate?.allPassed) return null;
+
   return Parallel({
     children: REVIEWERS.map((reviewer) =>
       Task({
@@ -469,12 +494,107 @@ ${item.verificationToBuildFirst.map((entry) => `- ${entry}`).join("\n")}
 Required checks:
 ${item.requiredChecks.map((entry) => `- ${entry}`).join("\n")}
 
-Reject if the implementation cannot be defended from the repo state, tests, and command evidence.
+Latest implementation summary:
+${latestImplement?.summary ?? "- none"}
 
-Return ONLY JSON matching the schema.`,
+Latest changed files:
+${latestImplement?.changes?.length ? latestImplement.changes.map((entry) => `- ${entry}`).join("\n") : "- none"}
+
+Latest validation evidence:
+${latestValidate.evidence.length > 0 ? latestValidate.evidence.map((entry) => `- ${entry}`).join("\n") : "- validation passed without extra evidence"}
+
+Review the repository state at ${workdir}.
+Do not claim missing context. Use the repository files, implementation summary, and validation evidence above as the complete review context.
+Only report issues you can defend from the repository state or validation evidence.
+If the change is acceptable, set approved=true and issues=[].
+
+Return ONLY a JSON object with these fields:
+- reviewer: string
+- approved: boolean
+- issues: string[]
+- requiredFollowUps: string[]`,
       }),
     ),
   });
+}
+
+function ReviewFixStep({
+  item,
+  ctx,
+}: {
+  item: TodoItem;
+  ctx: WorkflowCtx;
+}) {
+  const latestValidate = latestValidation(ctx, item.id);
+  const latestValidationIteration = latestOutputIteration(
+    ctx,
+    "validate",
+    `${item.id}:validate`,
+  );
+  const latestImplement = latestOutputRow<z.infer<typeof implementSchema>>(
+    ctx,
+    "implement",
+    `${item.id}:implement`,
+  );
+  const issues = collectReviewIssues(
+    ctx,
+    item.id,
+    REVIEWERS,
+    latestValidationIteration,
+  );
+  const allApproved = allReviewersApproved(
+    ctx,
+    item.id,
+    REVIEWERS,
+    latestValidationIteration,
+  );
+
+  return Task({
+    id: `${item.id}:review-fix`,
+    output: outputs.reviewFix,
+    agent: piWriteAt(itemWorkspace(item.id)),
+    timeoutMs: TASK_TIMEOUT_MS,
+    retries: 1,
+    skipIf: !latestValidate?.allPassed || allApproved || issues.length === 0,
+    children: `Address the reviewer feedback for this todo item:
+${itemWorkspace(item.id)}
+
+Todo item:
+${item.title}
+
+Current implementation summary:
+${latestImplement?.summary ?? "- none"}
+
+Current changed files:
+${latestImplement?.changes?.length ? latestImplement.changes.map((entry) => `- ${entry}`).join("\n") : "- none"}
+
+Validation evidence:
+${latestValidate?.evidence?.length ? latestValidate.evidence.map((entry) => `- ${entry}`).join("\n") : "- none"}
+
+Reviewer issues to fix:
+${issues.map((entry) => `- ${entry}`).join("\n")}
+
+Rules:
+- Fix the repository directly.
+- Do not ask for more context.
+- Do not run jj or git commands.
+- If an issue is invalid, make the repository state and verification evidence clearer instead of arguing.
+
+Return ONLY a JSON object with these fields:
+- summary: string
+- fixesMade: string[]
+- unresolvedIssues: string[]`,
+  });
+}
+
+function itemLoopApproved(ctx: WorkflowCtx, itemId: string): boolean {
+  const latestValidationIteration = latestOutputIteration(
+    ctx,
+    "validate",
+    `${itemId}:validate`,
+  );
+  return latestValidationPassed(ctx, itemId) &&
+    allReviewersApproved(ctx, itemId, REVIEWERS, latestValidationIteration);
 }
 
 function TodoItemPipeline({
@@ -485,48 +605,15 @@ function TodoItemPipeline({
   ctx: WorkflowCtx;
 }) {
   const workdir = itemWorkspace(item.id);
-  const implemented = hasImplementation(ctx, item.id);
-  const latestValidate = latestValidation(ctx, item.id);
-  const hasValidation = latestValidate !== undefined;
-  const latestImplementIteration = latestOutputIteration(
+  const latestImplement = latestOutputRow<z.infer<typeof implementSchema>>(
     ctx,
     "implement",
     `${item.id}:implement`,
   );
-  const latestReviewFixIteration = latestOutputIteration(
-    ctx,
-    "report",
-    `${item.id}:snapshot-review-fix`,
-  );
-  const latestMutationIteration = Math.max(
-    latestImplementIteration ?? -1,
-    latestReviewFixIteration ?? -1,
-  );
-  const latestValidationIteration = latestOutputIteration(
-    ctx,
-    "validate",
-    `${item.id}:validate`,
-  );
-  const validationCurrent =
-    latestValidationIteration !== null &&
-    latestValidationIteration >= latestMutationIteration;
-  const validationPassed = validationCurrent && latestValidate?.allPassed === true;
-  const reviewMinimumIteration = Math.max(
-    latestValidationIteration ?? -1,
-    latestMutationIteration,
-  );
-  const issues = collectReviewIssues(
-    ctx,
-    item.id,
-    REVIEWERS,
-    reviewMinimumIteration,
-  );
-  const approved = allReviewersApproved(
-    ctx,
-    item.id,
-    REVIEWERS,
-    reviewMinimumIteration,
-  );
+  const latestValidate = latestValidation(ctx, item.id);
+  const latestFix = latestReviewFix(ctx, item.id);
+  const issues = collectReviewIssues(ctx, item.id, REVIEWERS);
+  const approved = itemLoopApproved(ctx, item.id);
   const todoMarkedDone = latestReportDone(ctx, `${item.id}:mark-todo-done`);
   const completionSnapshotted = latestReportDone(
     ctx,
@@ -539,22 +626,7 @@ function TodoItemPipeline({
     `${item.id}:complete-report`,
   );
   const blocked = item.blockedReason !== null;
-  const needsImplementation =
-    !implemented || (validationCurrent && !validationPassed) || issues.length > 0;
-  const needsValidation =
-    !blocked && !needsImplementation && (!hasValidation || !validationCurrent);
-  const needsReview =
-    !blocked &&
-    !needsImplementation &&
-    validationCurrent &&
-    validationPassed &&
-    !approved;
-  const readyToFinalize =
-    !blocked &&
-    !needsImplementation &&
-    validationCurrent &&
-    validationPassed &&
-    approved;
+  const readyToFinalize = !blocked && approved;
   const needsMarkTodoDone = readyToFinalize && !todoMarkedDone;
   const needsCompletionSnapshot =
     readyToFinalize && todoMarkedDone && !completionSnapshotted;
@@ -587,16 +659,23 @@ function TodoItemPipeline({
       }),
 
       Branch({
-        if: needsImplementation,
+        if: !blocked && !readyToFinalize,
         then: Sequence({
           children: [
-            Task({
-              id: `${item.id}:implement`,
-              output: outputs.implement,
-              agent: piWriteAt(workdir),
-              timeoutMs: TASK_TIMEOUT_MS,
-              retries: 1,
-              children: `Implement the next todo item in this repository:
+            Ralph({
+              id: `${item.id}:implement-review-loop`,
+              until: itemLoopApproved(ctx, item.id),
+              maxIterations: MAX_REVIEW_ROUNDS,
+              onMaxReached: "return-last",
+              children: Sequence({
+                children: [
+                  Task({
+                    id: `${item.id}:implement`,
+                    output: outputs.implement,
+                    agent: piWriteAt(workdir),
+                    timeoutMs: TASK_TIMEOUT_MS,
+                    retries: 1,
+                    children: `Implement the next todo item in this repository:
 ${workdir}
 
 Todo item:
@@ -635,6 +714,12 @@ ${latestValidate
       ].join("\n")
   : "- validation has not run yet"}
 
+Latest implementation summary:
+${latestImplement?.summary ?? "- none"}
+
+Latest review-fix summary:
+${latestFix?.summary ?? "- none"}
+
 Rules:
 - Build or update the required verification before claiming completion.
 - Do not run jj or git commands.
@@ -648,72 +733,27 @@ Rules:
 - If you return an empty changes array, the summary must explain the concrete blocker preventing further edits.
 
 Return ONLY JSON matching the schema.`,
-            }),
+                  }),
 
-            Task({
-              id: `${item.id}:snapshot-implement`,
-              output: outputs.report,
-              timeoutMs: 60_000,
-              children: () => snapshotChange(workdir, item.id, "implement"),
-            }),
+                  Task({
+                    id: `${item.id}:snapshot-implement`,
+                    output: outputs.report,
+                    timeoutMs: 60_000,
+                    children: () => snapshotChange(workdir, item.id, "implement"),
+                  }),
 
-            Task({
-              id: `${item.id}:loop-report`,
-              output: outputs.report,
-              children: {
-                ticketId: item.id,
-                status: "partial",
-                summary: `Implemented ${item.id}; the next Ralph loop will run validation.`,
-              },
-            }),
-          ],
-        }),
-      }),
+                  Task({
+                    id: `${item.id}:validate`,
+                    output: outputs.validate,
+                    timeoutMs: TASK_TIMEOUT_MS,
+                    retries: 1,
+                    children: () => runTodoValidation(item),
+                  }),
 
-      Branch({
-        if: needsValidation,
-        then: Sequence({
-          children: [
-            Task({
-              id: `${item.id}:validate`,
-              output: outputs.validate,
-              timeoutMs: TASK_TIMEOUT_MS,
-              retries: 1,
-              children: () => runTodoValidation(item),
-            }),
-
-            Task({
-              id: `${item.id}:loop-report`,
-              output: outputs.report,
-              children: () => {
-                const validate = latestValidation(ctx, item.id);
-                return {
-                  ticketId: item.id,
-                  status: validate?.allPassed ? "partial" : "blocked",
-                  summary: validate?.allPassed
-                    ? `Validated ${item.id}; the next Ralph loop will run reviewers.`
-                    : `Validation failed for ${item.id}; the next Ralph loop will revise the implementation.`,
-                };
-              },
-            }),
-          ],
-        }),
-      }),
-
-      Branch({
-        if: needsReview,
-        then: Sequence({
-          children: [
-            ReviewGroup({ item }),
-
-            Task({
-              id: `${item.id}:loop-report`,
-              output: outputs.report,
-              children: {
-                ticketId: item.id,
-                status: "partial",
-                summary: `Reviewed ${item.id}; the next Ralph loop will either finalize or address reviewer feedback.`,
-              },
+                  ReviewGroup({ item, ctx }),
+                  ReviewFixStep({ item, ctx }),
+                ],
+              }),
             }),
           ],
         }),
