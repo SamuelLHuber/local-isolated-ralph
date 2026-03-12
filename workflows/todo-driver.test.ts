@@ -682,6 +682,102 @@ test("todo-driver requires fresh reviews after a new validation pass", () => {
   expect(ids).not.toContain("runs-inspection:mark-todo-done");
 });
 
+test("todo-driver ignores bogus missing-context review complaints when review context exists", () => {
+  const ctx = buildContext({
+    runId: "preview",
+    iteration: 2,
+    iterations: {},
+    input: {},
+    outputs: {
+      todoPlan: [
+        {
+          nodeId: "plan-todo-loop",
+          iteration: 2,
+          items: [
+            {
+              id: "runs-inspection",
+              title: "Runs Inspection",
+              status: "pending",
+              task: "Inspect runs from Kubernetes.",
+              specTieIn: ["orchestrator metadata"],
+              guarantees: ["list reflects cluster state"],
+              verificationToBuildFirst: ["add deterministic tests"],
+              requiredChecks: ["`make verify-cli`"],
+              documentationUpdates: [],
+              blockedReason: null,
+            },
+          ],
+        },
+      ],
+      implement: [
+        {
+          nodeId: "runs-inspection:implement",
+          iteration: 1,
+          summary: "implemented",
+          changes: ["src/fabrik-cli/cmd/runs.go"],
+          verification: [],
+          documentation: [],
+        },
+      ],
+      validate: [
+        {
+          nodeId: "runs-inspection:validate",
+          iteration: 1,
+          allPassed: true,
+          commands: [],
+          evidence: ["Verifier logs: ok\tfabrik-cli/cmd"],
+          failingSummary: null,
+        },
+      ],
+      reviewContext: [
+        {
+          nodeId: "runs-inspection:review-context",
+          iteration: 1,
+          changedFiles: ["src/fabrik-cli/cmd/runs.go"],
+          diffSummary: ["M src/fabrik-cli/cmd/runs.go"],
+        },
+      ],
+      review: [
+        {
+          nodeId: "runs-inspection:review:spec-alignment",
+          iteration: 1,
+          reviewer: "Spec Alignment",
+          approved: false,
+          issues: [
+            "Review context missing - todo item, JJ diff, and validation evidence not found in the current prompt",
+          ],
+          requiredFollowUps: ["Re-submit review request with explicit context"],
+        },
+        {
+          nodeId: "runs-inspection:review:maintainability",
+          iteration: 1,
+          reviewer: "Maintainability",
+          approved: false,
+          issues: [
+            "Review context missing: No todo item, changed files, JJ diff, or validation evidence provided in the prompt to perform the review.",
+          ],
+          requiredFollowUps: ["Provide the explicit implementation change for review."],
+        },
+        {
+          nodeId: "runs-inspection:review:verification",
+          iteration: 1,
+          reviewer: "Verification",
+          approved: false,
+          issues: [
+            "Review context missing: todo item, changed files, JJ diff, and validation evidence are not present in the current prompt",
+          ],
+          requiredFollowUps: ["Resubmit review request with complete context"],
+        },
+      ],
+    },
+    zodToKeyName: workflow.zodToKeyName,
+  });
+
+  const ids = collectTaskIDs(workflow.build(ctx));
+  expect(ids).toContain("runs-inspection:mark-todo-done");
+  expect(ids).not.toContain("runs-inspection:review-fix");
+});
+
 test("todo-driver snapshots completion after marking todo done", () => {
   const ctx = buildContext({
     runId: "preview",
