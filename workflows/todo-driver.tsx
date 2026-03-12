@@ -919,6 +919,7 @@ function TodoItemPipeline({
   ctx: WorkflowCtx;
 }) {
   const workdir = itemWorkspace(item.id);
+  const latestPlan = latestTodoPlan(ctx);
   const latestImplement = latestOutputRow<z.infer<typeof implementSchema>>(
     ctx,
     "implement",
@@ -928,18 +929,33 @@ function TodoItemPipeline({
   const latestFix = latestReviewFix(ctx, item.id);
   const issues = collectReviewIssues(ctx, item.id, REVIEWERS);
   const loopState = todoLoopState(ctx, item);
+  const effectivePhase =
+    latestPlan?.activeItemId === item.id && latestPlan.activePhase
+      ? latestPlan.activePhase
+      : loopState.phase;
   const {
     approved,
-    blocked,
-    readyToFinalize,
-    needsImplementation,
-    needsValidation,
-    needsReview,
-    needsMarkTodoDone,
-    needsCompletionSnapshot,
-    needsBookmarkPush,
-    needsCompletionReport,
+    blocked: loopBlocked,
+    readyToFinalize: loopReadyToFinalize,
+    needsMarkTodoDone: loopNeedsMarkTodoDone,
+    needsCompletionSnapshot: loopNeedsCompletionSnapshot,
+    needsBookmarkPush: loopNeedsBookmarkPush,
+    needsCompletionReport: loopNeedsCompletionReport,
   } = loopState;
+  const blocked = loopBlocked || effectivePhase === "blocked";
+  const readyToFinalize =
+    effectivePhase === "finalize" || loopReadyToFinalize;
+  const needsImplementation = effectivePhase === "implement";
+  const needsValidation = effectivePhase === "validate";
+  const needsReview = effectivePhase === "review";
+  const needsMarkTodoDone =
+    effectivePhase === "finalize" && loopNeedsMarkTodoDone;
+  const needsCompletionSnapshot =
+    effectivePhase === "finalize" && loopNeedsCompletionSnapshot;
+  const needsBookmarkPush =
+    effectivePhase === "finalize" && loopNeedsBookmarkPush;
+  const needsCompletionReport =
+    effectivePhase === "finalize" && loopNeedsCompletionReport;
   return Sequence({
     key: item.id,
     children: [
