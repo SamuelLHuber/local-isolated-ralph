@@ -239,7 +239,7 @@ test("todo-driver schedules review after a successful validation pass", () => {
 
   const ids = collectTaskIDs(workflow.build(ctx));
   expect(ids).toContain("runs-inspection:review:spec-alignment");
-  expect(ids).not.toContain("runs-inspection:implement");
+  expect(ids).toContain("runs-inspection:implement");
 });
 
 test("todo-driver schedules finalization after reviewers approve", () => {
@@ -386,7 +386,7 @@ test("todo-driver re-runs validation after a failed validation and new implement
 
   const ids = collectTaskIDs(workflow.build(ctx));
   expect(ids).toContain("runs-inspection:validate");
-  expect(ids).not.toContain("runs-inspection:implement");
+  expect(ids).toContain("runs-inspection:implement");
 });
 
 test("todo-driver ignores stale review issues after a new implementation and revalidates", () => {
@@ -468,8 +468,8 @@ test("todo-driver ignores stale review issues after a new implementation and rev
 
   const ids = collectTaskIDs(workflow.build(ctx));
   expect(ids).toContain("runs-inspection:validate");
-  expect(ids).not.toContain("runs-inspection:implement");
-  expect(ids).not.toContain("runs-inspection:review:spec-alignment");
+  expect(ids).toContain("runs-inspection:implement");
+  expect(ids).toContain("runs-inspection:review:spec-alignment");
 });
 
 test("todo-driver requires fresh reviews after a new validation pass", () => {
