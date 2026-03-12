@@ -11,6 +11,7 @@ metadata:
   namespace: fabrik-runs
 rules:
   # Core permissions for running Fabrik jobs
+  # pods/delete is required for `fabrik run resume` to delete stuck pods
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch", "create", "delete"]
@@ -32,6 +33,7 @@ rules:
     resources: ["configmaps"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
+# RoleBinding for the primary fabrik-runner service account
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -40,6 +42,22 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: fabrik-runner
+    namespace: fabrik-runs
+roleRef:
+  kind: Role
+  name: fabrik-runner
+  apiGroup: rbac.authorization.k8s.io
+---
+# RoleBinding for verification jobs that use fabrik-runner-* prefixed service accounts
+# This allows in-cluster verification workflows to use `fabrik run resume`
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fabrik-runner-verifiers
+  namespace: fabrik-runs
+subjects:
+  - kind: Group
+    name: system:serviceaccounts:fabrik-runs
     namespace: fabrik-runs
 roleRef:
   kind: Role
