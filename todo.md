@@ -237,7 +237,11 @@ Implement `fabrik run resume --id <run-id>` with the exact image digest and exis
 - CLI help and getting-started resume notes
 - explicit operator caveats around what resume does not change
 
-## 3. Cancel
+## 3. Cancel [done]
+Status: done
+Verified by workflow run: hoth-todo-loop-e2e-20260312-32
+Verification summary: Verification job hoth-todo-loop-e2e-20260312-32-cancel-verify succeeded.
+
 
 ### Task
 
