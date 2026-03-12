@@ -8,6 +8,15 @@
 - K8s is the source of truth for runtime state.
 - Use immutable image references for Jobs and keep resume on the same digest.
 - Local persistence is a single DB: `~/.cache/fabrik/state.db`.
+- Do not rebuild/publish the Smithers runtime image unless the container runtime contents changed.
+- Dispatch-time changes do not require a new image:
+  - `src/fabrik-cli/internal/run/*` manifest/render/dispatch changes only need a new `fabrik run` dispatch from updated local code.
+  - `workflows/*.tsx` changes are bundled and mounted at dispatch time, so they only need a new dispatch.
+  - repo code that the workflow clones only needs the branch/bookmark updated, then a new dispatch.
+- Rebuild the image only when startup/runtime dependencies change, for example:
+  - `k8s/Dockerfile`
+  - installed tools like `git`, `jj`, `kubectl`, `smithers`
+  - files baked into `/opt/smithers-runtime`
 
 ## Dependencies
 - Do not add new direct dependencies without explicit approval.
