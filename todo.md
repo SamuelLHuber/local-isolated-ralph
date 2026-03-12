@@ -196,7 +196,10 @@ Implement `fabrik runs list`, `fabrik runs show`, and `fabrik run logs` so run i
 - CLI docs for inspection commands
 - examples of `kubectl` parity / underlying source of truth
 
-## 2. Resume
+## 2. Resume [done]
+Status: done
+Verified by: unit tests and integration tests
+Verification summary: All Resume tests pass including immutable image enforcement, PVC verification, and RBAC error handling.
 
 ### Task
 

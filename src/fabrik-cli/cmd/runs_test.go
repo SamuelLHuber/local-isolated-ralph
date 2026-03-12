@@ -522,6 +522,54 @@ func TestRunResume(t *testing.T) {
 	}
 }
 
+func TestRunResumeRBACError(t *testing.T) {
+	// Mock that simulates RBAC permission denied error
+	script := "#!/bin/sh\n"
+	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=test-rbac-deny"; then
+		echo '{"items":[{"metadata":{"name":"test-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"test-rbac-deny"}},"spec":{"template":{"spec":{"containers":[{"image":"ghcr.io/fabrik/smithers@sha256:abc123"}]}}},"status":{"active":1}}]}'
+		exit 0
+	fi
+	if echo "$*" | grep -q "get pvc.*data-fabrik-test-rbac-deny"; then
+		echo 'Bound'
+		exit 0
+	fi
+	if echo "$*" | grep -q "jsonpath={.items\[0\].metadata.name}"; then
+		echo 'test-pod'
+		exit 0
+	fi
+	if echo "$*" | grep -q "delete pod test-pod"; then
+		echo 'Error from server (Forbidden): pods "test-pod" is forbidden: User "system:serviceaccount:fabrik-runs:test-runner" cannot delete resource "pods" in API group "" in the namespace "fabrik-runs"' >&2
+		exit 1
+	fi
+	exit 1
+`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	opts := runResumeOptions{
+		RunID:     "test-rbac-deny",
+		Namespace: "fabrik-runs",
+	}
+
+	err := runRunResume(context.Background(), &out, &errOut, opts)
+	if err == nil {
+		t.Fatal("expected runRunResume to fail with RBAC error")
+	}
+
+	// Error should mention permissions or RBAC
+	errStr := err.Error()
+	if !strings.Contains(errStr, "permission") && !strings.Contains(errStr, "forbidden") && !strings.Contains(errStr, "RBAC") && !strings.Contains(errStr, "insufficient") {
+		t.Errorf("expected error to mention permissions/RBAC, got: %v", err)
+	}
+}
+
 func TestTruncate(t *testing.T) {
 	if truncate("short", 10) != "short" {
 		t.Errorf("expected short string to be unchanged")

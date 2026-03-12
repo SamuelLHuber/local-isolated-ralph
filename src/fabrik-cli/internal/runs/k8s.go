@@ -643,6 +643,12 @@ func (c *K8sClient) Resume(ctx context.Context, runID string) error {
 	// including the same immutable image and PVC mount
 	_, err = c.runKubectl(ctx, "-n", c.Namespace, "delete", "pod", podName, "--ignore-not-found")
 	if err != nil {
+		// Check for RBAC permission errors and provide helpful guidance
+		if isRBACPermissionError(err) {
+			return fmt.Errorf("cannot resume: insufficient permissions to delete pod %s. "+
+				"Ensure your service account has 'pods/delete' permission in namespace %s. "+
+				"See k8s/rbac.yaml for the required Role and RoleBinding: %w", podName, c.Namespace, err)
+		}
 		return fmt.Errorf("failed to delete pod %s for resume: %w", podName, err)
 	}
 
@@ -652,6 +658,17 @@ func (c *K8sClient) Resume(ctx context.Context, runID string) error {
 // isImmutableImageRef checks if an image reference uses a digest (immutable)
 func isImmutableImageRef(image string) bool {
 	return strings.Contains(image, "@sha256:")
+}
+
+// isRBACPermissionError detects if an error is due to insufficient RBAC permissions
+func isRBACPermissionError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "forbidden") ||
+		strings.Contains(errStr, "cannot delete resource") ||
+		strings.Contains(errStr, "user \"system:serviceaccount")
 }
 
 // verifyPVCExists checks that the PVC exists and is bound

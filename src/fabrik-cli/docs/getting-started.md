@@ -604,7 +604,13 @@ fabrik run resume --id 01JK7V8X1234567890ABCDEFGH
 - The image must use a digest reference (`repo/image@sha256:<digest>`)
 
 **RBAC Requirements:**
-The service account used by the CLI must have permission to delete pods in the target namespace:
+The service account used by the CLI must have permission to delete pods in the target namespace. Apply the RBAC configuration from `k8s/rbac.yaml`:
+
+```bash
+kubectl apply -f k8s/rbac.yaml
+```
+
+Required permissions for resume:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -623,6 +629,20 @@ rules:
     resources: ["jobs"]
     verbs: ["get", "list"]
 ```
+
+**Troubleshooting RBAC Errors:**
+
+If you see an error like:
+```
+Error from server (Forbidden): pods "..." is forbidden: User "system:serviceaccount:fabrik-runs:..." cannot delete resource "pods"
+```
+
+Verify the RoleBinding is applied:
+```bash
+kubectl get rolebinding -n fabrik-runs fabrik-runner-verifiers -o yaml
+```
+
+For in-cluster workflows (verification jobs, CI runners), ensure the pod's service account is bound to the `fabrik-runner` role. The `k8s/rbac.yaml` includes a RoleBinding for the `system:serviceaccounts:fabrik-runs` group that grants permissions to all service accounts in the namespace.
 
 **Operator Caveats:**
 - Resume does NOT change the image, command, or environment

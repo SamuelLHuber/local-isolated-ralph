@@ -746,6 +746,50 @@ func TestResumeFailsWhenJobNotFound(t *testing.T) {
 	}
 }
 
+func TestResumeFailsWithRBACPermissionError(t *testing.T) {
+	// Resume should provide clear error when RBAC permissions are missing
+	script := "#!/bin/sh\n"
+	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=test-rbac-deny"; then
+	echo '{"items":[{"metadata":{"name":"test-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"test-rbac-deny"}},"spec":{"template":{"spec":{"containers":[{"image":"ghcr.io/fabrik/smithers@sha256:abc123"}]}}},"status":{"active":1}}]}'
+	exit 0
+fi
+if echo "$*" | grep -q "get pvc.*data-fabrik-test-rbac-deny"; then
+	echo 'Bound'
+	exit 0
+fi
+if echo "$*" | grep -q "jsonpath={.items\[0\].metadata.name}"; then
+	echo 'test-pod'
+	exit 0
+fi
+if echo "$*" | grep -q "delete pod test-pod"; then
+	echo 'Error from server (Forbidden): pods "test-pod" is forbidden: User "system:serviceaccount:fabrik-runs:test-runner" cannot delete resource "pods" in API group "" in the namespace "fabrik-runs"' >&2
+	exit 1
+fi
+exit 1
+`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	err := client.Resume(context.Background(), "test-rbac-deny")
+	if err == nil {
+		t.Fatal("expected Resume to fail with RBAC error")
+	}
+	// Should mention RBAC/permissions in the error
+	if !strings.Contains(err.Error(), "insufficient permissions") && !strings.Contains(err.Error(), "forbidden") {
+		t.Errorf("expected error to mention permissions/RBAC, got: %v", err)
+	}
+	// Should reference the RBAC configuration
+	if !strings.Contains(err.Error(), "rbac.yaml") && !strings.Contains(err.Error(), "Role") {
+		t.Errorf("expected error to reference RBAC configuration, got: %v", err)
+	}
+}
+
 func TestKubeContextPassedToKubectl(t *testing.T) {
 	dir := t.TempDir()
 	kubectlLog := filepath.Join(dir, "kubectl.log")
