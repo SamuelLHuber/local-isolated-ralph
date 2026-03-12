@@ -3,7 +3,7 @@ FROM node:20-alpine
 ARG JJ_VERSION=0.37.0
 ARG GO_VERSION=1.26.1
 
-RUN apk add --no-cache bash curl git kubectl make tar
+RUN apk add --no-cache bash curl git kubectl make tar ripgrep
 
 RUN arch="$(apk --print-arch)" \
   && case "${arch}" in \

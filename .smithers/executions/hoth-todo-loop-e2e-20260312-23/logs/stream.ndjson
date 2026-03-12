@@ -90,3 +90,16 @@
 {"type":"NodeFinished","runId":"hoth-todo-loop-e2e-20260312-23","nodeId":"verification-map:implement","iteration":2,"attempt":1,"timestampMs":1773313807684}
 {"type":"FrameCommitted","runId":"hoth-todo-loop-e2e-20260312-23","frameNo":32,"xmlHash":"18c25180bfbffa0aae0ce4cd0788e1165d036a2885fa9accce866bb348df8862","timestampMs":1773313807694}
 {"type":"NodeStarted","runId":"hoth-todo-loop-e2e-20260312-23","nodeId":"verification-map:snapshot-implement","iteration":2,"attempt":1,"timestampMs":1773313807718}
+{"type":"NodeFinished","runId":"hoth-todo-loop-e2e-20260312-23","nodeId":"verification-map:snapshot-implement","iteration":2,"attempt":1,"timestampMs":1773313807957}
+{"type":"FrameCommitted","runId":"hoth-todo-loop-e2e-20260312-23","frameNo":33,"xmlHash":"18c25180bfbffa0aae0ce4cd0788e1165d036a2885fa9accce866bb348df8862","timestampMs":1773313807964}
+{"type":"NodeStarted","runId":"hoth-todo-loop-e2e-20260312-23","nodeId":"verification-map:validate","iteration":2,"attempt":1,"timestampMs":1773313807984}
+{"type":"NodeFinished","runId":"hoth-todo-loop-e2e-20260312-23","nodeId":"verification-map:validate","iteration":2,"attempt":1,"timestampMs":1773313820188}
+{"type":"FrameCommitted","runId":"hoth-todo-loop-e2e-20260312-23","frameNo":34,"xmlHash":"971e7c52cd385e2c4947e5343a440da7633247e71ee6cc9b91c375eb50cac1d4","timestampMs":1773313820199}
+{"type":"NodeStarted","runId":"hoth-todo-loop-e2e-20260312-23","nodeId":"verification-map:review-context","iteration":2,"attempt":1,"timestampMs":1773313820231}
+{"type":"NodeFinished","runId":"hoth-todo-loop-e2e-20260312-23","nodeId":"verification-map:review-context","iteration":2,"attempt":1,"timestampMs":1773313820379}
+{"type":"FrameCommitted","runId":"hoth-todo-loop-e2e-20260312-23","frameNo":35,"xmlHash":"971e7c52cd385e2c4947e5343a440da7633247e71ee6cc9b91c375eb50cac1d4","timestampMs":1773313820386}
+{"type":"FrameCommitted","runId":"hoth-todo-loop-e2e-20260312-23","frameNo":36,"xmlHash":"971e7c52cd385e2c4947e5343a440da7633247e71ee6cc9b91c375eb50cac1d4","timestampMs":1773313820418}
+{"type":"NodeStarted","runId":"hoth-todo-loop-e2e-20260312-23","nodeId":"verification-map:implement","iteration":3,"attempt":1,"timestampMs":1773313820452}
+{"type":"NodeFinished","runId":"hoth-todo-loop-e2e-20260312-23","nodeId":"verification-map:implement","iteration":3,"attempt":1,"timestampMs":1773313901938}
+{"type":"FrameCommitted","runId":"hoth-todo-loop-e2e-20260312-23","frameNo":37,"xmlHash":"d68bbb4e0212cc20aef4650396b6c78b07a9d7c2899f003ca52c88fd2132df04","timestampMs":1773313901948}
+{"type":"NodeStarted","runId":"hoth-todo-loop-e2e-20260312-23","nodeId":"verification-map:snapshot-implement","iteration":3,"attempt":1,"timestampMs":1773313901976}
