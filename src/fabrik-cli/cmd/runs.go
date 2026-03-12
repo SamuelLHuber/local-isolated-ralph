@@ -6,6 +6,8 @@ import (
 	"fabrik-cli/internal/runs"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -15,12 +17,13 @@ import (
 func newRunsCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "runs",
-		Short: "Inspect Fabrik runs",
-		Long:  "List and inspect Fabrik runs directly from Kubernetes resources.",
+		Short: "Inspect and manage Fabrik runs",
+		Long:  "List, inspect, and cleanup Fabrik runs directly from Kubernetes resources.",
 	}
 
 	cmd.AddCommand(newRunsListCommand())
 	cmd.AddCommand(newRunsShowCommand())
+	cmd.AddCommand(newRunsCleanupCommand())
 
 	return cmd
 }
@@ -459,6 +462,148 @@ func outputRunYAML(stdout io.Writer, run *runs.RunInfo) error {
 	return nil
 }
 
+type runsCleanupOptions struct {
+	Namespace   string
+	KubeContext string
+	OlderThan   string
+	Status      string
+	Project     string
+	DryRun      bool
+}
+
+func newRunsCleanupCommand() *cobra.Command {
+	opts := runsCleanupOptions{
+		Namespace: "fabrik-runs",
+		Status:    "",
+	}
+
+	cmd := &cobra.Command{
+		Use:   "cleanup",
+		Short: "Cleanup finished Fabrik runs",
+		Long: "Cleanup Fabrik runs (Jobs) and their associated PVCs based on age and status filters.\n\n" +
+			"This command uses Kubernetes-native TTL mechanisms and ownerReferences for safe cleanup.\n\n" +
+			"Examples:\n" +
+			"  # Cleanup runs finished more than 7 days ago\n" +
+			"  fabrik runs cleanup --older-than 7d\n\n" +
+			"  # Cleanup only failed runs older than 30 days\n" +
+			"  fabrik runs cleanup --older-than 30d --status failed\n\n" +
+			"  # Preview what would be cleaned up without deleting\n" +
+			"  fabrik runs cleanup --older-than 7d --dry-run",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRunsCleanup(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), opts)
+		},
+	}
+
+	flags := cmd.Flags()
+	flags.StringVar(&opts.Namespace, "namespace", opts.Namespace, "Kubernetes namespace")
+	flags.StringVar(&opts.KubeContext, "context", "", "Kubernetes context")
+	flags.StringVar(&opts.OlderThan, "older-than", "", "Delete runs finished older than this duration (e.g., 7d, 24h)")
+	flags.StringVar(&opts.Status, "status", opts.Status, "Filter by status: finished, succeeded, failed, or empty for all")
+	flags.StringVar(&opts.Project, "project", "", "Filter by project ID")
+	flags.BoolVar(&opts.DryRun, "dry-run", false, "Preview what would be deleted without making changes")
+
+	return cmd
+}
+
+func runRunsCleanup(ctx context.Context, stdout, stderr io.Writer, opts runsCleanupOptions) error {
+	client := &runs.K8sClient{
+		KubeContext: opts.KubeContext,
+		Namespace:   opts.Namespace,
+	}
+
+	cleanupOpts := runs.CleanupOptions{
+		Status: opts.Status,
+		DryRun: opts.DryRun,
+	}
+
+	// Parse duration if provided
+	if opts.OlderThan != "" {
+		duration, err := parseDuration(opts.OlderThan)
+		if err != nil {
+			return fmt.Errorf("invalid --older-than duration: %w", err)
+		}
+		cleanupOpts.OlderThan = duration
+	}
+
+	if opts.Project != "" {
+		cleanupOpts.Project = opts.Project
+	}
+
+	result, err := client.CleanupRuns(ctx, cleanupOpts)
+	if err != nil {
+		return fmt.Errorf("cleanup runs: %w", err)
+	}
+
+	// Output results
+	if result.Total == 0 {
+		_, err := fmt.Fprintln(stdout, "No runs matched the cleanup criteria.")
+		return err
+	}
+
+	action := "Deleted"
+	if opts.DryRun {
+		action = "Would delete"
+	}
+
+	_, err = fmt.Fprintf(stdout, "%s %d run(s)\n", action, len(result.Deleted))
+	if err != nil {
+		return err
+	}
+
+	for _, id := range result.Deleted {
+		_, err := fmt.Fprintf(stdout, "  %s\n", id)
+		if err != nil {
+			return err
+		}
+	}
+
+	if len(result.Skipped) > 0 {
+		_, err = fmt.Fprintf(stdout, "\nSkipped %d run(s)\n", len(result.Skipped))
+		if err != nil {
+			return err
+		}
+		for _, id := range result.Skipped {
+			_, err := fmt.Fprintf(stdout, "  %s\n", id)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	if len(result.Failed) > 0 {
+		_, err = fmt.Fprintf(stderr, "\nFailed to delete %d run(s)\n", len(result.Failed))
+		if err != nil {
+			return err
+		}
+		for _, msg := range result.Failed {
+			_, err := fmt.Fprintf(stderr, "  %s\n", msg)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func parseDuration(s string) (time.Duration, error) {
+	// Support days as 'd' in addition to standard Go durations
+	s = strings.TrimSpace(s)
+	
+	// Handle days
+	if strings.HasSuffix(s, "d") {
+		daysStr := strings.TrimSuffix(s, "d")
+		days, err := strconv.Atoi(daysStr)
+		if err != nil {
+			return 0, fmt.Errorf("invalid day count: %w", err)
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+
+	// Standard Go duration parsing
+	return time.ParseDuration(s)
+}
+
 func formatAge(t *time.Time, now time.Time) string {
 	if t == nil {
 		return "unknown"
@@ -491,20 +636,209 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen]
 }
 
+type volumesCleanupOptions struct {
+	Namespace   string
+	KubeContext string
+	Unused      bool
+	DryRun      bool
+}
+
+func newVolumesCleanupCommand() *cobra.Command {
+	opts := volumesCleanupOptions{
+		Namespace: "fabrik-runs",
+	}
+
+	cmd := &cobra.Command{
+		Use:   "cleanup",
+		Short: "Cleanup unused Fabrik volumes",
+		Long: "Cleanup PersistentVolumeClaims (PVCs) that are no longer needed.\n\n" +
+			"This command safely removes orphaned PVCs that are not bound to active Jobs.\n\n" +
+			"Examples:\n" +
+			"  # Cleanup orphaned PVCs\n" +
+			"  fabrik volumes cleanup --unused\n\n" +
+			"  # Preview what would be cleaned up\n" +
+			"  fabrik volumes cleanup --unused --dry-run",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runVolumesCleanup(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), opts)
+		},
+	}
+
+	flags := cmd.Flags()
+	flags.StringVar(&opts.Namespace, "namespace", opts.Namespace, "Kubernetes namespace")
+	flags.StringVar(&opts.KubeContext, "context", "", "Kubernetes context")
+	flags.BoolVar(&opts.Unused, "unused", false, "Delete PVCs not bound to active Jobs")
+	flags.BoolVar(&opts.DryRun, "dry-run", false, "Preview what would be deleted without making changes")
+
+	return cmd
+}
+
+func runVolumesCleanup(ctx context.Context, stdout, stderr io.Writer, opts volumesCleanupOptions) error {
+	client := &runs.K8sClient{
+		KubeContext: opts.KubeContext,
+		Namespace:   opts.Namespace,
+	}
+
+	if !opts.Unused {
+		return fmt.Errorf("specify --unused to cleanup orphaned PVCs")
+	}
+
+	result, err := client.CleanupOrphanedPVCs(ctx, opts.DryRun)
+	if err != nil {
+		return fmt.Errorf("cleanup volumes: %w", err)
+	}
+
+	if result.Total == 0 {
+		_, err := fmt.Fprintln(stdout, "No orphaned volumes found.")
+		return err
+	}
+
+	action := "Deleted"
+	if opts.DryRun {
+		action = "Would delete"
+	}
+
+	_, err = fmt.Fprintf(stdout, "%s %d orphaned volume(s)\n", action, len(result.Deleted))
+	if err != nil {
+		return err
+	}
+
+	for _, name := range result.Deleted {
+		_, err := fmt.Fprintf(stdout, "  %s\n", name)
+		if err != nil {
+			return err
+		}
+	}
+
+	if len(result.Skipped) > 0 {
+		_, err = fmt.Fprintf(stdout, "\nSkipped %d volume(s)\n", len(result.Skipped))
+		if err != nil {
+			return err
+		}
+		for _, name := range result.Skipped {
+			_, err := fmt.Fprintf(stdout, "  %s\n", name)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	if len(result.Failed) > 0 {
+		_, err = fmt.Fprintf(stderr, "\nFailed to delete %d volume(s)\n", len(result.Failed))
+		if err != nil {
+			return err
+		}
+		for _, msg := range result.Failed {
+			_, err := fmt.Fprintf(stderr, "  %s\n", msg)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+type runRetainOptions struct {
+	RunID       string
+	Namespace   string
+	KubeContext string
+	Days        int
+}
+
+func newRunRetainCommand() *cobra.Command {
+	opts := runRetainOptions{
+		Namespace: "fabrik-runs",
+		Days:      30,
+	}
+
+	cmd := &cobra.Command{
+		Use:   "retain",
+		Short: "Extend the retention period of a Fabrik run",
+		Long: "Extend the lifetime of a Fabrik run by updating its Job's TTL.\n\n" +
+			"This command updates the ttlSecondsAfterFinished field and ensures the PVC\n" +
+			"has an owner reference to the Job for proper lifecycle management.\n\n" +
+			"Examples:\n" +
+			"  # Retain a run for 30 days (default)\n" +
+			"  fabrik run retain --id 01JK7V8X...\n\n" +
+			"  # Retain a run for 90 days\n" +
+			"  fabrik run retain --id 01JK7V8X... --days 90",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runRunRetain(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), opts)
+		},
+	}
+
+	flags := cmd.Flags()
+	flags.StringVar(&opts.RunID, "id", "", "Run identifier (required)")
+	flags.StringVar(&opts.Namespace, "namespace", opts.Namespace, "Kubernetes namespace")
+	flags.StringVar(&opts.KubeContext, "context", "", "Kubernetes context")
+	flags.IntVar(&opts.Days, "days", opts.Days, "Number of days to retain the run")
+
+	_ = cmd.MarkFlagRequired("id")
+
+	return cmd
+}
+
+func runRunRetain(ctx context.Context, stdout, stderr io.Writer, opts runRetainOptions) error {
+	client := &runs.K8sClient{
+		KubeContext: opts.KubeContext,
+		Namespace:   opts.Namespace,
+	}
+
+	result, err := client.Retain(ctx, opts.RunID, opts.Days)
+	if err != nil {
+		return err
+	}
+
+	_, err = fmt.Fprintf(stdout, "Retained run %s for %d days\n", result.RunID, opts.Days)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "  Job: %s\n", result.JobName)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "  PVC: %s\n", result.PVCName)
+	if err != nil {
+		return err
+	}
+	if result.PreviousTTL > 0 {
+		_, err = fmt.Fprintf(stdout, "  Previous TTL: %s\n", result.PreviousTTL)
+		if err != nil {
+			return err
+		}
+	}
+	_, err = fmt.Fprintf(stdout, "  Retained until: %s\n", result.RetainedUntil.Format(time.RFC3339))
+	return err
+}
+
 // AddRunCommands adds the run inspection commands to the root command.
 // This is called from main.go to wire up the commands.
 func AddRunCommands(root *cobra.Command) {
 	root.AddCommand(newRunsCommand())
+	root.AddCommand(newVolumesCommand())
 
 	// Add the run subcommands under 'run' as specified in the spec:
-	// fabrik run logs, fabrik run cancel, fabrik run resume
+	// fabrik run logs, fabrik run cancel, fabrik run resume, fabrik run retain
 	// Find the run command and add subcommands to it
 	for _, cmd := range root.Commands() {
 		if cmd.Use == "run" {
 			cmd.AddCommand(newRunLogsCommand())
 			cmd.AddCommand(newRunCancelCommand())
 			cmd.AddCommand(newRunResumeCommand())
+			cmd.AddCommand(newRunRetainCommand())
 			break
 		}
 	}
+}
+
+func newVolumesCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "volumes",
+		Short: "Manage Fabrik volumes",
+		Long:  "Inspect and cleanup PersistentVolumeClaims used by Fabrik runs.",
+	}
+
+	cmd.AddCommand(newVolumesCleanupCommand())
+
+	return cmd
 }

@@ -349,7 +349,11 @@ Bring `fabrik env diff` / `promote` / protected-env behavior closer to the produ
 - `make verify-cli`
 - k3d env mutation checks on non-production envs
 
-## 6. Retention / Cleanup
+## 6. Retention / Cleanup [done]
+Status: done
+Verified by workflow run: hoth-todo-loop-e2e-20260312-39
+Verification summary: Verification job hoth-todo-loop-e2e-20260312-39-retention-cleanup-verify succeeded.
+
 
 ### Task
 

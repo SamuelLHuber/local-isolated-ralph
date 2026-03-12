@@ -693,3 +693,321 @@ func TestFormatAge(t *testing.T) {
 		t.Errorf("expected 3d for 72 hours ago, got %s", result)
 	}
 }
+
+func TestRunsCleanupDeletesOldFinishedRuns(t *testing.T) {
+	// Job finished 8 days ago
+	jobsJSON := `{
+		"items": [
+			{
+				"metadata": {
+					"name": "fabrik-old-run",
+					"namespace": "fabrik-runs",
+					"labels": {
+						"fabrik.sh/run-id": "01OLD",
+						"fabrik.sh/managed-by": "fabrik"
+					}
+				},
+				"spec": {"template": {"spec": {"containers": [{"image": "test"}]}}},
+				"status": {"succeeded": 1, "completionTime": "` + time.Now().UTC().Add(-8*24*time.Hour).Format(time.RFC3339) + `"}
+			}
+		]
+	}`
+
+	cronJobsJSON := `{"items":[]}`
+
+	dir := t.TempDir()
+	kubectlLog := filepath.Join(dir, "kubectl.log")
+	kubectlPath := filepath.Join(dir, "kubectl")
+	script := "#!/bin/sh\n"
+	script += "echo \"$@\" >> " + kubectlLog + "\n"
+	script += `case "$*" in
+	*"get jobs"*"fabrik.sh/managed-by=fabrik"*)
+		printf '%s\n' '` + jobsJSON + `'
+		exit 0
+		;;
+	*"get cronjobs"*)
+		printf '%s\n' '` + cronJobsJSON + `'
+		exit 0
+		;;
+	*"delete job"*)
+		printf 'job deleted\n'
+		exit 0
+		;;
+	*"delete pvc"*)
+		printf 'pvc deleted\n'
+		exit 0
+		;;
+esac
+exit 1
+`
+
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	opts := runsCleanupOptions{
+		Namespace: "fabrik-runs",
+		OlderThan: "7d",
+		Status:    "finished",
+	}
+
+	if err := runRunsCleanup(context.Background(), &out, &errOut, opts); err != nil {
+		t.Fatalf("runRunsCleanup failed: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Deleted 1 run(s)") {
+		t.Errorf("expected 'Deleted 1 run(s)', got:\n%s", output)
+	}
+
+	logData, err := os.ReadFile(kubectlLog)
+	if err != nil {
+		t.Fatalf("read kubectl log: %v", err)
+	}
+	if !strings.Contains(string(logData), "delete job") {
+		t.Errorf("expected kubectl delete job to be called")
+	}
+}
+
+func TestRunsCleanupDryRun(t *testing.T) {
+	jobsJSON := `{
+		"items": [
+			{
+				"metadata": {
+					"name": "fabrik-old-run",
+					"namespace": "fabrik-runs",
+					"labels": {
+						"fabrik.sh/run-id": "01OLD",
+						"fabrik.sh/managed-by": "fabrik"
+					}
+				},
+				"spec": {"template": {"spec": {"containers": [{"image": "test"}]}}},
+				"status": {"succeeded": 1, "completionTime": "` + time.Now().UTC().Add(-8*24*time.Hour).Format(time.RFC3339) + `"}
+			}
+		]
+	}`
+
+	cronJobsJSON := `{"items":[]}`
+
+	dir := t.TempDir()
+	kubectlLog := filepath.Join(dir, "kubectl.log")
+	kubectlPath := filepath.Join(dir, "kubectl")
+	script := "#!/bin/sh\n"
+	script += "echo \"$@\" >> " + kubectlLog + "\n"
+	script += `case "$*" in
+	*"get jobs"*"fabrik.sh/managed-by=fabrik"*)
+		printf '%s\n' '` + jobsJSON + `'
+		exit 0
+		;;
+	*"get cronjobs"*)
+		printf '%s\n' '` + cronJobsJSON + `'
+		exit 0
+		;;
+esac
+exit 1
+`
+
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	opts := runsCleanupOptions{
+		Namespace: "fabrik-runs",
+		OlderThan: "7d",
+		DryRun:    true,
+	}
+
+	if err := runRunsCleanup(context.Background(), &out, &errOut, opts); err != nil {
+		t.Fatalf("runRunsCleanup dry-run failed: %v", err)
+	}
+
+	output := out.String()
+	// In dry-run mode, items are shown as "skipped" with (dry-run) suffix
+	if !strings.Contains(output, "Would delete 0 run(s)") {
+		t.Errorf("expected 'Would delete 0 run(s)' in dry-run output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Skipped 1 run(s)") {
+		t.Errorf("expected 'Skipped 1 run(s)' in dry-run output, got:\n%s", output)
+	}
+	if !strings.Contains(output, "01OLD (dry-run)") {
+		t.Errorf("expected run to be marked with (dry-run), got:\n%s", output)
+	}
+
+	logData, err := os.ReadFile(kubectlLog)
+	if err != nil {
+		t.Fatalf("read kubectl log: %v", err)
+	}
+	// Should not call delete in dry-run mode
+	if strings.Contains(string(logData), "delete job") {
+		t.Errorf("expected no kubectl delete job in dry-run mode")
+	}
+}
+
+func TestVolumesCleanupDeletesOrphanedPVCs(t *testing.T) {
+	pvcJSON := `{
+		"items": [
+			{
+				"metadata": {
+					"name": "data-fabrik-orphan",
+					"namespace": "fabrik-runs",
+					"labels": {"fabrik.sh/managed-by": "fabrik"}
+				},
+				"spec": {},
+				"status": {"phase": "Released"}
+			}
+		]
+	}`
+
+	jobsJSON := `{"items":[]}`
+
+	dir := t.TempDir()
+	kubectlLog := filepath.Join(dir, "kubectl.log")
+	kubectlPath := filepath.Join(dir, "kubectl")
+	script := "#!/bin/sh\n"
+	script += "echo \"$@\" >> " + kubectlLog + "\n"
+	script += `case "$*" in
+	*"get pvc"*"fabrik.sh/managed-by=fabrik"*)
+		printf '%s\n' '` + pvcJSON + `'
+		exit 0
+		;;
+	*"get jobs"*"fabrik.sh/managed-by=fabrik"*)
+		printf '%s\n' '` + jobsJSON + `'
+		exit 0
+		;;
+	*"delete pvc"*)
+		printf 'pvc deleted\n'
+		exit 0
+		;;
+esac
+exit 1
+`
+
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	opts := volumesCleanupOptions{
+		Namespace: "fabrik-runs",
+		Unused:    true,
+	}
+
+	if err := runVolumesCleanup(context.Background(), &out, &errOut, opts); err != nil {
+		t.Fatalf("runVolumesCleanup failed: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Deleted 1 orphaned volume(s)") {
+		t.Errorf("expected 'Deleted 1 orphaned volume(s)', got:\n%s", output)
+	}
+}
+
+func TestRunRetain(t *testing.T) {
+	jobJSON := `{
+		"items": [
+			{
+				"metadata": {
+					"name": "fabrik-retain-run",
+					"namespace": "fabrik-runs",
+					"labels": {
+						"fabrik.sh/run-id": "01RETAIN",
+						"fabrik.sh/managed-by": "fabrik"
+					},
+					"uid": "job-uid-123"
+				},
+				"spec": {
+					"template": {"spec": {"containers": [{"image": "test"}]}},
+					"ttlSecondsAfterFinished": 604800
+				},
+				"status": {"succeeded": 1}
+			}
+		]
+	}`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	script := "#!/bin/sh\n"
+	script += `case "$*" in
+	*"get jobs"*"fabrik.sh/run-id=01RETAIN"*)
+		printf '%s\n' '` + jobJSON + `'
+		exit 0
+		;;
+	*"patch job"*)
+		printf 'job patched\n'
+		exit 0
+		;;
+	*"get pvc"*)
+		printf '{"items":[]}\n'
+		exit 0
+		;;
+esac
+exit 1
+`
+
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	opts := runRetainOptions{
+		RunID:     "01RETAIN",
+		Namespace: "fabrik-runs",
+		Days:      30,
+	}
+
+	if err := runRunRetain(context.Background(), &out, &errOut, opts); err != nil {
+		t.Fatalf("runRunRetain failed: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Retained run 01RETAIN for 30 days") {
+		t.Errorf("expected retention confirmation, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Retained until:") {
+		t.Errorf("expected retained until timestamp, got:\n%s", output)
+	}
+}
+
+func TestParseDuration(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected time.Duration
+		wantErr  bool
+	}{
+		{"7d", 7 * 24 * time.Hour, false},
+		{"30d", 30 * 24 * time.Hour, false},
+		{"24h", 24 * time.Hour, false},
+		{"1h30m", time.Hour + 30*time.Minute, false},
+		{"invalid", 0, true},
+		{"", 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result, err := parseDuration(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error for input %q", tt.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error for input %q: %v", tt.input, err)
+				return
+			}
+			if result != tt.expected {
+				t.Errorf("parseDuration(%q) = %v, want %v", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
