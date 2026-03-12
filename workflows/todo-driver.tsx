@@ -787,8 +787,6 @@ function TodoItemPipeline({
     latestOutputIteration(ctx, "implement", `${item.id}:implement`) ?? -1;
   const latestValidationIteration =
     latestOutputIteration(ctx, "validate", `${item.id}:validate`) ?? -1;
-  const latestReviewFixIteration =
-    latestOutputIteration(ctx, "reviewFix", `${item.id}:review-fix`) ?? -1;
   const latestReviewIteration = Math.max(
     ...REVIEWERS.map(
       (reviewer) =>
@@ -834,9 +832,10 @@ function TodoItemPipeline({
     !readyToFinalize &&
     (
       latestImplementIteration < 0 ||
-      latestReviewFixIteration > latestImplementIteration ||
       (latestValidationIteration >= latestImplementIteration &&
-        latestValidate?.allPassed === false)
+        latestValidate?.allPassed === false) ||
+      (latestReviewIteration >= latestValidationIteration &&
+        reviewIssuesForLatestValidation.length > 0)
     );
   const needsValidation =
     !blocked &&
@@ -850,16 +849,6 @@ function TodoItemPipeline({
     !needsValidation &&
     latestValidate?.allPassed === true &&
     latestReviewIteration < latestValidationIteration;
-  const needsReviewFix =
-    !blocked &&
-    !readyToFinalize &&
-    !needsImplementation &&
-    !needsValidation &&
-    !needsReview &&
-    latestValidate?.allPassed === true &&
-    reviewIssuesForLatestValidation.length > 0 &&
-    latestReviewFixIteration < latestReviewIteration;
-
   return Sequence({
     key: item.id,
     children: [
@@ -1008,20 +997,13 @@ Return ONLY JSON matching the schema.`,
       }),
 
       Branch({
-        key: `${item.id}:review-fix-branch`,
-        if: needsReviewFix,
-        then: withNodeKey(ReviewFixStep({ item, ctx }), `${item.id}:review-fix`),
-      }),
-
-      Branch({
         key: `${item.id}:idle-branch`,
         if:
           !blocked &&
           !readyToFinalize &&
           !needsImplementation &&
           !needsValidation &&
-          !needsReview &&
-          !needsReviewFix,
+          !needsReview,
         then: Task({
           key: `${item.id}:idle-report`,
           id: `${item.id}:idle-report`,

@@ -691,8 +691,8 @@ test("todo-driver ignores stale review issues after a new implementation and rev
   });
 
   const ids = collectTaskIDs(workflow.build(ctx));
-  expect(ids).toContain("runs-inspection:validate");
-  expect(ids).not.toContain("runs-inspection:implement");
+  expect(ids).toContain("runs-inspection:implement");
+  expect(ids).toContain("runs-inspection:snapshot-implement");
   expect(ids).not.toContain("runs-inspection:review:spec-alignment");
 });
 
