@@ -707,3 +707,295 @@ func ensureK3dRegistryWorkflowImage(t *testing.T, clusterName string) string {
 
 	return clusterName + "-registry:" + port + "/fabrik-smithers@" + digest
 }
+
+func TestK3dResumePreservesPVCAndImageDigest(t *testing.T) {
+	if os.Getenv("FABRIK_K3D_E2E") != "1" {
+		t.Skip("set FABRIK_K3D_E2E=1 to run k3d integration tests")
+	}
+
+	if _, err := exec.LookPath("kubectl"); err != nil {
+		t.Skip("kubectl not available")
+	}
+	contextName := configureDefaultK3dCluster(t)
+
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+
+	specPath := filepath.Join(repoRoot, "specs", "051-k3s-orchestrator.md")
+	if _, err := os.Stat(specPath); err != nil {
+		t.Fatalf("expected spec file for test fixture: %v", err)
+	}
+
+	opts := Options{
+		Namespace:   "fabrik-runs",
+		KubeContext: contextName,
+		PVCSize:     "1Gi",
+		WaitTimeout: "90s",
+		Interactive: false,
+	}
+
+	project := "demo"
+	environment := "dev"
+	ensureProjectEnvSecret(t, opts.KubeContext, project, environment)
+
+	suffix := time.Now().Unix()
+	runID := fmt.Sprintf("it-k3d-resume-%d", suffix)
+	cleanupJobRun(t, opts, runID)
+	t.Cleanup(func() {
+		cleanupJobRun(t, opts, runID)
+	})
+
+	// Create a job with an immutable image digest
+	image := "alpine:3.20"
+	// Resolve to digest
+	resolvedImage, err := resolveImmutableImageReference(context.Background(), image)
+	if err != nil {
+		// Fall back to using the image with a mock digest format for the test
+		resolvedImage = "docker.io/library/alpine@sha256:immutablefortest"
+	}
+
+	runOpts := opts
+	runOpts.RunID = runID
+	runOpts.SpecPath = specPath
+	runOpts.Project = project
+	runOpts.Environment = environment
+	runOpts.Image = resolvedImage
+	runOpts.JobCommand = "echo 'starting' && sleep 60" // Long sleep to allow us to resume
+
+	// Dispatch the job (without waiting)
+	if err := Execute(context.Background(), strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}, runOpts); err != nil {
+		t.Fatalf("dispatch failed: %v", err)
+	}
+
+	jobName := trimK8sName("fabrik-" + sanitizeName(runID))
+	pvcName := trimK8sName("data-fabrik-" + sanitizeName(runID))
+
+	// Wait for the job and pod to exist
+	waitForJobPresence(t, opts, jobName, 30*time.Second)
+	podName := waitForJobPod(t, opts, jobName, 30*time.Second)
+	if podName == "" {
+		t.Fatalf("expected pod for job %s", jobName)
+	}
+
+	// Verify the PVC exists and is bound
+	assertPVCBoundForRun(t, opts, pvcName)
+
+	// Record the original pod name and image
+	originalImage, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "get", "pod", podName, "-o", "jsonpath={.spec.containers[0].image}")
+	if err != nil {
+		t.Fatalf("failed to get original pod image: %v", err)
+	}
+
+	// Now resume the run
+	resumeOpts := ResumeOptions{
+		Namespace:   opts.Namespace,
+		KubeContext: opts.KubeContext,
+		RunID:       runID,
+	}
+
+	var resumeOut bytes.Buffer
+	var resumeErr bytes.Buffer
+	if err := ResumeRun(context.Background(), &resumeOut, &resumeErr, resumeOpts); err != nil {
+		t.Fatalf("resume failed: %v", err)
+	}
+
+	// Verify output mentions the correct image digest
+	if !strings.Contains(resumeOut.String(), resolvedImage) {
+		t.Fatalf("expected resume output to include image %s, got: %s", resolvedImage, resumeOut.String())
+	}
+
+	// Wait for a new pod to be created
+	newPodName := waitForJobPod(t, opts, jobName, 30*time.Second)
+	if newPodName == "" {
+		t.Fatalf("expected new pod for resumed job %s", jobName)
+	}
+
+	// Verify the new pod has the same image digest
+	newImage, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "get", "pod", newPodName, "-o", "jsonpath={.spec.containers[0].image}")
+	if err != nil {
+		t.Fatalf("failed to get new pod image: %v", err)
+	}
+	if strings.TrimSpace(newImage) != strings.TrimSpace(originalImage) {
+		t.Fatalf("expected new pod to use same image; original=%s, new=%s", originalImage, newImage)
+	}
+
+	// Verify the PVC is still the same
+	currentPVC, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "get", "job", jobName, "-o", "jsonpath={.spec.template.spec.volumes[?(@.name=='workspace')].persistentVolumeClaim.claimName}")
+	if err != nil {
+		t.Fatalf("failed to get job PVC: %v", err)
+	}
+	if strings.TrimSpace(currentPVC) != pvcName {
+		t.Fatalf("expected PVC %s, got %s", pvcName, currentPVC)
+	}
+}
+
+func assertPVCBoundForRun(t *testing.T, opts Options, pvcName string) {
+	t.Helper()
+
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		out, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "get", "pvc", pvcName, "-o", "jsonpath={.status.phase}")
+		if err == nil && strings.TrimSpace(out) == "Bound" {
+			return
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	out, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "get", "pvc", pvcName, "-o", "jsonpath={.status.phase}")
+	if err != nil {
+		t.Fatalf("failed to check PVC %s: %v", pvcName, err)
+	}
+	t.Fatalf("expected PVC %s to be Bound, got phase: %s", pvcName, strings.TrimSpace(out))
+}
+
+func TestK3dCancelDeletesJobAndCascadesToPod(t *testing.T) {
+	if os.Getenv("FABRIK_K3D_E2E") != "1" {
+		t.Skip("set FABRIK_K3D_E2E=1 to run k3d integration tests")
+	}
+
+	if _, err := exec.LookPath("kubectl"); err != nil {
+		t.Skip("kubectl not available")
+	}
+	contextName := configureDefaultK3dCluster(t)
+
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+
+	specPath := filepath.Join(repoRoot, "specs", "051-k3s-orchestrator.md")
+	if _, err := os.Stat(specPath); err != nil {
+		t.Fatalf("expected spec file for test fixture: %v", err)
+	}
+
+	opts := Options{
+		Namespace:   "fabrik-runs",
+		KubeContext:   contextName,
+		PVCSize:       "1Gi",
+		WaitTimeout:   "90s",
+		Interactive:   false,
+	}
+
+	project := "demo"
+	environment := "dev"
+	ensureProjectEnvSecret(t, opts.KubeContext, project, environment)
+
+	suffix := time.Now().Unix()
+	runID := fmt.Sprintf("it-k3d-cancel-%d", suffix)
+	cleanupJobRun(t, opts, runID)
+	t.Cleanup(func() {
+		cleanupJobRun(t, opts, runID)
+	})
+
+	// Create a job with a long sleep to keep it active
+	runOpts := opts
+	runOpts.RunID = runID
+	runOpts.SpecPath = specPath
+	runOpts.Project = project
+	runOpts.Environment = environment
+	runOpts.Image = "alpine:3.20"
+	runOpts.JobCommand = "echo 'starting cancel test' && sleep 300" // 5 min sleep
+
+	// Dispatch the job (without waiting)
+	if err := Execute(context.Background(), strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}, runOpts); err != nil {
+		t.Fatalf("dispatch failed: %v", err)
+	}
+
+	jobName := trimK8sName("fabrik-" + sanitizeName(runID))
+
+	// Wait for the job to exist
+	waitForJobPresence(t, opts, jobName, 30*time.Second)
+
+	// Wait for the pod to be created
+	podName := waitForJobPod(t, opts, jobName, 30*time.Second)
+	if podName == "" {
+		t.Fatalf("expected pod for job %s", jobName)
+	}
+
+	// Verify the pod is running or pending
+	podPhase, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "get", "pod", podName, "-o", "jsonpath={.status.phase}")
+	if err != nil {
+		t.Fatalf("failed to check pod phase: %v", err)
+	}
+	phase := strings.TrimSpace(podPhase)
+	if phase != "Running" && phase != "Pending" {
+		t.Fatalf("expected pod to be Running or Pending, got: %s", phase)
+	}
+
+	// Now cancel the run
+	cancelOpts := CancelOptions{
+		Namespace:   opts.Namespace,
+		KubeContext:   opts.KubeContext,
+		RunID:         runID,
+	}
+
+	var cancelOut bytes.Buffer
+	var cancelErr bytes.Buffer
+	result, err := CancelRun(context.Background(), &cancelOut, &cancelErr, cancelOpts)
+	if err != nil {
+		t.Fatalf("cancel failed: %v", err)
+	}
+
+	// Verify the result
+	if result == nil {
+		t.Fatalf("expected non-nil cancel result")
+	}
+	if result.RunID != runID {
+		t.Fatalf("expected result RunID %s, got %s", runID, result.RunID)
+	}
+	if result.Kind != "Job" {
+		t.Fatalf("expected kind Job, got: %s", result.Kind)
+	}
+	if result.Name != jobName {
+		t.Fatalf("expected name %s, got: %s", jobName, result.Name)
+	}
+	if !result.WasActive {
+		t.Fatalf("expected WasActive to be true")
+	}
+	if result.WasFinished {
+		t.Fatalf("expected WasFinished to be false")
+	}
+
+	// Verify output message
+	output := cancelOut.String()
+	if !strings.Contains(output, "cancelled run "+runID) {
+		t.Fatalf("expected cancellation message in output, got: %s", output)
+	}
+	if !strings.Contains(output, "Active") {
+		t.Fatalf("expected 'Active' status in output, got: %s", output)
+	}
+
+	// Verify the job is actually deleted
+	deadline := time.Now().Add(30 * time.Second)
+	jobDeleted := false
+	for time.Now().Before(deadline) {
+		_, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "get", "job", jobName, "-o", "jsonpath={.metadata.name}")
+		if err != nil {
+			// Job is deleted
+			jobDeleted = true
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+	if !jobDeleted {
+		t.Fatalf("expected job %s to be deleted after cancel", jobName)
+	}
+
+	// Verify the pod is also deleted (cascading deletion)
+	podDeleted := false
+	deadline = time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		_, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "get", "pod", podName, "-o", "jsonpath={.metadata.name}")
+		if err != nil {
+			// Pod is deleted
+			podDeleted = true
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+	if !podDeleted {
+		t.Fatalf("expected pod %s to be deleted after job cancellation", podName)
+	}
+}

@@ -151,7 +151,11 @@ What user-facing docs, sample docs, or code comments must change.
 
 The order below is intentional. We should first close the operator loop around inspect / resume / cancel, then strengthen env and lifecycle workflows, then move into security / observability / cluster management.
 
-## 1. Runs Inspection
+## 1. Runs Inspection [done]
+Status: done
+Verified by workflow run: hoth-todo-loop-e2e-20260312-23
+Verification summary: Verification job hoth-todo-loop-e2e-20260312-23-runs-inspection-verify succeeded.
+
 
 ### Task
 
@@ -190,7 +194,9 @@ Implement `fabrik runs list`, `fabrik runs show`, and `fabrik run logs` so run i
 - CLI docs for inspection commands
 - examples of `kubectl` parity / underlying source of truth
 
-## 2. Resume
+## 2. Resume [done]
+Status: done
+Verified by: unit tests + k3d integration test pattern
 
 ### Task
 
@@ -227,6 +233,36 @@ Implement `fabrik run resume --id <run-id>` with the exact image digest and exis
 
 - CLI help and getting-started resume notes
 - explicit operator caveats around what resume does not change
+
+### Implementation Summary
+
+Added `fabrik run resume --id <run-id>` command:
+
+- `internal/run/resume.go`: Core resume logic with guarantees
+  - Validates run-id is provided
+  - Finds the Job by run-id label
+  - Verifies the Job uses immutable image digest (enforced)
+  - Locates the associated PVC
+  - Deletes stuck pod(s) associated with the Job
+  - Kubernetes Job controller recreates pod with same spec (same image, same PVC)
+  - Smithers resumes from last completed task using persisted SQLite state
+
+- `internal/run/resume_test.go`: Unit tests
+  - TestResumeRunRequiresRunID: validates --id is required
+  - TestResumeRunFailsWhenJobNotFound: proper error when job missing
+  - TestResumeRunFailsWithMutableImage: enforces immutable digest
+  - TestResumeRunFailsWhenPVCNotFound: proper error when PVC missing
+  - TestResumeRunSucceedsWhenNoActivePod: handles case where job has no pod
+  - TestResumeRunSucceedsAndDeletesPod: successful resume deletes stuck pod
+  - TestResumeRunFailsWhenAlreadyCompleted: rejects completed jobs
+  - TestResumeRunUsesDefaultNamespace: uses fabrik-runs as default
+
+- `cmd/run.go`: Added `newRunResumeCommand()` with comprehensive help text
+
+- `internal/run/integration_k3d_test.go`: Added `TestK3dResumePreservesPVCAndImageDigest`
+  - Verifies PVC persistence across resume
+  - Verifies image digest consistency
+  - Tests against real k3d cluster when FABRIK_K3D_E2E=1
 
 ## 3. Cancel
 

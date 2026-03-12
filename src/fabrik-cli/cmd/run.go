@@ -68,6 +68,8 @@ func newRunCommand(runMode string) *cobra.Command {
 
 	// Add subcommands
 	cmd.AddCommand(newRunLogsCommand())
+	cmd.AddCommand(newRunResumeCommand())
+	cmd.AddCommand(newRunCancelCommand())
 
 	return cmd
 }
@@ -85,6 +87,63 @@ func newRunLogsCommand() *cobra.Command {
 			"The command finds the pod associated with the run ID and streams its logs.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run.RunLogs(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), opts)
+		},
+	}
+
+	flags := cmd.Flags()
+	flags.StringVar(&opts.RunID, "id", "", "Run identifier (required)")
+	flags.StringVar(&opts.Namespace, "namespace", opts.Namespace, "Kubernetes namespace")
+	flags.StringVar(&opts.KubeContext, "context", "", "Kubernetes context")
+
+	return cmd
+}
+
+func newRunResumeCommand() *cobra.Command {
+	opts := run.ResumeOptions{
+		Namespace: "fabrik-runs",
+	}
+
+	cmd := &cobra.Command{
+		Use:   "resume --id <run-id>",
+		Short: "Resume a stuck Fabrik run",
+		Long: "Resume a stuck Fabrik run by deleting its pod, allowing the Job to recreate it.\n\n" +
+			"Resume uses the same image digest and preserves the existing PVC with the Smithers " +
+			"state database. This ensures progress continuity - Smithers will resume from the " +
+			"last completed task when the new pod starts.\n\n" +
+			"IMPORTANT: Resume does NOT change the execution model or image. It only deletes " +
+			"the stuck pod and lets Kubernetes recreate it with the same specification. " +
+			"To change the image or spec, create a new run instead.\n\n" +
+			"The Kubernetes-native way: delete the pod, Job recreates it with same PVC.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return run.ResumeRun(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), opts)
+		},
+	}
+
+	flags := cmd.Flags()
+	flags.StringVar(&opts.RunID, "id", "", "Run identifier (required)")
+	flags.StringVar(&opts.Namespace, "namespace", opts.Namespace, "Kubernetes namespace")
+	flags.StringVar(&opts.KubeContext, "context", "", "Kubernetes context")
+
+	return cmd
+}
+
+func newRunCancelCommand() *cobra.Command {
+	opts := run.CancelOptions{
+		Namespace: "fabrik-runs",
+	}
+
+	cmd := &cobra.Command{
+		Use:   "cancel --id <run-id>",
+		Short: "Cancel a Fabrik run",
+		Long: "Cancel a Fabrik run by deleting its Kubernetes Job or CronJob.\n\n" +
+			"This command deletes the Job (for one-shot runs) or CronJob (for scheduled runs) " +
+			"associated with the given run ID. For CronJobs, any active child Jobs are also deleted.\n\n" +
+			"The cancellation is immediate and cascades to pods via Kubernetes garbage collection. " +
+			"The output clearly indicates what was cancelled and whether the run was active or " +
+			"already finished.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, err := run.CancelRun(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), opts)
+			return err
 		},
 	}
 
