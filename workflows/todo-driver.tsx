@@ -835,7 +835,8 @@ function TodoItemPipeline({
       (latestValidationIteration >= latestImplementIteration &&
         latestValidate?.allPassed === false) ||
       (latestReviewIteration >= latestValidationIteration &&
-        reviewIssuesForLatestValidation.length > 0)
+        reviewIssuesForLatestValidation.length > 0 &&
+        latestImplementIteration <= latestValidationIteration)
     );
   const needsValidation =
     !blocked &&
