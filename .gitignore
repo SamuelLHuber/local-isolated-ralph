@@ -3,6 +3,9 @@ node_modules/
 .env*
 !.env.example
 .smithers/
+.tmp-staged/
+.tmp-staged-clean/
+NEXTSTEPS.md
 /workflows/*
 !/workflows/README.md
 !/workflows/*.ts
