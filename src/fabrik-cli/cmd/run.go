@@ -21,9 +21,9 @@ func newRunCommand(runMode string) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "run",
-		Short: "Dispatch a Fabrik run to Kubernetes",
-		Long: "Dispatch a Fabrik run to Kubernetes.\n\n" +
-			"The default live behavior applies the PVC and Job, verifies that the Job " +
+		Short: "Dispatch and inspect Fabrik runs",
+		Long: "Dispatch a Fabrik run to Kubernetes or inspect run logs.\n\n" +
+			"The default dispatch behavior applies the PVC and Job, verifies that the Job " +
 			"has started on the cluster, and then returns. When --cron is set, the " +
 			"command creates a CronJob and verifies the scheduled object exists. Use " +
 			"--wait when you need completion tracking and local artifact sync for a " +
@@ -65,6 +65,33 @@ func newRunCommand(runMode string) *cobra.Command {
 	flags.BoolVar(&opts.Interactive, "interactive", opts.Interactive, "Prompt for missing values")
 	flags.BoolVar(&opts.RenderOnly, "render", false, "Render resources without applying them")
 	flags.BoolVar(&opts.DryRun, "dry-run", false, "Validate resources without mutating the cluster")
+
+	// Add subcommands
+	cmd.AddCommand(newRunLogsCommand())
+
+	return cmd
+}
+
+func newRunLogsCommand() *cobra.Command {
+	opts := run.InspectOptions{
+		Namespace: "fabrik-runs",
+	}
+
+	cmd := &cobra.Command{
+		Use:   "logs --id <run-id>",
+		Short: "Retrieve logs for a run",
+		Long: "Retrieve the pod logs for a specific Fabrik run.\n\n" +
+			"Returns the underlying pod logs directly from Kubernetes for the selected run. " +
+			"The command finds the pod associated with the run ID and streams its logs.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return run.RunLogs(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), opts)
+		},
+	}
+
+	flags := cmd.Flags()
+	flags.StringVar(&opts.RunID, "id", "", "Run identifier (required)")
+	flags.StringVar(&opts.Namespace, "namespace", opts.Namespace, "Kubernetes namespace")
+	flags.StringVar(&opts.KubeContext, "context", "", "Kubernetes context")
 
 	return cmd
 }

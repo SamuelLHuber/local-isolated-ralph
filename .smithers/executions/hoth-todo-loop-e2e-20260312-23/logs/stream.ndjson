@@ -1,0 +1,15 @@
+{"type":"RunStarted","runId":"hoth-todo-loop-e2e-20260312-23","timestampMs":1773312615863}
+{"type":"FrameCommitted","runId":"hoth-todo-loop-e2e-20260312-23","frameNo":1,"xmlHash":"534acbe39a8c8feb1222de7e597dde047b79975d61295ed327193c966479cade","timestampMs":1773312615892}
+{"type":"NodeStarted","runId":"hoth-todo-loop-e2e-20260312-23","nodeId":"prepare-repo","iteration":0,"attempt":1,"timestampMs":1773312615914}
+{"type":"NodeFinished","runId":"hoth-todo-loop-e2e-20260312-23","nodeId":"prepare-repo","iteration":0,"attempt":1,"timestampMs":1773312617279}
+{"type":"FrameCommitted","runId":"hoth-todo-loop-e2e-20260312-23","frameNo":2,"xmlHash":"bf1509deba13cb4e6d8e13870b00549e26a8230c65c08838773ef421b740f204","timestampMs":1773312617298}
+{"type":"NodeStarted","runId":"hoth-todo-loop-e2e-20260312-23","nodeId":"ensure-todo","iteration":0,"attempt":1,"timestampMs":1773312617332}
+{"type":"NodeFinished","runId":"hoth-todo-loop-e2e-20260312-23","nodeId":"ensure-todo","iteration":0,"attempt":1,"timestampMs":1773312617473}
+{"type":"FrameCommitted","runId":"hoth-todo-loop-e2e-20260312-23","frameNo":3,"xmlHash":"bf1509deba13cb4e6d8e13870b00549e26a8230c65c08838773ef421b740f204","timestampMs":1773312617482}
+{"type":"NodeStarted","runId":"hoth-todo-loop-e2e-20260312-23","nodeId":"plan-todo-loop","iteration":0,"attempt":1,"timestampMs":1773312617514}
+{"type":"NodeFinished","runId":"hoth-todo-loop-e2e-20260312-23","nodeId":"plan-todo-loop","iteration":0,"attempt":1,"timestampMs":1773312617671}
+{"type":"FrameCommitted","runId":"hoth-todo-loop-e2e-20260312-23","frameNo":4,"xmlHash":"bf1509deba13cb4e6d8e13870b00549e26a8230c65c08838773ef421b740f204","timestampMs":1773312617678}
+{"type":"NodeStarted","runId":"hoth-todo-loop-e2e-20260312-23","nodeId":"runs-inspection:implement","iteration":0,"attempt":1,"timestampMs":1773312617701}
+{"type":"NodeFinished","runId":"hoth-todo-loop-e2e-20260312-23","nodeId":"runs-inspection:implement","iteration":0,"attempt":1,"timestampMs":1773312876121}
+{"type":"FrameCommitted","runId":"hoth-todo-loop-e2e-20260312-23","frameNo":5,"xmlHash":"0159eae0415c0b22c52a1e6e8859378b2a8a8b2aa315b01ee630ae5b9543e51d","timestampMs":1773312876135}
+{"type":"NodeStarted","runId":"hoth-todo-loop-e2e-20260312-23","nodeId":"runs-inspection:snapshot-implement","iteration":0,"attempt":1,"timestampMs":1773312876170}

@@ -4,11 +4,12 @@ This directory is the start of the Go-based `fabrik` CLI.
 
 The immediate goal is to replace the ad hoc behavior in `k8s/run-and-sync.sh` with a maintainable Go command surface, starting with:
 
-- `fabrik run`
-- `fabrik run status`
-- `fabrik run logs`
-- `fabrik run resume`
-- `fabrik run cancel`
+- `fabrik run` — dispatch a new run
+- `fabrik run logs --id <run-id>` — retrieve logs for a run
+- `fabrik runs list` — list all runs from Kubernetes Jobs and CronJobs
+- `fabrik runs show --id <run-id>` — show detailed run status from K8s labels/annotations
+- `fabrik run resume --id <run-id>` — resume a stuck run
+- `fabrik run cancel --id <run-id>` — cancel a run
 
 The first development target is local `k3d`, because that gives us fast feedback for both single-node and multi-node cluster shapes before we verify against a real single-node `k3s` server.
 
@@ -486,6 +487,76 @@ This means:
 - cloud runs on `k3s`/`hoth` do not need nested `k3d`
 - workflow validation should fail if a required verifier Job cannot be created or if its required checks do not pass
 
+## Runs Inspection Commands
+
+Fabrik provides direct Kubernetes-native run inspection. All data comes from Job/Pod labels, annotations, and status fields — there is no separate metadata store.
+
+### `fabrik runs list`
+
+List all Fabrik runs from Kubernetes Jobs and CronJobs:
+
+```bash
+# List runs in the default namespace
+fabrik runs list
+
+# List runs in a specific namespace
+fabrik runs list --namespace fabrik-runs
+
+# List runs using a specific kube context
+fabrik runs list --context k3d-dev
+```
+
+Output is tabular and stable for scripting:
+```
+RUN ID                      PROJECT      PHASE      STATUS       AGE      KIND
+01jk7v8xabc123             myapp        run        running      5m       Job
+01jk7v8xdef456             myapp        complete   finished     1h       Job
+01jk7v8xghi789             myapp        run        scheduled    2d       CronJob
+```
+
+The command reads directly from the Kubernetes API using the label selector `fabrik.sh/managed-by=fabrik`.
+
+### `fabrik runs show --id <run-id>`
+
+Show detailed information about a specific run, extracted from K8s metadata:
+
+```bash
+fabrik runs show --id 01jk7v8xabc123
+fabrik runs show --id 01jk7v8xabc123 --namespace fabrik-runs
+```
+
+Output includes:
+- Run metadata (ID, project, spec, namespace, kind)
+- Current phase and status from labels
+- Task and progress from annotations
+- Timestamps (started, finished, duration)
+- Image reference used
+- Job/CronJob name
+- Pod status and conditions
+- Container exit codes and reasons
+
+All data comes directly from Kubernetes labels and annotations following the shared metadata schema in `specs/051-k3s-orchestrator.md`.
+
+### `fabrik run logs --id <run-id>`
+
+Retrieve the underlying pod logs for a run:
+
+```bash
+fabrik run logs --id 01jk7v8xabc123
+fabrik run logs --id 01jk7v8xabc123 --namespace fabrik-runs
+```
+
+The command finds the pod(s) associated with the run ID and returns their logs. For completed or failed runs, this retrieves the final execution logs. For active runs, it returns the current pod output (similar to `kubectl logs -f`).
+
+### Source of Truth
+
+These commands directly query Kubernetes:
+- `fabrik runs list` → `kubectl get jobs/cronjobs -l fabrik.sh/managed-by=fabrik`
+- `fabrik runs show` → `kubectl get job -l fabrik.sh/run-id=<id>` + pod status
+- `fabrik run logs` → `kubectl logs <pod-for-run-id>`
+
+There is no caching layer, no separate database, and no daemon. The Kubernetes API is the canonical source of runtime state.
+
 ## Implementation Guidance
 
 When building commands in this module:
@@ -500,17 +571,18 @@ The shell script is the behavior baseline, not the architecture baseline.
 
 ## Near-Term Roadmap
 
-Phase 1:
+Phase 1 (Complete):
 
 - scaffold Cobra root command
 - implement `fabrik run`
 - support interactive prompting with Charm Go libraries
 - verify on `k3d` single-node and multi-node
 
-Phase 2:
+Phase 2 (Current):
 
-- add `run status`
-- add `run logs`
+- add `fabrik runs list` — list runs from K8s Jobs/CronJobs
+- add `fabrik runs show` — detailed run status from labels/annotations
+- add `fabrik run logs` — retrieve pod logs for a run
 - add `run resume`
 - add `run cancel`
 
