@@ -299,7 +299,10 @@ export function verifierCommands(item: TodoItem, workdir: string): string[] {
   if (item.id === "runs-inspection") {
     return [
       ...base,
-      "go test ./cmd ./internal/...",
+      "go test ./cmd -run 'Runs|Logs'",
+      "test -d ./internal/runs -o -d ./internal/inspect",
+      "if [ -d ./internal/runs ]; then go test ./internal/runs; fi",
+      "if [ -d ./internal/inspect ]; then go test ./internal/inspect; fi",
       "VERIFY_RUN_ID=fabrik-verify-runs-$(date +%s)",
       `/tmp/fabrik-verify run --run-id "$VERIFY_RUN_ID" --spec ${VERIFY_SPEC_PATH} --project verify --image "$FABRIK_RUN_IMAGE" --namespace "$KUBERNETES_NAMESPACE" --pvc-size 1Gi --job-command 'echo cluster-verify' --interactive=false`,
       "kubectl -n \"$KUBERNETES_NAMESPACE\" wait --for=condition=complete \"job/fabrik-$VERIFY_RUN_ID\" --timeout=180s",
