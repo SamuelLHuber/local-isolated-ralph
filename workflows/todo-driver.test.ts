@@ -404,6 +404,65 @@ test("todo-driver schedules review after a successful validation pass", () => {
   expect(ids).not.toContain("runs-inspection:implement");
 });
 
+test("todo-driver ignores stale planned validate phase after validation passes", () => {
+  const ctx = buildContext({
+    runId: "preview",
+    iteration: 2,
+    iterations: {},
+    input: {},
+    outputs: {
+      todoPlan: [
+        {
+          nodeId: "plan-todo-loop",
+          iteration: 2,
+          activeItemId: "runs-inspection",
+          activePhase: "validate",
+          items: [
+            {
+              id: "runs-inspection",
+              title: "Runs Inspection",
+              status: "pending",
+              task: "Inspect runs from Kubernetes.",
+              specTieIn: ["orchestrator metadata"],
+              guarantees: ["list reflects cluster state"],
+              verificationToBuildFirst: ["add deterministic tests"],
+              requiredChecks: ["`make verify-cli`"],
+              documentationUpdates: [],
+              blockedReason: null,
+            },
+          ],
+        },
+      ],
+      implement: [
+        {
+          nodeId: "runs-inspection:implement",
+          iteration: 0,
+          summary: "implemented",
+          changes: [],
+          verification: [],
+          documentation: [],
+        },
+      ],
+      validate: [
+        {
+          nodeId: "runs-inspection:validate",
+          iteration: 1,
+          allPassed: true,
+          commands: [],
+          evidence: ["all good"],
+          failingSummary: null,
+        },
+      ],
+    },
+    zodToKeyName: workflow.zodToKeyName,
+  });
+
+  const ids = collectTaskIDs(workflow.build(ctx));
+  expect(ids).toContain("runs-inspection:review-context");
+  expect(ids).toContain("runs-inspection:review:spec-alignment");
+  expect(ids).not.toContain("runs-inspection:validate");
+});
+
 test("todo-driver review prompt uses diff summary instead of embedding the full patch", () => {
   const ctx = buildContext({
     runId: "preview",

@@ -920,7 +920,6 @@ function TodoItemPipeline({
   ctx: WorkflowCtx;
 }) {
   const workdir = itemWorkspace(item.id);
-  const latestPlan = latestTodoPlan(ctx);
   const latestImplement = latestOutputRow<z.infer<typeof implementSchema>>(
     ctx,
     "implement",
@@ -930,10 +929,7 @@ function TodoItemPipeline({
   const latestFix = latestReviewFix(ctx, item.id);
   const issues = collectReviewIssues(ctx, item.id, REVIEWERS);
   const loopState = todoLoopState(ctx, item);
-  const effectivePhase =
-    latestPlan?.activeItemId === item.id && latestPlan.activePhase
-      ? latestPlan.activePhase
-      : loopState.phase;
+  const effectivePhase = loopState.phase;
   const {
     approved,
     blocked: loopBlocked,
@@ -945,7 +941,7 @@ function TodoItemPipeline({
   } = loopState;
   const blocked = loopBlocked || effectivePhase === "blocked";
   const readyToFinalize =
-    effectivePhase === "finalize" || loopReadyToFinalize;
+    effectivePhase === "finalize" && loopReadyToFinalize;
   const needsImplementation = effectivePhase === "implement";
   const needsValidation = effectivePhase === "validate";
   const needsReview = effectivePhase === "review";
