@@ -444,6 +444,58 @@ function latestOutputIteration(
   return latestOutputRow(ctx, table, nodeId)?.iteration ?? null;
 }
 
+function isIgnorableContextComplaint(issue: string): boolean {
+  const normalized = issue.toLowerCase();
+  return (
+    normalized.includes("missing context") ||
+    normalized.includes("context missing") ||
+    normalized.includes("context not provided") ||
+    normalized.includes("context not visible") ||
+    normalized.includes("review content not provided") ||
+    normalized.includes("review material not provided") ||
+    normalized.includes("no review content provided") ||
+    normalized.includes("todo item, changed files, jj diff, and validation evidence are not present") ||
+    normalized.includes("todo item, jj diff, and validation evidence not found") ||
+    normalized.includes("cannot verify implementation changes without explicit diff and validation evidence")
+  );
+}
+
+function reviewContextIsAvailable(
+  ctx: WorkflowCtx,
+  itemId: string,
+  minimumIteration: number | null = null,
+): boolean {
+  const reviewContext = latestOutputRow<ReviewContext>(
+    ctx,
+    "reviewContext",
+    `${itemId}:review-context`,
+  );
+  const validate = latestValidation(ctx, itemId);
+  if (
+    minimumIteration !== null &&
+    (reviewContext?.iteration ?? -1) < minimumIteration
+  ) {
+    return false;
+  }
+  return Boolean(
+    reviewContext &&
+      (reviewContext.changedFiles.length > 0 || reviewContext.diffSummary.length > 0) &&
+      validate &&
+      validate.evidence.length > 0,
+  );
+}
+
+function normalizedReviewIssues(
+  ctx: WorkflowCtx,
+  itemId: string,
+  review: Review | undefined,
+  minimumIteration: number | null,
+): string[] {
+  const issues = review?.issues ?? [];
+  if (!reviewContextIsAvailable(ctx, itemId, minimumIteration)) return issues;
+  return issues.filter((issue) => !isIgnorableContextComplaint(issue));
+}
+
 function collectReviewIssues(
   ctx: WorkflowCtx,
   itemId: string,
@@ -463,7 +515,7 @@ function collectReviewIssues(
     ) {
       continue;
     }
-    if (review?.issues?.length) issues.push(...review.issues);
+    issues.push(...normalizedReviewIssues(ctx, itemId, review, minimumIteration));
   }
   return issues;
 }
@@ -486,7 +538,8 @@ function allReviewersApproved(
     ) {
       return false;
     }
-    return review?.approved === true;
+    const issues = normalizedReviewIssues(ctx, itemId, review, minimumIteration);
+    return review?.approved === true || (review !== undefined && issues.length === 0);
   });
 }
 
