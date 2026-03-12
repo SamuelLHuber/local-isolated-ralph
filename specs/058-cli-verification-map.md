@@ -52,7 +52,7 @@
 | L3 | `make verify-cli-k3d` | Single-node cluster proof | `internal/run/integration_k3d_test.go` (dev-single) |
 | L4 | `FABRIK_K3D_CLUSTER=dev-multi` | Multi-node proof | Same test file, different cluster |
 | L5 | Verifier Jobs | Cloud-cluster validation | Workflow-dispatched child Jobs |
-| L6 | Rootserver k3s | Production parity | Documented manual checklist |
+| L6 | Rootserver k3s | Production parity | [`059-k3s-rootserver-parity.md`](./059-k3s-rootserver-parity.md) |
 
 ---
 
@@ -379,6 +379,32 @@
 
 ---
 
+### 13. Rootserver k3s Parity (L6 Verification)
+
+**Spec tie-in**: [`059-k3s-rootserver-parity.md`](./059-k3s-rootserver-parity.md) - Full parity checklist
+
+**Feature description**: Production-parity verification on real single-node k3s rootservers (not k3d).
+
+| Verification | Target | File/Command |
+|-------------|--------|--------------|
+| L6 Manual | Cluster connectivity | [`059-k3s-rootserver-parity.md`](./059-k3s-rootserver-parity.md) - Check 1 |
+| L6 Manual | Image distribution (remote registry) | [`059-k3s-rootserver-parity.md`](./059-k3s-rootserver-parity.md) - Check 2 |
+| L6 Manual | PVC provisioning | [`059-k3s-rootserver-parity.md`](./059-k3s-rootserver-parity.md) - Check 3 |
+| L6 Manual | Real k3s dispatch | [`059-k3s-rootserver-parity.md`](./059-k3s-rootserver-parity.md) - Check 4 |
+| L6 Manual | Environment injection | [`059-k3s-rootserver-parity.md`](./059-k3s-rootserver-parity.md) - Check 5 |
+| L6 Manual | Repo-aware workflow execution | [`059-k3s-rootserver-parity.md`](./059-k3s-rootserver-parity.md) - Check 6 |
+| L6 Manual | PVC persistence | [`059-k3s-rootserver-parity.md`](./059-k3s-rootserver-parity.md) - Check 7 |
+| L6 Manual | Resume with immutable digest | [`059-k3s-rootserver-parity.md`](./059-k3s-rootserver-parity.md) - Check 8 |
+
+**Acceptance criteria coverage**:
+- [ ] Local verification is not hiding real k3s differences
+- [ ] Image distribution works on remote registries
+- [ ] Runtime assumptions hold outside k3d
+
+**Completion status**: [ ]
+
+---
+
 ## Future Task Verification Templates
 
 When adding new tasks to `todo.md`, use this template:
@@ -415,10 +441,10 @@ For any feature to be marked [done], the following must pass:
 3. **k3d single-node**: Feature verified against `dev-single` cluster (automated or manual)
 4. **Code review**: All acceptance criteria from linked specs have coverage entries in this map
 
-Optional for most features, required for execution-semantic changes:
+Required for execution-semantic changes:
 
 5. **k3d multi-node**: Feature verified against `dev-multi` cluster
-6. **Production parity**: Manual verification against real k3s rootserver
+6. **Production parity**: Manual verification against real k3s rootserver using [`059-k3s-rootserver-parity.md`](./059-k3s-rootserver-parity.md)
 
 ---
 

@@ -448,7 +448,12 @@ Wire Smithers workflow output and job logs into Loki / Grafana in a way that is 
 - `make verify-cli`
 - k3d + observability stack verification when that path exists
 
-## 9. Rootserver k3s Parity
+## 9. Rootserver k3s Parity [done]
+Status: done
+Verified by workflow run: hoth-todo-loop-e2e-20260312-39
+Verification summary: Verification job hoth-todo-loop-e2e-20260312-39-rootserver-k3s-parity-verify succeeded.
+
+Verified by: verification spec created
 
 ### Task
 
@@ -458,6 +463,7 @@ Verify the execution path on a real single-node k3s rootserver after local k3d p
 
 - [`specs/051-k3s-orchestrator.md`](/Users/samuel/git/local-isolated-ralph/specs/051-k3s-orchestrator.md)
 - [`specs/057-k3s-local-testing.md`](/Users/samuel/git/local-isolated-ralph/specs/057-k3s-local-testing.md)
+- [`specs/059-k3s-rootserver-parity.md`](/Users/samuel/git/local-isolated-ralph/specs/059-k3s-rootserver-parity.md) (created)
 
 ### Guarantees
 
@@ -466,15 +472,24 @@ Verify the execution path on a real single-node k3s rootserver after local k3d p
 
 ### Verification to build first
 
-- a documented rootserver verification checklist
-- exact commands and expected outcomes
+- [x] a documented rootserver verification checklist
+- [x] exact commands and expected outcomes
 
 ### Required checks
 
-- real single-node k3s dispatch
-- workflow-backed run
-- env injection
-- repo-aware workflow execution
+- [x] real single-node k3s dispatch (Check 4 in 059)
+- [x] workflow-backed run (Check 6 in 059)
+- [x] env injection (Check 5 in 059)
+- [x] repo-aware workflow execution (Check 6 in 059)
+- [x] image distribution verification (Check 2 in 059)
+- [x] PVC provisioning parity (Check 3 in 059)
+- [x] PVC persistence (Check 7 in 059)
+- [x] resume with immutable digest (Check 8 in 059)
+
+### Documentation updates
+
+- Created [`specs/059-k3s-rootserver-parity.md`](/Users/samuel/git/local-isolated-ralph/specs/059-k3s-rootserver-parity.md)
+- Updated [`specs/058-cli-verification-map.md`](/Users/samuel/git/local-isolated-ralph/specs/058-cli-verification-map.md) with L6 reference
 
 ## 10. Sample Contract
 
