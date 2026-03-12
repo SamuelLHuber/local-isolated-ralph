@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/base64"
 	"io"
 	"os"
@@ -100,4 +101,187 @@ func untarNames(t *testing.T, archiveBase64 string) []string {
 		names = append(names, hdr.Name)
 	}
 	return names
+}
+
+// TestComplexSampleBundleContents verifies that the complex sample workflow
+// bundle contains only the workflow code and direct helper imports.
+// This ensures the sample is self-contained and repeatable per the spec:
+// - workflow bundle only contains workflow code and direct helper imports
+// - repo contents come from --jj-repo, not copied local specs
+func TestComplexSampleBundleContents(t *testing.T) {
+	// Resolve from the actual complex sample in the repo
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		t.Skipf("cannot find repo root: %v", err)
+	}
+
+	workflowPath := filepath.Join(repoRoot, "examples", "complex", "pi-spec-implementation.tsx")
+	if _, err := os.Stat(workflowPath); err != nil {
+		t.Skipf("complex sample workflow not found at %s: %v", workflowPath, err)
+	}
+
+	bundle, err := resolveWorkflowBundle(workflowPath)
+	if err != nil {
+		t.Fatalf("resolveWorkflowBundle failed for complex sample: %v", err)
+	}
+
+	// Verify the workflow is staged under workflows/ directory
+	if bundle.WorkdirPath != "workflows/pi-spec-implementation.tsx" {
+		t.Fatalf("unexpected workdir path %q, want workflows/pi-spec-implementation.tsx", bundle.WorkdirPath)
+	}
+
+	// Get the actual entries in the bundle
+	gotEntries := untarNames(t, bundle.ArchiveBase64)
+
+	// The complex sample imports from "./utils/jj-shell" so the bundle should
+	// contain exactly these files:
+	// - workflows/pi-spec-implementation.tsx (the main workflow)
+	// - workflows/utils/jj-shell.ts (the direct import)
+	//
+	// It should NOT contain:
+	// - utils/codex-auth-rotation.ts (not imported by the workflow)
+	// - specs/* (repo contents come from --jj-repo, not copied)
+	// - Any other files outside the workflow directory
+	requiredEntries := map[string]bool{
+		"workflows/pi-spec-implementation.tsx": false,
+		"workflows/utils/jj-shell.ts":          false,
+	}
+	forbiddenEntries := []string{
+		"workflows/utils/codex-auth-rotation.ts", // Not imported by workflow
+		"workflows/specs/",                     // Specs come from --jj-repo
+		"specs/",                               // Should never be in bundle
+	}
+
+	for _, entry := range gotEntries {
+		for required := range requiredEntries {
+			if entry == required {
+				requiredEntries[required] = true
+			}
+		}
+		for _, forbidden := range forbiddenEntries {
+			if strings.HasPrefix(entry, forbidden) {
+				t.Fatalf("bundle contains forbidden entry %q (should only include workflow code and direct imports, not specs or unused utils)", entry)
+			}
+		}
+	}
+
+	for required, found := range requiredEntries {
+		if !found {
+			t.Fatalf("bundle missing required entry %q", required)
+		}
+	}
+
+	// Verify bundle is reasonably sized (should be small since no specs included)
+	data, err := base64.StdEncoding.DecodeString(bundle.ArchiveBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The bundle should be small (< 50KB) since it only contains workflow code
+	// and one utility file, not the entire repo specs
+	if len(data) > 50*1024 {
+		t.Fatalf("bundle too large (%d bytes) - may include unwanted files; expected < 50KB for workflow-only bundle", len(data))
+	}
+}
+
+// TestComplexSampleBundleExcludesParentDirectoryImports verifies that
+// the bundle resolution rejects attempts to import files outside the
+// workflow directory, ensuring specs and other repo content must come
+// from --jj-repo rather than being bundled.
+func TestComplexSampleBundleExcludesParentDirectoryImports(t *testing.T) {
+	// Create a temp directory structure:
+	// /tmp/xxx/workflow_dir/workflow.tsx
+	// /tmp/xxx/specs_dir/helper.ts (outside workflow_dir)
+	baseDir := t.TempDir()
+	workflowDir := filepath.Join(baseDir, "workflow_dir")
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create workflow that tries to import from sibling directory (outside its tree)
+	workflowPath := filepath.Join(workflowDir, "workflow.tsx")
+	if err := os.WriteFile(workflowPath, []byte(`
+import { helper } from "../specs_dir/helper";
+export default {};
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create the specs directory outside the workflow directory
+	specsDir := filepath.Join(baseDir, "specs_dir")
+	if err := os.MkdirAll(specsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Create the helper file so the import resolves successfully
+	if err := os.WriteFile(filepath.Join(specsDir, "helper.ts"), []byte("export const helper = 1;"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := resolveWorkflowBundle(workflowPath)
+	if err == nil {
+		t.Fatal("expected resolveWorkflowBundle to reject parent directory import (specs should come from --jj-repo, not be bundled)")
+	}
+	if !strings.Contains(err.Error(), "outside its directory tree") {
+		t.Fatalf("expected error about outside directory tree, got: %v", err)
+	}
+}
+
+// TestComplexSampleEnvContract verifies the environment variables expected
+// by the complex sample workflow are documented in the rendered manifest.
+func TestComplexSampleEnvContract(t *testing.T) {
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		t.Skipf("cannot find repo root: %v", err)
+	}
+
+	workflowPath := filepath.Join(repoRoot, "examples", "complex", "pi-spec-implementation.tsx")
+	if _, err := os.Stat(workflowPath); err != nil {
+		t.Skipf("complex sample workflow not found: %v", err)
+	}
+
+	// Test that JJ_REPO and JJ_BOOKMARK are passed through when provided
+	opts := Options{
+		RunID:              "complex-sample-test",
+		SpecPath:           "specs/complex-sample.yaml",
+		Project:            "complex-sample",
+		Image:              "repo/image@sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
+		WorkflowPath:       workflowPath,
+		InputJSON:          `{}`,
+		JJRepo:             "https://github.com/example/repo.git",
+		JJBookmark:         "feat/complex-sample",
+		Namespace:          "fabrik-runs",
+		PVCSize:            "10Gi",
+		WaitTimeout:        "5m",
+		RenderOnly:         true,
+		Interactive:        false,
+		AcceptFilteredSync: true,
+	}
+
+	resolved, err := ResolveOptions(context.Background(), strings.NewReader(""), &bytes.Buffer{}, opts)
+	if err != nil {
+		t.Fatalf("ResolveOptions failed: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := Execute(context.Background(), strings.NewReader(""), &out, &errOut, resolved); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	rendered := out.String()
+
+	// Verify JJ_REPO env var is set
+	if !strings.Contains(rendered, "name: SMITHERS_JJ_REPO") {
+		t.Fatalf("expected rendered manifest to include SMITHERS_JJ_REPO env var")
+	}
+	if !strings.Contains(rendered, "value: \"https://github.com/example/repo.git\"") {
+		t.Fatalf("expected rendered manifest to include JJ_REPO value")
+	}
+
+	// Verify JJ_BOOKMARK env var is set
+	if !strings.Contains(rendered, "name: SMITHERS_JJ_BOOKMARK") {
+		t.Fatalf("expected rendered manifest to include SMITHERS_JJ_BOOKMARK env var")
+	}
+	if !strings.Contains(rendered, "value: \"feat/complex-sample\"") {
+		t.Fatalf("expected rendered manifest to include JJ_BOOKMARK value")
+	}
 }

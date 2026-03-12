@@ -491,7 +491,11 @@ Verify the execution path on a real single-node k3s rootserver after local k3d p
 - Created [`specs/059-k3s-rootserver-parity.md`](/Users/samuel/git/local-isolated-ralph/specs/059-k3s-rootserver-parity.md)
 - Updated [`specs/058-cli-verification-map.md`](/Users/samuel/git/local-isolated-ralph/specs/058-cli-verification-map.md) with L6 reference
 
-## 10. Sample Contract
+## 10. Sample Contract [done]
+Status: done
+Verified by workflow run: hoth-todo-loop-e2e-20260312-39
+Verification summary: Verification job hoth-todo-loop-e2e-20260312-39-sample-contract-verify succeeded.
+
 
 ### Task
 
