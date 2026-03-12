@@ -498,6 +498,121 @@ When building commands in this module:
 
 The shell script is the behavior baseline, not the architecture baseline.
 
+## Run Inspection Commands
+
+The runs inspection commands provide direct access to Kubernetes resources, reading from Jobs, CronJobs, and Pods using the shared metadata schema defined in `specs/051-k3s-orchestrator.md`.
+
+### `fabrik runs list`
+
+Lists all Fabrik runs across Jobs and CronJobs in the configured namespace:
+
+```bash
+# List runs in default namespace
+fabrik runs list
+
+# List runs in a specific namespace
+fabrik runs list --namespace fabrik-runs
+
+# List runs with a specific context
+fabrik runs list --context my-cluster
+
+# Output as JSON for scripting
+fabrik runs list -o json
+
+# Output just run IDs (useful for piping)
+fabrik runs list -o name
+```
+
+The output shows:
+- Run ID (ULID format)
+- Project
+- Phase (e.g., plan, implement, review, complete)
+- Status (e.g., pending, active, succeeded, failed)
+- Current task
+- Progress (finished/total)
+- Age
+- Type (job or cron)
+
+### `fabrik runs show`
+
+Shows detailed information about a specific run:
+
+```bash
+# Show run details
+fabrik runs show --id 01JK7V8X1234567890ABCDEFGH
+
+# Show as JSON
+fabrik runs show --id 01JK7V8X1234567890ABCDEFGH -o json
+
+# Show as YAML-like output
+fabrik runs show --id 01JK7V8X1234567890ABCDEFGH -o yaml
+```
+
+The output includes:
+- Run metadata (ID, project, spec)
+- Current phase and status
+- Task and progress
+- Timestamps (started, finished)
+- Image digest
+- Outcome (succeeded, failed, cancelled)
+- Pod and Job names
+- Cron schedule (if CronJob)
+
+### `fabrik run logs`
+
+Retrieves logs from the pod running a Fabrik run:
+
+```bash
+# Get last 200 lines of logs (default)
+fabrik run logs --id 01JK7V8X1234567890ABCDEFGH
+
+# Get last 1000 lines
+fabrik run logs --id 01JK7V8X1234567890ABCDEFGH --tail 1000
+
+# Stream logs in real-time
+fabrik run logs --id 01JK7V8X1234567890ABCDEFGH --follow
+
+# Get logs from previous container instance (after restart)
+fabrik run logs --id 01JK7V8X1234567890ABCDEFGH --previous
+```
+
+### `fabrik run cancel`
+
+Cancels a running Fabrik run by deleting its Job:
+
+```bash
+fabrik run cancel --id 01JK7V8X1234567890ABCDEFGH
+```
+
+### `fabrik run resume`
+
+Resumes a stuck Fabrik run by deleting its pod, causing the Job controller to recreate it. Progress is preserved in the PVC:
+
+```bash
+fabrik run resume --id 01JK7V8X1234567890ABCDEFGH
+```
+
+Note: Cannot resume CronJobs directly; resume individual job executions instead.
+
+### kubectl Parity
+
+All inspection commands read directly from Kubernetes and provide kubectl-equivalent access:
+
+```bash
+# fabrik runs list is equivalent to:
+kubectl get jobs -n fabrik-runs -l fabrik.sh/managed-by=fabrik
+kubectl get cronjobs -n fabrik-runs -l fabrik.sh/managed-by=fabrik
+
+# fabrik runs show --id <id> is equivalent to:
+kubectl get job -n fabrik-runs -l fabrik.sh/run-id=<id> -o yaml
+kubectl get pod -n fabrik-runs -l fabrik.sh/run-id=<id> -o yaml
+
+# fabrik run logs --id <id> is equivalent to:
+kubectl logs -n fabrik-runs -l fabrik.sh/run-id=<id>
+```
+
+The Fabrik CLI provides a higher-level, more stable interface that parses the shared metadata schema and presents human-readable output.
+
 ## Near-Term Roadmap
 
 Phase 1:
@@ -507,12 +622,13 @@ Phase 1:
 - support interactive prompting with Charm Go libraries
 - verify on `k3d` single-node and multi-node
 
-Phase 2:
+Phase 2 (completed):
 
-- add `run status`
-- add `run logs`
-- add `run resume`
-- add `run cancel`
+- add `fabrik runs list`
+- add `fabrik runs show`
+- add `fabrik run logs`
+- add `fabrik run cancel`
+- add `fabrik run resume`
 
 Phase 3:
 

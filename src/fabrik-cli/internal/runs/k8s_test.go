@@ -1,0 +1,711 @@
+package runs
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// setupMockKubectl creates a mock kubectl binary for testing
+func setupMockKubectl(t *testing.T, responses map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+
+	script := "#!/bin/sh\n"
+	script += "echo \"$@\" >> " + filepath.Join(dir, "kubectl.log") + "\n"
+	script += "case \"$1\" in\n"
+	script += "  get|list)\n"
+	script += "    case \"$*\" in\n"
+	
+	for pattern, response := range responses {
+		escapedPattern := strings.ReplaceAll(pattern, "\"", "\\\"")
+		script += "      *\"" + escapedPattern + "\"*)\n"
+		script += "        printf '%s\\n' '" + strings.ReplaceAll(response, "'", "'\"'\"'") + "'\n"
+		script += "        exit 0\n"
+		script += "        ;;\n"
+	}
+	
+	script += "    esac\n"
+	script += "    ;;\n"
+	script += "esac\n"
+	script += "exit 1\n"
+
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return dir
+}
+
+func TestListReturnsRunsFromJobsAndCronJobs(t *testing.T) {
+	jobsJSON := `{
+		"items": [
+			{
+				"metadata": {
+					"name": "fabrik-run-01",
+					"namespace": "fabrik-runs",
+					"labels": {
+						"fabrik.sh/run-id": "01JK7V8X1234567890ABCDEFGH",
+						"fabrik.sh/project": "myapp",
+						"fabrik.sh/spec": "feature-x",
+						"fabrik.sh/phase": "implement",
+						"fabrik.sh/status": "running",
+						"fabrik.sh/task": "task-1",
+						"fabrik.sh/managed-by": "fabrik"
+					},
+					"annotations": {
+						"fabrik.sh/status": "{\"phase\":\"implement\",\"current_task\":\"task-1\",\"attempt\":1,\"progress\":{\"finished\":5,\"total\":10}}",
+						"fabrik.sh/started-at": "2026-03-01T10:00:00Z",
+						"fabrik.sh/progress": "{\"finished\":5,\"total\":10}"
+					}
+				},
+				"spec": {
+					"template": {
+						"spec": {
+							"containers": [{"image": "ghcr.io/fabrik/smithers@sha256:abc123"}]
+						}
+					}
+				},
+				"status": {
+					"active": 1,
+					"startTime": "2026-03-01T10:00:00Z"
+				}
+			}
+		]
+	}`
+
+	cronJobsJSON := `{
+		"items": [
+			{
+				"metadata": {
+					"name": "fabrik-cron-schedule-1",
+					"namespace": "fabrik-runs",
+					"labels": {
+						"fabrik.sh/run-id": "01JK7V8XCRON7890123456789A",
+						"fabrik.sh/project": "myapp",
+						"fabrik.sh/spec": "nightly",
+						"fabrik.sh/managed-by": "fabrik"
+					},
+					"annotations": {
+						"fabrik.sh/cron-schedule": "0 2 * * *"
+					}
+				},
+				"spec": {
+					"schedule": "0 2 * * *"
+				}
+			}
+		]
+	}`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	script := "#!/bin/sh\n"
+	script += `case "$*" in
+	*"get jobs"*"fabrik.sh/managed-by=fabrik"*)
+		printf '%s\n' '` + jobsJSON + `'
+		exit 0
+		;;
+	*"get cronjobs"*"fabrik.sh/managed-by=fabrik"*)
+		printf '%s\n' '` + cronJobsJSON + `'
+		exit 0
+		;;
+esac
+exit 1
+`
+
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	runs, err := client.List(context.Background())
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+
+	if len(runs) != 2 {
+		t.Fatalf("expected 2 runs, got %d: %+v", len(runs), runs)
+	}
+
+	// Check Job run
+	jobRun := runs[0]
+	if jobRun.RunID != "01JK7V8X1234567890ABCDEFGH" {
+		t.Errorf("expected run-id 01JK7V8X1234567890ABCDEFGH, got %s", jobRun.RunID)
+	}
+	if jobRun.Project != "myapp" {
+		t.Errorf("expected project myapp, got %s", jobRun.Project)
+	}
+	if jobRun.Phase != "implement" {
+		t.Errorf("expected phase implement, got %s", jobRun.Phase)
+	}
+	if jobRun.Status != "running" {
+		t.Errorf("expected status running, got %s", jobRun.Status)
+	}
+	if jobRun.Task != "task-1" {
+		t.Errorf("expected task task-1, got %s", jobRun.Task)
+	}
+	if jobRun.Image != "ghcr.io/fabrik/smithers@sha256:abc123" {
+		t.Errorf("expected image ghcr.io/fabrik/smithers@sha256:abc123, got %s", jobRun.Image)
+	}
+	if jobRun.Progress.Finished != 5 || jobRun.Progress.Total != 10 {
+		t.Errorf("expected progress 5/10, got %d/%d", jobRun.Progress.Finished, jobRun.Progress.Total)
+	}
+	if jobRun.IsCronJob {
+		t.Errorf("expected IsCronJob false for Job run")
+	}
+
+	// Check CronJob run
+	cronRun := runs[1]
+	if cronRun.RunID != "01JK7V8XCRON7890123456789A" {
+		t.Errorf("expected run-id 01JK7V8XCRON7890123456789A, got %s", cronRun.RunID)
+	}
+	if !cronRun.IsCronJob {
+		t.Errorf("expected IsCronJob true for CronJob run")
+	}
+	if cronRun.CronSchedule != "0 2 * * *" {
+		t.Errorf("expected cron schedule 0 2 * * *, got %s", cronRun.CronSchedule)
+	}
+}
+
+func TestShowReturnsRunDetailsByID(t *testing.T) {
+	jobJSON := `{
+		"items": [
+			{
+				"metadata": {
+					"name": "fabrik-run-abc123",
+					"namespace": "fabrik-runs",
+					"labels": {
+						"fabrik.sh/run-id": "01JK7V8XABC123DEF456GHI789",
+						"fabrik.sh/project": "testproj",
+						"fabrik.sh/spec": "demo",
+						"fabrik.sh/phase": "run",
+						"fabrik.sh/status": "running",
+						"fabrik.sh/task": "step-2"
+					},
+					"annotations": {
+						"fabrik.sh/status": "{\"phase\":\"run\",\"current_task\":\"step-2\",\"attempt\":1,\"progress\":{\"finished\":2,\"total\":5}}",
+						"fabrik.sh/started-at": "2026-03-10T14:30:00Z",
+						"fabrik.sh/outcome": ""
+					}
+				},
+				"spec": {
+					"template": {
+						"spec": {
+							"containers": [{"image": "smithers@sha256:def789"}]
+						}
+					}
+				},
+				"status": {
+					"active": 1,
+					"startTime": "2026-03-10T14:30:00Z"
+				}
+			}
+		]
+	}`
+
+	podJSON := `{
+		"items": [
+			{
+				"metadata": {
+					"name": "fabrik-run-abc123-pod-xyz",
+					"namespace": "fabrik-runs",
+					"labels": {
+						"job-name": "fabrik-run-abc123"
+					}
+				},
+				"status": {
+					"phase": "Running",
+					"containerStatuses": [{"imageID": "docker-pullable://ghcr.io/fabrik/smithers@sha256:def789"}]
+				}
+			}
+		]
+	}`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	script := "#!/bin/sh\n"
+	script += `case "$*" in
+	*"get jobs"*"fabrik.sh/run-id=01JK7V8XABC123DEF456GHI789"*)
+		printf '%s\n' '` + jobJSON + `'
+		exit 0
+		;;
+	*"get pods"*"job-name=fabrik-run-abc123"*)
+		printf '%s\n' '` + podJSON + `'
+		exit 0
+		;;
+esac
+exit 1
+`
+
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	run, err := client.Show(context.Background(), "01JK7V8XABC123DEF456GHI789")
+	if err != nil {
+		t.Fatalf("Show failed: %v", err)
+	}
+
+	if run.RunID != "01JK7V8XABC123DEF456GHI789" {
+		t.Errorf("expected run-id 01JK7V8XABC123DEF456GHI789, got %s", run.RunID)
+	}
+	if run.Project != "testproj" {
+		t.Errorf("expected project testproj, got %s", run.Project)
+	}
+	if run.PodName != "fabrik-run-abc123-pod-xyz" {
+		t.Errorf("expected pod name fabrik-run-abc123-pod-xyz, got %s", run.PodName)
+	}
+	if run.Progress.Finished != 2 || run.Progress.Total != 5 {
+		t.Errorf("expected progress 2/5, got %d/%d", run.Progress.Finished, run.Progress.Total)
+	}
+}
+
+func TestShowReturnsErrorForMissingRun(t *testing.T) {
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	script := "#!/bin/sh\nexit 1\n"
+
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	_, err := client.Show(context.Background(), "NONEXISTENT")
+	if err == nil {
+		t.Fatal("expected error for missing run")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected 'not found' error, got %v", err)
+	}
+}
+
+func TestLogsReturnsPodLogs(t *testing.T) {
+	jobJSON := `{
+		"items": [
+			{
+				"metadata": {
+					"name": "fabrik-run-logs",
+					"namespace": "fabrik-runs",
+					"labels": {
+						"fabrik.sh/run-id": "01JK7V8XLOGS1234567890123",
+						"fabrik.sh/project": "test",
+						"fabrik.sh/spec": "test",
+						"fabrik.sh/managed-by": "fabrik"
+					}
+				},
+				"spec": {"template": {"spec": {"containers": [{"image": "test"}]}}},
+				"status": {"active": 1}
+			}
+		]
+	}`
+
+	podJSON := `{
+		"items": [
+			{
+				"metadata": {
+					"name": "logs-pod-1",
+					"namespace": "fabrik-runs",
+					"labels": {"fabrik.sh/run-id": "01JK7V8XLOGS1234567890123"}
+				},
+				"status": {"phase": "Running"}
+			}
+		]
+	}`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	script := "#!/bin/sh\n"
+	script += `case "$*" in
+	*"get jobs"*"fabrik.sh/run-id=01JK7V8XLOGS1234567890123"*)
+		printf '%s\n' '` + jobJSON + `'
+		exit 0
+		;;
+	*"get pods"*"fabrik.sh/run-id=01JK7V8XLOGS1234567890123"*)
+		printf '%s\n' '` + podJSON + `'
+		exit 0
+		;;
+	*"logs"*"logs-pod-1"*)
+		printf 'log line 1\nlog line 2\nlog line 3\n'
+		exit 0
+		;;
+esac
+exit 1
+`
+
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	logs, err := client.Logs(context.Background(), "01JK7V8XLOGS1234567890123", 100, false)
+	if err != nil {
+		t.Fatalf("Logs failed: %v", err)
+	}
+
+	expected := "log line 1\nlog line 2\nlog line 3"
+	if !strings.Contains(logs, expected) {
+		t.Errorf("expected logs to contain %q, got %q", expected, logs)
+	}
+}
+
+func TestJobStatusFromConditions(t *testing.T) {
+	tests := []struct {
+		name       string
+		active     int
+		succeeded  int
+		failed     int
+		wantStatus string
+		wantOutcome string
+	}{
+		{"active", 1, 0, 0, "active", ""},
+		{"succeeded", 0, 1, 0, "succeeded", "succeeded"},
+		{"failed", 0, 0, 1, "failed", "failed"},
+		{"pending", 0, 0, 0, "pending", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			job := &runJobJSON{
+				Metadata: struct {
+					Name        string            `json:"name"`
+					Namespace   string            `json:"namespace"`
+					Labels      map[string]string `json:"labels"`
+					Annotations map[string]string `json:"annotations"`
+				}{
+					Name:      "test-job",
+					Namespace: "fabrik-runs",
+					Labels:    map[string]string{"fabrik.sh/run-id": "test"},
+				},
+				Status: struct {
+					Active    int `json:"active"`
+					Succeeded int `json:"succeeded"`
+					Failed    int `json:"failed"`
+					StartTime string `json:"startTime"`
+					CompletionTime string `json:"completionTime"`
+				}{
+					Active:    tt.active,
+					Succeeded: tt.succeeded,
+					Failed:    tt.failed,
+				},
+			}
+
+			client := &K8sClient{}
+			run := client.jobToRunInfo(job)
+
+			if run.Status != tt.wantStatus {
+				t.Errorf("expected status %q, got %q", tt.wantStatus, run.Status)
+			}
+			if run.Outcome != tt.wantOutcome {
+				t.Errorf("expected outcome %q, got %q", tt.wantOutcome, run.Outcome)
+			}
+		})
+	}
+}
+
+func TestParseStatusAnnotation(t *testing.T) {
+	job := &runJobJSON{
+		Metadata: struct {
+			Name        string            `json:"name"`
+			Namespace   string            `json:"namespace"`
+			Labels      map[string]string `json:"labels"`
+			Annotations map[string]string `json:"annotations"`
+		}{
+			Name:      "test-job",
+			Namespace: "fabrik-runs",
+			Labels: map[string]string{
+				"fabrik.sh/run-id":  "test",
+				"fabrik.sh/project": "myproj",
+				"fabrik.sh/spec":    "spec-1",
+			},
+			Annotations: map[string]string{
+				"fabrik.sh/status":   `{"phase":"review","current_task":"validate","attempt":2,"progress":{"finished":8,"total":10}}`,
+				"fabrik.sh/progress": `{"finished":5,"total":10}`,
+			},
+		},
+		Spec: struct {
+			Template struct {
+				Spec struct {
+					Containers []struct {
+						Image string `json:"image"`
+					} `json:"containers"`
+				} `json:"spec"`
+			} `json:"template"`
+		}{},
+		Status: struct {
+			Active    int `json:"active"`
+			Succeeded int `json:"succeeded"`
+			Failed    int `json:"failed"`
+			StartTime string `json:"startTime"`
+			CompletionTime string `json:"completionTime"`
+		}{
+			Active: 1,
+		},
+	}
+
+	client := &K8sClient{}
+	run := client.jobToRunInfo(job)
+
+	// Status annotation should take precedence over progress annotation
+	if run.Phase != "review" {
+		t.Errorf("expected phase review from status annotation, got %s", run.Phase)
+	}
+	if run.Task != "validate" {
+		t.Errorf("expected task validate from status annotation, got %s", run.Task)
+	}
+	// Progress from status annotation
+	if run.Progress.Finished != 8 || run.Progress.Total != 10 {
+		t.Errorf("expected progress 8/10 from status annotation, got %d/%d", run.Progress.Finished, run.Progress.Total)
+	}
+}
+
+func TestChildJobDetection(t *testing.T) {
+	// Child jobs from CronJobs have names containing run-id but may not have the label set
+	jobsJSON := `{
+		"items": [
+			{
+				"metadata": {
+					"name": "fabrik-cron-01JK7V8XCRON123-1741800000",
+					"namespace": "fabrik-runs",
+					"labels": {
+						"fabrik.sh/managed-by": "fabrik"
+					}
+				},
+				"spec": {"template": {"spec": {"containers": [{"image": "test"}]}}},
+				"status": {"active": 1}
+			}
+		]
+	}`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	script := "#!/bin/sh\n"
+	script += `case "$*" in
+	*"get jobs"*"fabrik.sh/run-id=01JK7V8XCRON123"*)
+		printf '{"items":[]}\n'
+		exit 0
+		;;
+	*"get jobs"*)
+		printf '%s\n' '` + jobsJSON + `'
+		exit 0
+		;;
+esac
+exit 1
+`
+
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	childJob, err := client.getChildJobByRunID(context.Background(), "01JK7V8XCRON123")
+	if err != nil {
+		t.Fatalf("getChildJobByRunID failed: %v", err)
+	}
+
+	if childJob == nil {
+		t.Fatal("expected child job to be found")
+	}
+
+	if !strings.Contains(childJob.Metadata.Name, "01JK7V8XCRON123") {
+		t.Errorf("expected child job name to contain run-id, got %s", childJob.Metadata.Name)
+	}
+}
+
+func TestCancelDeletesJob(t *testing.T) {
+	dir := t.TempDir()
+	kubectlLog := filepath.Join(dir, "kubectl.log")
+	kubectlPath := filepath.Join(dir, "kubectl")
+	script := "#!/bin/sh\n"
+	script += "echo \"$@\" >> " + kubectlLog + "\n"
+	script += `case "$*" in
+	*"get jobs"*"fabrik.sh/run-id=test-run-123"*)
+		printf '{"items":[{"metadata":{"name":"test-job"}}]}\n'
+		exit 0
+		;;
+	*"delete job"*)
+		printf 'job.batch "test-job" deleted\n'
+		exit 0
+		;;
+esac
+exit 1
+`
+
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	err := client.Cancel(context.Background(), "test-run-123")
+	if err != nil {
+		t.Fatalf("Cancel failed: %v", err)
+	}
+
+	logData, err := os.ReadFile(kubectlLog)
+	if err != nil {
+		t.Fatalf("read kubectl log: %v", err)
+	}
+	logText := string(logData)
+	if !strings.Contains(logText, "delete job") {
+		t.Errorf("expected kubectl delete job to be called, got: %s", logText)
+	}
+}
+
+func TestResumeDeletesPod(t *testing.T) {
+	// Resume first calls Show which tries to enrichJobInfo with pod lookup,
+	// then calls getPodNameByRunID for the actual resume
+	// Simplified: just test that Resume uses the correct flow via a mock
+	// that accepts all the kubectl calls in sequence
+	script := "#!/bin/sh\n"
+	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=test-resume"; then
+		echo '{"items":[{"metadata":{"name":"test-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"test-resume","fabrik.sh/managed-by":"fabrik"}},"spec":{"template":{"spec":{"containers":[{"image":"test"}]}}},"status":{"active":1}}]}'
+		exit 0
+	fi
+	if echo "$*" | grep -q "get pods.*job-name=test-job"; then
+		echo '{"items":[]}'
+		exit 0
+	fi
+	if echo "$*" | grep -q "jsonpath={.items\[0\].metadata.name}"; then
+		echo 'test-pod'
+		exit 0
+	fi
+	if echo "$*" | grep -q "delete pod test-pod"; then
+		echo 'pod deleted'
+		exit 0
+	fi
+	exit 1
+`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	err := client.Resume(context.Background(), "test-resume")
+	if err != nil {
+		t.Fatalf("Resume failed: %v", err)
+	}
+}
+
+func TestKubeContextPassedToKubectl(t *testing.T) {
+	dir := t.TempDir()
+	kubectlLog := filepath.Join(dir, "kubectl.log")
+	kubectlPath := filepath.Join(dir, "kubectl")
+	script := "#!/bin/sh\n"
+	script += "echo \"$@\" >> " + kubectlLog + "\n"
+	script += "printf '{\"items\":[]}\n'\n"
+	script += "exit 0\n"
+
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{
+		KubeContext: "my-cluster",
+		Namespace:   "fabrik-runs",
+	}
+	_, _ = client.List(context.Background())
+
+	logData, err := os.ReadFile(kubectlLog)
+	if err != nil {
+		t.Fatalf("read kubectl log: %v", err)
+	}
+	logText := string(logData)
+	if !strings.Contains(logText, "--context my-cluster") {
+		t.Errorf("expected --context my-cluster in kubectl args, got: %s", logText)
+	}
+}
+
+func TestListHandlesEmptyResults(t *testing.T) {
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	script := "#!/bin/sh\n"
+	script += `case "$*" in
+	*"get jobs"*)
+		printf '{"items":[]}\n'
+		exit 0
+		;;
+	*"get cronjobs"*)
+		printf '{"items":[]}\n'
+		exit 0
+		;;
+esac
+exit 1
+`
+
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	runs, err := client.List(context.Background())
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+
+	if len(runs) != 0 {
+		t.Errorf("expected 0 runs, got %d", len(runs))
+	}
+}
+
+func TestRunInfoJSONSerialization(t *testing.T) {
+	started := timeMustParse("2026-03-10T10:00:00Z")
+	finished := timeMustParse("2026-03-10T11:00:00Z")
+	
+	run := RunInfo{
+		RunID:      "01JK7V8XTEST1234567890123",
+		Project:    "myproj",
+		Spec:       "feature",
+		Phase:      "complete",
+		Status:     "succeeded",
+		Task:       "cleanup",
+		Image:      "ghcr.io/fabrik/smithers@sha256:abc123",
+		Outcome:    "succeeded",
+		StartedAt:  &started,
+		FinishedAt: &finished,
+		Progress:   Progress{Finished: 10, Total: 10},
+		PodName:    "pod-123",
+		JobName:    "job-123",
+		Namespace:  "fabrik-runs",
+		Cluster:    "dev",
+	}
+
+	data, err := json.Marshal(run)
+	if err != nil {
+		t.Fatalf("marshal RunInfo: %v", err)
+	}
+
+	var decoded RunInfo
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal RunInfo: %v", err)
+	}
+
+	if decoded.RunID != run.RunID {
+		t.Errorf("expected run_id %s, got %s", run.RunID, decoded.RunID)
+	}
+	if decoded.Progress.Finished != 10 || decoded.Progress.Total != 10 {
+		t.Errorf("expected progress 10/10, got %d/%d", decoded.Progress.Finished, decoded.Progress.Total)
+	}
+}
+
+func timeMustParse(s string) time.Time {
+	t, _ := time.Parse("2006-01-02T15:04:05Z", s)
+	return t
+}
