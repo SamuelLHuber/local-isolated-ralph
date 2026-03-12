@@ -310,7 +310,12 @@ func TestResolveOptionsInteractiveGitHubAuthCanWriteEnvFile(t *testing.T) {
 		t.Skip("kubectl not available")
 	}
 	// Verify we have at least one context available
-	if out, err := exec.Command("kubectl", "config", "get-contexts", "-o", "name").Output(); err != nil || len(out) == 0 {
+	contextsOut, err := exec.Command("kubectl", "config", "get-contexts", "-o", "name").Output()
+	if err != nil || len(contextsOut) == 0 {
+		t.Skip("no kubectl contexts available")
+	}
+	contextName := strings.TrimSpace(strings.SplitN(string(contextsOut), "\n", 2)[0])
+	if contextName == "" {
 		t.Skip("no kubectl contexts available")
 	}
 
@@ -336,6 +341,7 @@ func TestResolveOptionsInteractiveGitHubAuthCanWriteEnvFile(t *testing.T) {
 		InputJSON:          "{}",
 		JJRepo:             "https://github.com/example/private-repo",
 		Namespace:          "fabrik-runs",
+		KubeContext:        contextName,
 		PVCSize:            "1Gi",
 		WaitTimeout:        "5m",
 		Interactive:        true,

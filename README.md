@@ -27,6 +27,17 @@ Fabrik runs as k3s-native Jobs/CronJobs with k3d for local/CI testing.
 
 To test smithers for running workflows like coding a simple hello world page locally see `examples/hello-world-local/README.md`.
 
+For the compiled `fabrik` CLI install path and release artifact names, see [`src/fabrik-cli/docs/getting-started.md`](/Users/samuel/git/local-isolated-ralph/src/fabrik-cli/docs/getting-started.md).
+
+## Releasing
+
+`fabrik` v0.1.0 is distributed through GitHub Releases.
+
+- Release automation lives in [`.github/workflows/release.yml`](/Users/samuel/git/local-isolated-ralph/.github/workflows/release.yml).
+- Trigger a release by pushing a tag in the form `v0.1.0`, or by running the workflow manually and supplying the same tag format in the `tag` input.
+- The release workflow publishes the compiled `fabrik-*` binaries plus `fabrik-sha256.txt`.
+- `fabrik version` should report the release version embedded from that tag, for example `0.1.0` for the `v0.1.0` release.
+
 ## Local Testing
 
 For local testing use [k3d](https://k3d.io).
