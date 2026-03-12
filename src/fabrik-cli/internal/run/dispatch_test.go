@@ -153,6 +153,9 @@ func TestExecuteRenderOnlyWithFabrikSyncRendersSecretAndBootstrap(t *testing.T) 
 	if !strings.Contains(rendered, "kind: RoleBinding") {
 		t.Fatalf("expected rendered manifest to include workflow role binding")
 	}
+	if !strings.Contains(rendered, "resources: [\"persistentvolumeclaims\"]") {
+		t.Fatalf("expected rendered manifest to grant pvc access to workflow runner role")
+	}
 	if !strings.Contains(rendered, "serviceAccountName: fabrik-runner-run-2") {
 		t.Fatalf("expected workflow pod to use per-run service account")
 	}
