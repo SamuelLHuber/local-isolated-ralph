@@ -339,7 +339,7 @@ export function verifierCommands(item: TodoItem, workdir: string): string[] {
   }
 
   if (
-    item.id === "env-promotion" ||
+    item.id === "env-promotion-protected-environments" ||
     item.id === "retention-cleanup" ||
     item.id === "security-hardening-alignment" ||
     item.id === "observability-loki" ||
@@ -827,6 +827,17 @@ function TodoItemPipeline({
     completionSnapshotted &&
     bookmarkPushed &&
     !completionReported;
+  const latestImplementationValidated =
+    latestImplementIteration >= 0 &&
+    latestValidationIteration >= latestImplementIteration &&
+    latestValidate?.allPassed === true;
+  const latestImplementationNeedsReview =
+    latestImplementationValidated &&
+    latestReviewIteration < latestValidationIteration;
+  const latestImplementationHasReviewIssues =
+    latestImplementationValidated &&
+    latestReviewIteration >= latestValidationIteration &&
+    reviewIssuesForLatestValidation.length > 0;
   const needsImplementation =
     !blocked &&
     !readyToFinalize &&
@@ -834,9 +845,7 @@ function TodoItemPipeline({
       latestImplementIteration < 0 ||
       (latestValidationIteration >= latestImplementIteration &&
         latestValidate?.allPassed === false) ||
-      (latestReviewIteration >= latestValidationIteration &&
-        reviewIssuesForLatestValidation.length > 0 &&
-        latestImplementIteration <= latestValidationIteration)
+      latestImplementationHasReviewIssues
     );
   const needsValidation =
     !blocked &&
@@ -848,8 +857,7 @@ function TodoItemPipeline({
     !readyToFinalize &&
     !needsImplementation &&
     !needsValidation &&
-    latestValidate?.allPassed === true &&
-    latestReviewIteration < latestValidationIteration;
+    latestImplementationNeedsReview;
   return Sequence({
     key: item.id,
     children: [

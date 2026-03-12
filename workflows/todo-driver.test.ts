@@ -310,7 +310,7 @@ test("verification-map verifier uses portable search commands", () => {
 
 test("remaining todo items fall back to deterministic repo-wide verification", () => {
   for (const id of [
-    "env-promotion",
+    "env-promotion-protected-environments",
     "retention-cleanup",
     "security-hardening-alignment",
     "observability-loki",
