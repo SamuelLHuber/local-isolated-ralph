@@ -311,11 +311,25 @@ function latestPlannedItems(ctx: WorkflowCtx): TodoItem[] {
   return items;
 }
 
+function currentTodoItemsFromFile(): TodoItem[] {
+  const parsedItems = parseTodoItems(TODO_PATH);
+  const pendingItems = parsedItems.filter((item) => item.status !== "done");
+  return MAX_TODO_ITEMS > 0 ? pendingItems.slice(0, MAX_TODO_ITEMS) : pendingItems;
+}
+
+function latestFinishingItem(ctx: WorkflowCtx): TodoItem | null {
+  for (const item of latestPlannedItems(ctx)) {
+    if (!latestReportDone(ctx, `${item.id}:complete-report`)) return item;
+  }
+  return null;
+}
+
+function currentTodoItem(ctx: WorkflowCtx): TodoItem | null {
+  return currentTodoItemsFromFile()[0] ?? latestFinishingItem(ctx);
+}
+
 function todoLoopComplete(ctx: WorkflowCtx): boolean {
-  const report = ctx.latest("report", "todo-loop-complete") as
-    | z.infer<typeof reportSchema>
-    | undefined;
-  return report?.status === "done";
+  return currentTodoItem(ctx) === null;
 }
 
 function latestOutputRow<T>(
@@ -512,6 +526,16 @@ function TodoItemPipeline({
     reviewMinimumIteration,
   );
   const todoMarkedDone = latestReportDone(ctx, `${item.id}:mark-todo-done`);
+  const completionSnapshotted = latestReportDone(
+    ctx,
+    `${item.id}:snapshot-complete`,
+  );
+  const bookmarkPushed =
+    !jjBookmark || latestReportDone(ctx, `${item.id}:push-bookmark`);
+  const completionReported = latestReportDone(
+    ctx,
+    `${item.id}:complete-report`,
+  );
   const blocked = item.blockedReason !== null;
   const needsImplementation =
     !implemented || (validationCurrent && !validationPassed) || issues.length > 0;
@@ -528,8 +552,21 @@ function TodoItemPipeline({
     !needsImplementation &&
     validationCurrent &&
     validationPassed &&
-    approved &&
-    !todoMarkedDone;
+    approved;
+  const needsMarkTodoDone = readyToFinalize && !todoMarkedDone;
+  const needsCompletionSnapshot =
+    readyToFinalize && todoMarkedDone && !completionSnapshotted;
+  const needsBookmarkPush =
+    readyToFinalize &&
+    todoMarkedDone &&
+    completionSnapshotted &&
+    !bookmarkPushed;
+  const needsCompletionReport =
+    readyToFinalize &&
+    todoMarkedDone &&
+    completionSnapshotted &&
+    bookmarkPushed &&
+    !completionReported;
 
   return Sequence({
     key: item.id,
@@ -681,7 +718,7 @@ Return ONLY JSON matching the schema.`,
       }),
 
       Branch({
-        if: readyToFinalize,
+        if: needsMarkTodoDone,
         then: Sequence({
           children: [
             Task({
@@ -703,14 +740,28 @@ Return ONLY JSON matching the schema.`,
               };
               },
             }),
+          ],
+        }),
+      }),
 
+      Branch({
+        if: needsCompletionSnapshot,
+        then: Sequence({
+          children: [
             Task({
               id: `${item.id}:snapshot-complete`,
               output: outputs.report,
               timeoutMs: 60_000,
               children: () => snapshotChange(workdir, item.id, "complete"),
             }),
+          ],
+        }),
+      }),
 
+      Branch({
+        if: needsBookmarkPush,
+        then: Sequence({
+          children: [
             Task({
               id: `${item.id}:push-bookmark`,
               output: outputs.report,
@@ -718,7 +769,14 @@ Return ONLY JSON matching the schema.`,
               skipIf: !jjBookmark,
               children: () => pushBookmark(workdir, FEATURE_BOOKMARK, item.id),
             }),
+          ],
+        }),
+      }),
 
+      Branch({
+        if: needsCompletionReport,
+        then: Sequence({
+          children: [
             Task({
               id: `${item.id}:complete-report`,
               output: outputs.report,
@@ -736,8 +794,7 @@ Return ONLY JSON matching the schema.`,
 }
 
 export default smithers((ctx) => {
-  const items = latestPlannedItems(ctx);
-  const currentItem = items[0] ?? null;
+  const currentItem = currentTodoItem(ctx);
 
   return Workflow({
     name: "todo-driver",

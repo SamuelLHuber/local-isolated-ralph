@@ -321,7 +321,6 @@ test("todo-driver schedules finalization after reviewers approve", () => {
 
   const ids = collectTaskIDs(workflow.build(ctx));
   expect(ids).toContain("runs-inspection:mark-todo-done");
-  expect(ids).toContain("runs-inspection:snapshot-complete");
   expect(ids).not.toContain("runs-inspection:implement");
 });
 
@@ -564,4 +563,298 @@ test("todo-driver requires fresh reviews after a new validation pass", () => {
   expect(ids).toContain("runs-inspection:review:maintainability");
   expect(ids).toContain("runs-inspection:review:verification");
   expect(ids).not.toContain("runs-inspection:mark-todo-done");
+});
+
+test("todo-driver snapshots completion after marking todo done", () => {
+  const ctx = buildContext({
+    runId: "preview",
+    iteration: 5,
+    iterations: {},
+    input: {},
+    outputs: {
+      todoPlan: [
+        {
+          nodeId: "plan-todo-loop",
+          iteration: 4,
+          items: [
+            {
+              id: "runs-inspection",
+              title: "Runs Inspection",
+              status: "pending",
+              task: "Inspect runs from Kubernetes.",
+              specTieIn: ["orchestrator metadata"],
+              guarantees: ["list reflects cluster state"],
+              verificationToBuildFirst: ["add deterministic tests"],
+              requiredChecks: ["`make verify-cli`"],
+              documentationUpdates: [],
+              blockedReason: null,
+            },
+          ],
+        },
+      ],
+      implement: [
+        {
+          nodeId: "runs-inspection:implement",
+          iteration: 4,
+          summary: "implemented",
+          changes: [],
+          verification: [],
+          documentation: [],
+        },
+      ],
+      validate: [
+        {
+          nodeId: "runs-inspection:validate",
+          iteration: 4,
+          allPassed: true,
+          commands: [],
+          evidence: [],
+          failingSummary: null,
+        },
+      ],
+      review: [
+        {
+          nodeId: "runs-inspection:review:spec-alignment",
+          iteration: 4,
+          reviewer: "Spec Alignment",
+          approved: true,
+          issues: [],
+          requiredFollowUps: [],
+        },
+        {
+          nodeId: "runs-inspection:review:maintainability",
+          iteration: 4,
+          reviewer: "Maintainability",
+          approved: true,
+          issues: [],
+          requiredFollowUps: [],
+        },
+        {
+          nodeId: "runs-inspection:review:verification",
+          iteration: 4,
+          reviewer: "Verification",
+          approved: true,
+          issues: [],
+          requiredFollowUps: [],
+        },
+      ],
+      report: [
+        {
+          nodeId: "runs-inspection:mark-todo-done",
+          iteration: 4,
+          ticketId: "runs-inspection",
+          status: "done",
+          summary: "Marked done",
+        },
+      ],
+    },
+    zodToKeyName: workflow.zodToKeyName,
+  });
+
+  const ids = collectTaskIDs(workflow.build(ctx));
+  expect(ids).toContain("runs-inspection:snapshot-complete");
+  expect(ids).not.toContain("runs-inspection:mark-todo-done");
+});
+
+test("todo-driver emits a completion report after completion snapshot when no bookmark is configured", () => {
+  const ctx = buildContext({
+    runId: "preview",
+    iteration: 6,
+    iterations: {},
+    input: {},
+    outputs: {
+      todoPlan: [
+        {
+          nodeId: "plan-todo-loop",
+          iteration: 4,
+          items: [
+            {
+              id: "runs-inspection",
+              title: "Runs Inspection",
+              status: "pending",
+              task: "Inspect runs from Kubernetes.",
+              specTieIn: ["orchestrator metadata"],
+              guarantees: ["list reflects cluster state"],
+              verificationToBuildFirst: ["add deterministic tests"],
+              requiredChecks: ["`make verify-cli`"],
+              documentationUpdates: [],
+              blockedReason: null,
+            },
+          ],
+        },
+      ],
+      implement: [
+        {
+          nodeId: "runs-inspection:implement",
+          iteration: 4,
+          summary: "implemented",
+          changes: [],
+          verification: [],
+          documentation: [],
+        },
+      ],
+      validate: [
+        {
+          nodeId: "runs-inspection:validate",
+          iteration: 4,
+          allPassed: true,
+          commands: [],
+          evidence: [],
+          failingSummary: null,
+        },
+      ],
+      review: [
+        {
+          nodeId: "runs-inspection:review:spec-alignment",
+          iteration: 4,
+          reviewer: "Spec Alignment",
+          approved: true,
+          issues: [],
+          requiredFollowUps: [],
+        },
+        {
+          nodeId: "runs-inspection:review:maintainability",
+          iteration: 4,
+          reviewer: "Maintainability",
+          approved: true,
+          issues: [],
+          requiredFollowUps: [],
+        },
+        {
+          nodeId: "runs-inspection:review:verification",
+          iteration: 4,
+          reviewer: "Verification",
+          approved: true,
+          issues: [],
+          requiredFollowUps: [],
+        },
+      ],
+      report: [
+        {
+          nodeId: "runs-inspection:mark-todo-done",
+          iteration: 4,
+          ticketId: "runs-inspection",
+          status: "done",
+          summary: "Marked done",
+        },
+        {
+          nodeId: "runs-inspection:snapshot-complete",
+          iteration: 5,
+          ticketId: "runs-inspection",
+          status: "done",
+          summary: "Snapshotted completion",
+        },
+      ],
+    },
+    zodToKeyName: workflow.zodToKeyName,
+  });
+
+  const ids = collectTaskIDs(workflow.build(ctx));
+  expect(ids).toContain("runs-inspection:complete-report");
+  expect(ids).not.toContain("runs-inspection:snapshot-complete");
+});
+
+test("todo-driver emits a completion report after bookmark push", () => {
+  const ctx = buildContext({
+    runId: "preview",
+    iteration: 7,
+    iterations: {},
+    input: {},
+    outputs: {
+      todoPlan: [
+        {
+          nodeId: "plan-todo-loop",
+          iteration: 4,
+          items: [
+            {
+              id: "runs-inspection",
+              title: "Runs Inspection",
+              status: "pending",
+              task: "Inspect runs from Kubernetes.",
+              specTieIn: ["orchestrator metadata"],
+              guarantees: ["list reflects cluster state"],
+              verificationToBuildFirst: ["add deterministic tests"],
+              requiredChecks: ["`make verify-cli`"],
+              documentationUpdates: [],
+              blockedReason: null,
+            },
+          ],
+        },
+      ],
+      implement: [
+        {
+          nodeId: "runs-inspection:implement",
+          iteration: 4,
+          summary: "implemented",
+          changes: [],
+          verification: [],
+          documentation: [],
+        },
+      ],
+      validate: [
+        {
+          nodeId: "runs-inspection:validate",
+          iteration: 4,
+          allPassed: true,
+          commands: [],
+          evidence: [],
+          failingSummary: null,
+        },
+      ],
+      review: [
+        {
+          nodeId: "runs-inspection:review:spec-alignment",
+          iteration: 4,
+          reviewer: "Spec Alignment",
+          approved: true,
+          issues: [],
+          requiredFollowUps: [],
+        },
+        {
+          nodeId: "runs-inspection:review:maintainability",
+          iteration: 4,
+          reviewer: "Maintainability",
+          approved: true,
+          issues: [],
+          requiredFollowUps: [],
+        },
+        {
+          nodeId: "runs-inspection:review:verification",
+          iteration: 4,
+          reviewer: "Verification",
+          approved: true,
+          issues: [],
+          requiredFollowUps: [],
+        },
+      ],
+      report: [
+        {
+          nodeId: "runs-inspection:mark-todo-done",
+          iteration: 4,
+          ticketId: "runs-inspection",
+          status: "done",
+          summary: "Marked done",
+        },
+        {
+          nodeId: "runs-inspection:snapshot-complete",
+          iteration: 5,
+          ticketId: "runs-inspection",
+          status: "done",
+          summary: "Snapshotted completion",
+        },
+        {
+          nodeId: "runs-inspection:push-bookmark",
+          iteration: 6,
+          ticketId: "runs-inspection",
+          status: "done",
+          summary: "Pushed bookmark",
+        },
+      ],
+    },
+    zodToKeyName: workflow.zodToKeyName,
+  });
+
+  const ids = collectTaskIDs(workflow.build(ctx));
+  expect(ids).toContain("runs-inspection:complete-report");
+  expect(ids).not.toContain("runs-inspection:push-bookmark");
 });
