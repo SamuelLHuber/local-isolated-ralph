@@ -30,6 +30,9 @@ const jjBookmark = process.env.SMITHERS_JJ_BOOKMARK?.trim() ?? "";
 
 const MAX_REVIEW_ROUNDS = Number(process.env.MAX_REVIEW_ROUNDS ?? "8");
 const MAX_TODO_ITEMS = Number(process.env.MAX_TODO_ITEMS ?? "1");
+const MAX_TODO_LOOP_ITERATIONS = Number(
+  process.env.MAX_TODO_LOOP_ITERATIONS ?? "64",
+);
 const TASK_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const REVIEW_TIMEOUT_MS = 60 * 60 * 1000;
 const FEATURE_BOOKMARK = jjBookmark || "feat/todo-driver";
@@ -1118,29 +1121,66 @@ export default smithers((ctx) => {
           },
         }),
 
-        Task({
-          key: "plan-todo-loop",
-          id: "plan-todo-loop",
-          output: outputs.todoPlan,
-          children: () => {
-            const parsedItems = parseTodoItems(TODO_PATH);
-            const pendingItems = parsedItems.filter((item) => item.status !== "done");
-            const limitedItems =
-              MAX_TODO_ITEMS > 0
-                ? pendingItems.slice(0, MAX_TODO_ITEMS)
-                : pendingItems;
+        Ralph({
+          key: "todo-backlog-loop",
+          id: "todo-backlog-loop",
+          until: currentItem === null,
+          maxIterations: MAX_TODO_LOOP_ITERATIONS,
+          onMaxReached: "return-last",
+          children: Sequence({
+            key: "todo-backlog-sequence",
+            children: [
+              Task({
+                key: "plan-todo-loop",
+                id: "plan-todo-loop",
+                output: outputs.todoPlan,
+                children: () => {
+                  const parsedItems = parseTodoItems(TODO_PATH);
+                  const pendingItems = parsedItems.filter(
+                    (item) => item.status !== "done",
+                  );
+                  const limitedItems =
+                    MAX_TODO_ITEMS > 0
+                      ? pendingItems.slice(0, MAX_TODO_ITEMS)
+                      : pendingItems;
 
-            return {
-              todoPath: TODO_PATH,
-              totalItems: parsedItems.length,
-              selectedItems: limitedItems.length,
-              items: limitedItems,
-            };
-          },
+                  return {
+                    todoPath: TODO_PATH,
+                    totalItems: parsedItems.length,
+                    selectedItems: limitedItems.length,
+                    items: limitedItems,
+                  };
+                },
+              }),
+
+              Branch({
+                key: "todo-loop-branch",
+                if: currentItem === null,
+                then: null,
+                else: Sequence({
+                  key: "todo-item-sequence",
+                  children: currentItem?.blockedReason
+                    ? [
+                        Task({
+                          key: `${currentItem.id}:blocked`,
+                          id: `${currentItem.id}:blocked`,
+                          output: outputs.report,
+                          children: {
+                            ticketId: currentItem.id,
+                            status: "blocked",
+                            summary: currentItem.blockedReason,
+                          },
+                        }),
+                      ]
+                    : [currentItem ? TodoItemPipeline({ item: currentItem, ctx }) : null],
+                }),
+              }),
+            ],
+          }),
         }),
 
         Branch({
-          key: "todo-loop-branch",
+          key: "todo-loop-complete-branch",
           if: currentItem === null,
           then: Task({
             key: "todo-loop-complete",
@@ -1151,23 +1191,6 @@ export default smithers((ctx) => {
               status: "done",
               summary: "No pending todo items remain.",
             },
-          }),
-          else: Sequence({
-            key: "todo-item-sequence",
-            children: currentItem?.blockedReason
-              ? [
-                  Task({
-                    key: `${currentItem.id}:blocked`,
-                    id: `${currentItem.id}:blocked`,
-                    output: outputs.report,
-                    children: {
-                      ticketId: currentItem.id,
-                      status: "blocked",
-                      summary: currentItem.blockedReason,
-                    },
-                  }),
-                ]
-              : [currentItem ? TodoItemPipeline({ item: currentItem, ctx }) : null],
           }),
         }),
       ],

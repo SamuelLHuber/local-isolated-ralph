@@ -219,6 +219,21 @@ test("todo-driver builds a Smithers workflow from context", () => {
   expect(tree).toBeTruthy();
 });
 
+test("todo-driver wraps planning in a backlog Ralph loop", () => {
+  const ctx = buildContext({
+    runId: "preview",
+    iteration: 0,
+    iterations: {},
+    input: {},
+    outputs: {},
+    zodToKeyName: workflow.zodToKeyName,
+  });
+
+  const ids = collectTaskIDs(workflow.build(ctx));
+  expect(ids).toContain("todo-backlog-loop");
+  expect(ids).toContain("plan-todo-loop");
+});
+
 test("repo reset command preserves smithers state", () => {
   const command = repoResetCommand("/workspace/workdir");
   expect(command).toContain("! -name .smithers");

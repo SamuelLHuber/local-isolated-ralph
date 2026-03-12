@@ -136,14 +136,36 @@ export async function pushBookmark(
   bookmarkName: string,
   ticketId: string,
 ): Promise<ReportOutput> {
+  const targetRev = "@-";
+  const track = await jj(
+    ["bookmark", "track", bookmarkName, "--remote", "origin"],
+    workspacePath,
+  );
+  const trackSummary =
+    track.ok || track.stderr === ""
+      ? ""
+      : ` Tracking remote bookmark reported: ${track.stderr}`;
+
+  const targetCommit = await jj(
+    ["log", "-r", targetRev, "--no-graph", "-T", "commit_id"],
+    workspacePath,
+  );
+  if (!targetCommit.ok || !targetCommit.stdout) {
+    return {
+      ticketId,
+      status: "blocked",
+      summary: `Failed to resolve target revision for bookmark push: ${targetCommit.stderr}`,
+    };
+  }
+
   const move = await jj(
-    ["bookmark", "move", "-r", "@", bookmarkName],
+    ["bookmark", "set", bookmarkName, "-r", targetRev, "--allow-backwards"],
     workspacePath,
   );
 
   if (!move.ok) {
     const create = await jj(
-      ["bookmark", "create", "-r", "@", bookmarkName],
+      ["bookmark", "create", "-r", targetRev, bookmarkName],
       workspacePath,
     );
     if (!create.ok) {
@@ -163,13 +185,28 @@ export async function pushBookmark(
     return {
       ticketId,
       status: "blocked",
-      summary: `Bookmark set but push failed: ${push.stderr}`,
+      summary: `Bookmark set but push failed: ${push.stderr}${trackSummary}`,
+    };
+  }
+
+  const remote = await $`git ls-remote origin refs/heads/${bookmarkName}`
+    .cwd(workspacePath)
+    .nothrow()
+    .quiet();
+  const remoteCommit = remote.stdout.toString().trim().split(/\s+/)[0] ?? "";
+  if (remote.exitCode !== 0 || remoteCommit !== targetCommit.stdout) {
+    return {
+      ticketId,
+      status: "blocked",
+      summary:
+        `Bookmark push returned success but remote ${bookmarkName} is ${remoteCommit || "missing"} instead of ${targetCommit.stdout}.` +
+        trackSummary,
     };
   }
 
   return {
     ticketId,
     status: "done",
-    summary: `Pushed bookmark '${bookmarkName}' to origin.`,
+    summary: `Pushed bookmark '${bookmarkName}' to origin at ${targetCommit.stdout}.${trackSummary}`,
   };
 }
