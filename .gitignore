@@ -6,6 +6,7 @@ node_modules/
 .tmp-staged/
 .tmp-staged-clean/
 NEXTSTEPS.md
+.claude/settings.local.json
 /workflows/*
 !/workflows/README.md
 !/workflows/*.ts
