@@ -82,6 +82,12 @@ const reviewFixSchema = z.object({
   unresolvedIssues: z.array(z.string()),
 });
 
+const reviewContextSchema = z.object({
+  changedFiles: z.array(z.string()),
+  diffSummary: z.array(z.string()),
+  diffPatch: z.string(),
+});
+
 const reportSchema = z.object({
   ticketId: z.string(),
   status: z.enum(["done", "partial", "blocked"]),
@@ -95,6 +101,7 @@ const { smithers, outputs } = createSmithers(
     validate: validateSchema,
     review: reviewSchema,
     reviewFix: reviewFixSchema,
+    reviewContext: reviewContextSchema,
     report: reportSchema,
   },
   { dbPath: DB_PATH },
@@ -102,6 +109,7 @@ const { smithers, outputs } = createSmithers(
 
 type Review = z.infer<typeof reviewSchema>;
 type ReviewFix = z.infer<typeof reviewFixSchema>;
+type ReviewContext = z.infer<typeof reviewContextSchema>;
 type Validate = z.infer<typeof validateSchema>;
 type WorkflowCtx = Parameters<Parameters<typeof smithers>[0]>[0];
 
@@ -539,7 +547,11 @@ function ReviewGroup({
     `${item.id}:implement`,
   );
   const latestValidate = latestValidation(ctx, item.id);
-  const relevantChangedFiles = filterRelevantRepoPaths(latestImplement?.changes ?? []);
+  const reviewContext = latestOutputRow<ReviewContext>(
+    ctx,
+    "reviewContext",
+    `${item.id}:review-context`,
+  );
 
   if (!latestValidate?.allPassed) return null;
 
@@ -553,11 +565,7 @@ function ReviewGroup({
         timeoutMs: REVIEW_TIMEOUT_MS,
         retries: 1,
         continueOnFail: true,
-        children: async () => {
-          const diffSummary = await latestSnapshotDiffSummary(workdir);
-          const diffPatch = await latestSnapshotDiffPatch(workdir);
-
-          return `Reviewer: ${reviewer.title}
+        children: `Reviewer: ${reviewer.title}
 
 Use this reviewer rubric:
 ${reviewer.prompt}
@@ -584,13 +592,13 @@ Latest implementation summary:
 ${latestImplement?.summary ?? "- none"}
 
 Latest changed files:
-${relevantChangedFiles.length > 0 ? relevantChangedFiles.map((entry) => `- ${entry}`).join("\n") : "- none"}
+${reviewContext?.changedFiles?.length ? reviewContext.changedFiles.map((entry) => `- ${entry}`).join("\n") : "- none"}
 
 Relevant JJ diff summary for the latest snapshotted change (@-):
-${diffSummary.length > 0 ? diffSummary.map((entry) => `- ${entry}`).join("\n") : "- none"}
+${reviewContext?.diffSummary?.length ? reviewContext.diffSummary.map((entry) => `- ${entry}`).join("\n") : "- none"}
 
 Relevant JJ patch for the latest snapshotted change (@-):
-${diffPatch || "- none"}
+${reviewContext?.diffPatch || "- none"}
 
 Latest validation evidence:
 ${latestValidate.evidence.length > 0 ? latestValidate.evidence.map((entry) => `- ${entry}`).join("\n") : "- validation passed without extra evidence"}
@@ -608,8 +616,7 @@ Return ONLY a JSON object with these fields:
 - reviewer: string
 - approved: boolean
 - issues: string[]
-- requiredFollowUps: string[]`;
-        },
+- requiredFollowUps: string[]`,
       }),
     ),
   });
@@ -849,6 +856,28 @@ Return ONLY JSON matching the schema.`,
                     timeoutMs: TASK_TIMEOUT_MS,
                     retries: 1,
                     children: () => runTodoValidation(item),
+                  }),
+
+                  Task({
+                    id: `${item.id}:review-context`,
+                    output: outputs.reviewContext,
+                    timeoutMs: 60_000,
+                    children: async () => {
+                      const diffSummary = await latestSnapshotDiffSummary(workdir);
+                      const diffPatch = await latestSnapshotDiffPatch(workdir);
+                      const changedFiles = filterRelevantRepoPaths(
+                        latestOutputRow<z.infer<typeof implementSchema>>(
+                          ctx,
+                          "implement",
+                          `${item.id}:implement`,
+                        )?.changes ?? [],
+                      );
+                      return {
+                        changedFiles,
+                        diffSummary,
+                        diffPatch,
+                      };
+                    },
                   }),
 
                   ReviewGroup({ item, ctx }),
