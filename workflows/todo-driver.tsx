@@ -783,6 +783,23 @@ function TodoItemPipeline({
   );
   const latestValidate = latestValidation(ctx, item.id);
   const latestFix = latestReviewFix(ctx, item.id);
+  const latestImplementIteration =
+    latestOutputIteration(ctx, "implement", `${item.id}:implement`) ?? -1;
+  const latestValidationIteration =
+    latestOutputIteration(ctx, "validate", `${item.id}:validate`) ?? -1;
+  const latestReviewFixIteration =
+    latestOutputIteration(ctx, "reviewFix", `${item.id}:review-fix`) ?? -1;
+  const latestReviewIteration = Math.max(
+    ...REVIEWERS.map(
+      (reviewer) =>
+        latestOutputIteration(ctx, "review", `${item.id}:review:${reviewer.id}`) ??
+        -1,
+    ),
+  );
+  const reviewIssuesForLatestValidation =
+    latestValidationIteration >= 0
+      ? collectReviewIssues(ctx, item.id, REVIEWERS, latestValidationIteration)
+      : [];
   const issues = collectReviewIssues(ctx, item.id, REVIEWERS);
   const approved = itemLoopApproved(ctx, item.id);
   const todoMarkedDone = latestReportDone(ctx, `${item.id}:mark-todo-done`);
@@ -812,6 +829,36 @@ function TodoItemPipeline({
     completionSnapshotted &&
     bookmarkPushed &&
     !completionReported;
+  const needsImplementation =
+    !blocked &&
+    !readyToFinalize &&
+    (
+      latestImplementIteration < 0 ||
+      latestReviewFixIteration > latestImplementIteration ||
+      (latestValidationIteration >= latestImplementIteration &&
+        latestValidate?.allPassed === false)
+    );
+  const needsValidation =
+    !blocked &&
+    !readyToFinalize &&
+    !needsImplementation &&
+    latestImplementIteration > latestValidationIteration;
+  const needsReview =
+    !blocked &&
+    !readyToFinalize &&
+    !needsImplementation &&
+    !needsValidation &&
+    latestValidate?.allPassed === true &&
+    latestReviewIteration < latestValidationIteration;
+  const needsReviewFix =
+    !blocked &&
+    !readyToFinalize &&
+    !needsImplementation &&
+    !needsValidation &&
+    !needsReview &&
+    latestValidate?.allPassed === true &&
+    reviewIssuesForLatestValidation.length > 0 &&
+    latestReviewFixIteration < latestReviewIteration;
 
   return Sequence({
     key: item.id,
@@ -831,28 +878,19 @@ function TodoItemPipeline({
       }),
 
       Branch({
-        key: `${item.id}:loop-branch`,
-        if: !blocked && !readyToFinalize,
+        key: `${item.id}:implement-branch`,
+        if: needsImplementation,
         then: Sequence({
-          key: `${item.id}:loop-sequence`,
+          key: `${item.id}:implement-sequence`,
           children: [
-            Ralph({
-              key: `${item.id}:implement-review-loop`,
-              id: `${item.id}:implement-review-loop`,
-              until: itemLoopApproved(ctx, item.id),
-              maxIterations: MAX_REVIEW_ROUNDS,
-              onMaxReached: "return-last",
-              children: Sequence({
-                key: `${item.id}:implement-review-sequence`,
-                children: [
-                  Task({
-                    key: `${item.id}:implement`,
-                    id: `${item.id}:implement`,
-                    output: outputs.implement,
-                    agent: piWriteAt(workdir),
-                    timeoutMs: TASK_TIMEOUT_MS,
-                    retries: 1,
-                    children: `Implement the next todo item in this repository:
+            Task({
+              key: `${item.id}:implement`,
+              id: `${item.id}:implement`,
+              output: outputs.implement,
+              agent: piWriteAt(workdir),
+              timeoutMs: TASK_TIMEOUT_MS,
+              retries: 1,
+              children: `Implement the next todo item in this repository:
 ${workdir}
 
 Todo item:
@@ -913,52 +951,86 @@ Rules:
 - Treat those cluster checks as supporting evidence, not as a replacement for the deterministic validation gate.
 
 Return ONLY JSON matching the schema.`,
-                  }),
-
-                  Task({
-                    key: `${item.id}:snapshot-implement`,
-                    id: `${item.id}:snapshot-implement`,
-                    output: outputs.report,
-                    timeoutMs: 60_000,
-                    children: () => snapshotChange(workdir, item.id, "implement"),
-                  }),
-
-                  Task({
-                    key: `${item.id}:validate`,
-                    id: `${item.id}:validate`,
-                    output: outputs.validate,
-                    timeoutMs: TASK_TIMEOUT_MS,
-                    retries: 1,
-                    children: () => runTodoValidation(item),
-                  }),
-
-                  Task({
-                    key: `${item.id}:review-context`,
-                    id: `${item.id}:review-context`,
-                    output: outputs.reviewContext,
-                    timeoutMs: 60_000,
-                    children: async () => {
-                      const diffSummary = await latestSnapshotDiffSummary(workdir);
-                      const changedFiles = filterRelevantRepoPaths(
-                        latestOutputRow<z.infer<typeof implementSchema>>(
-                          ctx,
-                          "implement",
-                          `${item.id}:implement`,
-                        )?.changes ?? [],
-                      );
-                      return {
-                        changedFiles,
-                        diffSummary,
-                      };
-                    },
-                  }),
-
-                  withNodeKey(ReviewGroup({ item, ctx }), `${item.id}:review-group`),
-                  withNodeKey(ReviewFixStep({ item, ctx }), `${item.id}:review-fix`),
-                ],
-              }),
+            }),
+            Task({
+              key: `${item.id}:snapshot-implement`,
+              id: `${item.id}:snapshot-implement`,
+              output: outputs.report,
+              timeoutMs: 60_000,
+              children: () => snapshotChange(workdir, item.id, "implement"),
             }),
           ],
+        }),
+      }),
+
+      Branch({
+        key: `${item.id}:validate-branch`,
+        if: needsValidation,
+        then: Task({
+          key: `${item.id}:validate`,
+          id: `${item.id}:validate`,
+          output: outputs.validate,
+          timeoutMs: TASK_TIMEOUT_MS,
+          retries: 1,
+          children: () => runTodoValidation(item),
+        }),
+      }),
+
+      Branch({
+        key: `${item.id}:review-branch`,
+        if: needsReview,
+        then: Sequence({
+          key: `${item.id}:review-sequence`,
+          children: [
+            Task({
+              key: `${item.id}:review-context`,
+              id: `${item.id}:review-context`,
+              output: outputs.reviewContext,
+              timeoutMs: 60_000,
+              children: async () => {
+                const diffSummary = await latestSnapshotDiffSummary(workdir);
+                const changedFiles = filterRelevantRepoPaths(
+                  latestOutputRow<z.infer<typeof implementSchema>>(
+                    ctx,
+                    "implement",
+                    `${item.id}:implement`,
+                  )?.changes ?? [],
+                );
+                return {
+                  changedFiles,
+                  diffSummary,
+                };
+              },
+            }),
+            withNodeKey(ReviewGroup({ item, ctx }), `${item.id}:review-group`),
+          ],
+        }),
+      }),
+
+      Branch({
+        key: `${item.id}:review-fix-branch`,
+        if: needsReviewFix,
+        then: withNodeKey(ReviewFixStep({ item, ctx }), `${item.id}:review-fix`),
+      }),
+
+      Branch({
+        key: `${item.id}:idle-branch`,
+        if:
+          !blocked &&
+          !readyToFinalize &&
+          !needsImplementation &&
+          !needsValidation &&
+          !needsReview &&
+          !needsReviewFix,
+        then: Task({
+          key: `${item.id}:idle-report`,
+          id: `${item.id}:idle-report`,
+          output: outputs.report,
+          children: {
+            ticketId: item.id,
+            status: "partial",
+            summary: `No executable step selected for ${item.id}; waiting for the next backlog iteration.`,
+          },
         }),
       }),
 
@@ -974,18 +1046,18 @@ Return ONLY JSON matching the schema.`,
               output: outputs.report,
               timeoutMs: 60_000,
               children: () => {
-              const validate = latestValidation(ctx, item.id);
-              markTodoItemDone(resolve(workdir, "todo.md"), item.id, {
-                runID: process.env.SMITHERS_RUN_ID?.trim() ?? "",
-                verificationSummary:
-                  validate?.evidence?.[2] ??
-                  `In-cluster verification passed for ${item.id}.`,
-              });
-              return {
-                ticketId: item.id,
-                status: "done",
-                summary: `Marked ${item.id} as done in todo.md after validation.`,
-              };
+                const validate = latestValidation(ctx, item.id);
+                markTodoItemDone(resolve(workdir, "todo.md"), item.id, {
+                  runID: process.env.SMITHERS_RUN_ID?.trim() ?? "",
+                  verificationSummary:
+                    validate?.evidence?.[2] ??
+                    `In-cluster verification passed for ${item.id}.`,
+                });
+                return {
+                  ticketId: item.id,
+                  status: "done",
+                  summary: `Marked ${item.id} as done in todo.md after validation.`,
+                };
               },
             }),
           ],
