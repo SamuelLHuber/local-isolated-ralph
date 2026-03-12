@@ -25,12 +25,14 @@ What it does:
 - stages workflow code under `/workspace/.fabrik/workflows`
 - clones the target repo into `/workspace/workdir`
 - reads `todo.md` from the cloned repo root
-- selects the next highest-priority unfinished todo item
+- runs a single monolithic Ralph loop that always picks the next highest-priority unfinished todo item
 - blocks if the todo item is missing `Spec tie-in`, `Guarantees`, `Verification to build first`, or `Required checks`
-- creates JJ workspaces deterministically
-- snapshots progress with JJ after implementation and review-fix phases
+- uses the repo working copy itself as the JJ-backed execution workspace
+- snapshots progress with JJ after each implementation loop and after completion
+- marks a completed item in `todo.md` as `## <n>. Title [done]` only after verifier success and review approval
 - validates through same-cluster child verification Jobs instead of trusting agent summaries alone
 - runs a review gate for spec alignment, maintainability, and verification evidence before reporting `done`
+- feeds reviewer issues back into the next Ralph loop iteration instead of running a separate nested review-fix loop
 
 Required runtime inputs:
 
@@ -53,7 +55,7 @@ Local k3d testing note:
 Optional runtime inputs:
 
 - `SMITHERS_JJ_BOOKMARK` via `--jj-bookmark`
-- `MAX_TODO_ITEMS` in the env file if one dispatch should attempt more than one todo item
+- `MAX_TODO_ITEMS` in the env file if you want the planner to consider more than the default single-item selection window
 
 The workflow assumes `todo.md` uses this section shape for each executable item:
 
