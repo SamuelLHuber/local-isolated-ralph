@@ -1,5 +1,5 @@
-/** @jsxImportSource smithers-orchestrator */
 import {
+  Branch,
   Parallel,
   PiAgent,
   Ralph,
@@ -9,24 +9,26 @@ import {
   createSmithers,
 } from "smithers-orchestrator";
 import { $ } from "bun";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
 import { runVerificationJob } from "./utils/k8s-jobs";
-import { prepareWorkspaces, pushBookmark, snapshotChange } from "./utils/jj-shell";
+import { pushBookmark, snapshotChange } from "./utils/jj-shell";
 import { parseTodoItems, todoItemSchema, type TodoItem } from "./utils/todo-plan";
+import { markTodoItemDone } from "./utils/todo-status";
 
 const WORKDIR_ROOT = process.cwd();
 const CONTROL_ROOT = "/workspace/.fabrik";
 const REPO_ROOT = WORKDIR_ROOT;
 const TODO_PATH = resolve(REPO_ROOT, "todo.md");
-const WORKSPACES_DIR = resolve(CONTROL_ROOT, "workspaces", ".jj-workspaces");
-const DB_PATH = resolve(CONTROL_ROOT, "workflows", "todo-driver.db");
+const DB_DIR = resolve(REPO_ROOT, ".smithers");
+mkdirSync(DB_DIR, { recursive: true });
+const DB_PATH = resolve(DB_DIR, "todo-driver.db");
 const jjRepo = process.env.SMITHERS_JJ_REPO?.trim() ?? "";
 const jjBookmark = process.env.SMITHERS_JJ_BOOKMARK?.trim() ?? "";
 
 const MAX_ITERATIONS = Number(process.env.MAX_ITERATIONS ?? "80");
-const MAX_TODO_ITEMS = Number(process.env.MAX_TODO_ITEMS ?? "0");
+const MAX_TODO_ITEMS = Number(process.env.MAX_TODO_ITEMS ?? "1");
 const TASK_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const REVIEW_TIMEOUT_MS = 60 * 60 * 1000;
 const FEATURE_BOOKMARK = jjBookmark || "feat/todo-driver";
@@ -38,6 +40,7 @@ const PI_ENV = {
   XDG_CONFIG_HOME: "/tmp/pi-config",
   PI_CODING_AGENT_DIR: "/tmp/pi-agent",
 };
+const VERIFY_SPEC_PATH = "specs/051-k3s-orchestrator.md";
 
 const todoPlanSchema = z.object({
   todoPath: z.string(),
@@ -67,11 +70,6 @@ const reviewSchema = z.object({
   requiredFollowUps: z.array(z.string()),
 });
 
-const reviewFixSchema = z.object({
-  fixes: z.array(z.string()),
-  allResolved: z.boolean(),
-});
-
 const reportSchema = z.object({
   ticketId: z.string(),
   status: z.enum(["done", "partial", "blocked"]),
@@ -84,7 +82,6 @@ const { smithers, outputs } = createSmithers(
     implement: implementSchema,
     validate: validateSchema,
     review: reviewSchema,
-    reviewFix: reviewFixSchema,
     report: reportSchema,
   },
   { dbPath: DB_PATH },
@@ -157,7 +154,8 @@ function piWriteAt(workdir: string): PiAgent {
 }
 
 function itemWorkspace(itemId: string): string {
-  return resolve(WORKSPACES_DIR, itemId);
+  void itemId;
+  return REPO_ROOT;
 }
 
 function sanitizeK8sName(value: string): string {
@@ -176,14 +174,23 @@ function requiredSetting(name: string): string {
   return value;
 }
 
+function verifierSetupCommands(workdir: string): string[] {
+  return [
+    `cd ${workdir}`,
+    "make verify-cli",
+    "cd src/fabrik-cli",
+    "go build -o /tmp/fabrik-verify .",
+  ];
+}
+
 function verifierCommands(item: TodoItem, workdir: string): string[] {
+  const base = verifierSetupCommands(workdir);
+
   if (item.id === "runs-inspection") {
     return [
-      `cd ${workdir}/src/fabrik-cli`,
-      "go test ./...",
-      "go build -o /tmp/fabrik-verify .",
+      ...base,
       "VERIFY_RUN_ID=fabrik-verify-runs-$(date +%s)",
-      "/tmp/fabrik-verify run --run-id \"$VERIFY_RUN_ID\" --spec specs/verify-runs.yaml --project verify --image \"$FABRIK_RUN_IMAGE\" --namespace \"$KUBERNETES_NAMESPACE\" --pvc-size 1Gi --job-command 'echo cluster-verify' --interactive=false",
+      `/tmp/fabrik-verify run --run-id "$VERIFY_RUN_ID" --spec ${VERIFY_SPEC_PATH} --project verify --image "$FABRIK_RUN_IMAGE" --namespace "$KUBERNETES_NAMESPACE" --pvc-size 1Gi --job-command 'echo cluster-verify' --interactive=false`,
       "kubectl -n \"$KUBERNETES_NAMESPACE\" wait --for=condition=complete \"job/fabrik-$VERIFY_RUN_ID\" --timeout=180s",
       "/tmp/fabrik-verify runs list --namespace \"$KUBERNETES_NAMESPACE\"",
       "/tmp/fabrik-verify runs show --run-id \"$VERIFY_RUN_ID\" --namespace \"$KUBERNETES_NAMESPACE\"",
@@ -193,7 +200,47 @@ function verifierCommands(item: TodoItem, workdir: string): string[] {
     ];
   }
 
-  throw new Error(`No deterministic verifier is wired for todo item ${item.id}.`);
+  if (item.id === "resume") {
+    return [
+      ...base,
+      "VERIFY_RUN_ID=fabrik-verify-resume-$(date +%s)",
+      `/tmp/fabrik-verify run --run-id "$VERIFY_RUN_ID" --spec ${VERIFY_SPEC_PATH} --project verify --image "$FABRIK_RUN_IMAGE" --namespace "$KUBERNETES_NAMESPACE" --pvc-size 1Gi --job-command 'sleep 300' --interactive=false`,
+      "kubectl -n \"$KUBERNETES_NAMESPACE\" wait --for=jsonpath='{.status.phase}'=Running pod -l fabrik.sh/run-id=\"$VERIFY_RUN_ID\" --timeout=180s",
+      "POD_NAME=$(kubectl -n \"$KUBERNETES_NAMESPACE\" get pods -l fabrik.sh/run-id=\"$VERIFY_RUN_ID\" -o jsonpath='{.items[0].metadata.name}')",
+      "test -n \"$POD_NAME\"",
+      "kubectl -n \"$KUBERNETES_NAMESPACE\" delete pod \"$POD_NAME\" --grace-period=0 --force --ignore-not-found",
+      "/tmp/fabrik-verify run resume --id \"$VERIFY_RUN_ID\" --namespace \"$KUBERNETES_NAMESPACE\"",
+      "kubectl -n \"$KUBERNETES_NAMESPACE\" wait --for=jsonpath='{.status.phase}'=Running pod -l fabrik.sh/run-id=\"$VERIFY_RUN_ID\" --timeout=180s",
+      "kubectl -n \"$KUBERNETES_NAMESPACE\" delete job \"fabrik-$VERIFY_RUN_ID\" --ignore-not-found",
+      "kubectl -n \"$KUBERNETES_NAMESPACE\" delete pvc \"data-fabrik-$VERIFY_RUN_ID\" --ignore-not-found",
+    ];
+  }
+
+  if (item.id === "cancel") {
+    return [
+      ...base,
+      "VERIFY_RUN_ID=fabrik-verify-cancel-$(date +%s)",
+      `/tmp/fabrik-verify run --run-id "$VERIFY_RUN_ID" --spec ${VERIFY_SPEC_PATH} --project verify --image "$FABRIK_RUN_IMAGE" --namespace "$KUBERNETES_NAMESPACE" --pvc-size 1Gi --job-command 'sleep 300' --interactive=false`,
+      "kubectl -n \"$KUBERNETES_NAMESPACE\" wait --for=jsonpath='{.status.phase}'=Running pod -l fabrik.sh/run-id=\"$VERIFY_RUN_ID\" --timeout=180s",
+      "/tmp/fabrik-verify run cancel --id \"$VERIFY_RUN_ID\" --namespace \"$KUBERNETES_NAMESPACE\"",
+      "kubectl -n \"$KUBERNETES_NAMESPACE\" wait --for=delete \"job/fabrik-$VERIFY_RUN_ID\" --timeout=180s",
+      "kubectl -n \"$KUBERNETES_NAMESPACE\" delete pvc \"data-fabrik-$VERIFY_RUN_ID\" --ignore-not-found",
+    ];
+  }
+
+  if (item.id === "verification-map") {
+    return [
+      ...base,
+      `cd ${workdir}`,
+      "rg -n \"## Verification Ladder|## Definition Of Done Template|## Priority Order\" todo.md",
+      "rg -n \"Workflow Validation In Clusters\" src/fabrik-cli/docs/getting-started.md",
+      "rg -n \"same-cluster verifier Jobs\" workflows/README.md",
+    ];
+  }
+
+  throw new Error(
+    `No deterministic same-cluster verifier is wired for todo item ${item.id}. Add one before dispatching this task to a cluster that does not provide nested k3d.`,
+  );
 }
 
 async function runTodoValidation(item: TodoItem): Promise<Validate> {
@@ -240,8 +287,7 @@ async function runTodoValidation(item: TodoItem): Promise<Validate> {
 }
 
 function latestPlannedItems(ctx: WorkflowCtx): TodoItem[] {
-  const planRows =
-    (ctx.outputs as { todoPlan?: unknown[] }).todoPlan ?? ctx.outputs("todoPlan");
+  const planRows = (ctx.outputs as { todoPlan?: unknown[] }).todoPlan ?? [];
   const plan = planRows.length > 0 ? planRows[planRows.length - 1] : null;
   if (!plan || typeof plan !== "object") return [];
   const row = plan as { items?: unknown };
@@ -250,9 +296,16 @@ function latestPlannedItems(ctx: WorkflowCtx): TodoItem[] {
   const items: TodoItem[] = [];
   for (const item of row.items) {
     const parsed = todoItemSchema.safeParse(item);
-    if (parsed.success) items.push(parsed.data);
+    if (parsed.success && parsed.data.status !== "done") items.push(parsed.data);
   }
   return items;
+}
+
+function todoLoopComplete(ctx: WorkflowCtx): boolean {
+  const report = ctx.latest("report", "todo-loop-complete") as
+    | z.infer<typeof reportSchema>
+    | undefined;
+  return report?.status === "done";
 }
 
 function collectReviewIssues(
@@ -284,10 +337,18 @@ function allReviewersApproved(
 }
 
 function latestValidationPassed(ctx: WorkflowCtx, itemId: string): boolean {
-  const validate = ctx.latest("validate", `${itemId}:validate`) as
-    | Validate
+  return latestValidation(ctx, itemId)?.allPassed === true;
+}
+
+function latestValidation(ctx: WorkflowCtx, itemId: string): Validate | undefined {
+  return ctx.latest("validate", `${itemId}:validate`) as Validate | undefined;
+}
+
+function latestReportDone(ctx: WorkflowCtx, taskId: string): boolean {
+  const report = ctx.latest("report", taskId) as
+    | z.infer<typeof reportSchema>
     | undefined;
-  return validate?.allPassed === true;
+  return report?.status === "done";
 }
 
 function ReviewGroup({
@@ -299,19 +360,17 @@ function ReviewGroup({
 }) {
   if (!latestValidationPassed(ctx, item.id)) return null;
 
-  return (
-    <Parallel>
-      {REVIEWERS.map((reviewer) => (
-        <Task
-          key={`${item.id}:review:${reviewer.id}`}
-          id={`${item.id}:review:${reviewer.id}`}
-          output={outputs.review}
-          agent={piReadAt(itemWorkspace(item.id))}
-          timeoutMs={REVIEW_TIMEOUT_MS}
-          retries={1}
-          continueOnFail
-        >
-          {`Reviewer: ${reviewer.title}
+  return Parallel({
+    children: REVIEWERS.map((reviewer) =>
+      Task({
+        key: `${item.id}:review:${reviewer.id}`,
+        id: `${item.id}:review:${reviewer.id}`,
+        output: outputs.review,
+        agent: piReadAt(itemWorkspace(item.id)),
+        timeoutMs: REVIEW_TIMEOUT_MS,
+        retries: 1,
+        continueOnFail: true,
+        children: `Reviewer: ${reviewer.title}
 
 Use this reviewer rubric:
 ${reviewer.prompt}
@@ -336,11 +395,10 @@ ${item.requiredChecks.map((entry) => `- ${entry}`).join("\n")}
 
 Reject if the implementation cannot be defended from the repo state, tests, and command evidence.
 
-Return ONLY JSON matching the schema.`}
-        </Task>
-      ))}
-    </Parallel>
-  );
+Return ONLY JSON matching the schema.`,
+      }),
+    ),
+  });
 }
 
 function TodoItemPipeline({
@@ -353,24 +411,38 @@ function TodoItemPipeline({
   const workdir = itemWorkspace(item.id);
   const issues = collectReviewIssues(ctx, item.id, REVIEWERS);
   const approved = allReviewersApproved(ctx, item.id, REVIEWERS);
+  const validationPassed = latestValidationPassed(ctx, item.id);
+  const todoMarkedDone = latestReportDone(ctx, `${item.id}:mark-todo-done`);
+  const readyToFinalize = validationPassed && approved && !todoMarkedDone;
+  const blocked = item.blockedReason !== null;
 
-  return (
-    <Sequence key={item.id}>
-      <Ralph
-        id={`${item.id}:implementation-loop`}
-        until={approved}
-        maxIterations={MAX_ITERATIONS}
-        onMaxReached="return-last"
-      >
-        <Sequence>
-          <Task
-            id={`${item.id}:implement`}
-            output={outputs.implement}
-            agent={piWriteAt(workdir)}
-            timeoutMs={TASK_TIMEOUT_MS}
-            retries={1}
-          >
-            {`Implement the next todo item in this workspace:
+  return Sequence({
+    key: item.id,
+    children: [
+      Branch({
+        if: blocked,
+        then: Task({
+          id: `${item.id}:blocked-report`,
+          output: outputs.report,
+          children: {
+            ticketId: item.id,
+            status: "blocked",
+            summary: item.blockedReason ?? `Todo item ${item.id} is blocked.`,
+          },
+        }),
+      }),
+
+      Branch({
+        if: !blocked && !readyToFinalize,
+        then: Sequence({
+          children: [
+            Task({
+              id: `${item.id}:implement`,
+              output: outputs.implement,
+              agent: piWriteAt(workdir),
+              timeoutMs: TASK_TIMEOUT_MS,
+              retries: 1,
+              children: `Implement the next todo item in this repository:
 ${workdir}
 
 Todo item:
@@ -394,120 +466,121 @@ ${item.requiredChecks.map((entry) => `- ${entry}`).join("\n")}
 Documentation updates:
 ${item.documentationUpdates.length > 0 ? item.documentationUpdates.map((entry) => `- ${entry}`).join("\n") : "- none"}
 
-Existing review issues:
+Reviewer feedback from the previous loop:
 ${issues.length > 0 ? issues.map((entry) => `- ${entry}`).join("\n") : "- none"}
 
 Rules:
 - Build or update the required verification before claiming completion.
 - Do not run jj or git commands.
+- Work only on this todo item.
 - Make the smallest maintainable change that satisfies the guarantees.
 - Update docs and code comments only where the todo item requires them.
 - If a guarantee cannot be completed safely in this run, say so clearly in the JSON output.
 
-Return ONLY JSON matching the schema.`}
-          </Task>
+Return ONLY JSON matching the schema.`,
+            }),
 
-          <Task
-            id={`${item.id}:snapshot-implement`}
-            output={outputs.report}
-            timeoutMs={60_000}
-          >
-            {() => snapshotChange(workdir, item.id, "implement")}
-          </Task>
+            Task({
+              id: `${item.id}:snapshot-implement`,
+              output: outputs.report,
+              timeoutMs: 60_000,
+              children: () => snapshotChange(workdir, item.id, "implement"),
+            }),
 
-          <Task
-            id={`${item.id}:validate`}
-            output={outputs.validate}
-            timeoutMs={TASK_TIMEOUT_MS}
-            retries={1}
-          >
-            {() => runTodoValidation(item)}
-          </Task>
+            Task({
+              id: `${item.id}:validate`,
+              output: outputs.validate,
+              timeoutMs: TASK_TIMEOUT_MS,
+              retries: 1,
+              children: () => runTodoValidation(item),
+            }),
 
-          <ReviewGroup item={item} ctx={ctx} />
+            ReviewGroup({ item, ctx }),
 
-          <Task
-            id={`${item.id}:review-fix`}
-            output={outputs.reviewFix}
-            agent={piWriteAt(workdir)}
-            timeoutMs={TASK_TIMEOUT_MS}
-            skipIf={approved || issues.length === 0}
-          >
-            {`Fix the reviewer issues for this todo item in:
-${workdir}
+            Task({
+              id: `${item.id}:loop-report`,
+              output: outputs.report,
+              children: {
+                ticketId: item.id,
+                status: "partial",
+                summary:
+                  validationPassed && approved
+                    ? `Validated ${item.id}; the next Ralph loop will mark todo.md done and push the bookmark.`
+                    : `Completed another Ralph loop for ${item.id}; waiting for validation and reviewer approval.`,
+              },
+            }),
+          ],
+        }),
+      }),
 
-Issues:
-${issues.map((entry) => `- ${entry}`).join("\n")}
+      Branch({
+        if: !blocked && readyToFinalize,
+        then: Sequence({
+          children: [
+            Task({
+              id: `${item.id}:mark-todo-done`,
+              output: outputs.report,
+              timeoutMs: 60_000,
+              children: () => {
+              const validate = latestValidation(ctx, item.id);
+              markTodoItemDone(resolve(workdir, "todo.md"), item.id, {
+                runID: process.env.SMITHERS_RUN_ID?.trim() ?? "",
+                verificationSummary:
+                  validate?.evidence?.[2] ??
+                  `In-cluster verification passed for ${item.id}.`,
+              });
+              return {
+                ticketId: item.id,
+                status: "done",
+                summary: `Marked ${item.id} as done in todo.md after validation.`,
+              };
+              },
+            }),
 
-Rules:
-- Do not run jj or git commands.
-- Resolve the issues without weakening the verification expectations.
+            Task({
+              id: `${item.id}:snapshot-complete`,
+              output: outputs.report,
+              timeoutMs: 60_000,
+              children: () => snapshotChange(workdir, item.id, "complete"),
+            }),
 
-Return ONLY JSON matching the schema.`}
-          </Task>
+            Task({
+              id: `${item.id}:push-bookmark`,
+              output: outputs.report,
+              timeoutMs: TASK_TIMEOUT_MS,
+              skipIf: !jjBookmark,
+              children: () => pushBookmark(workdir, FEATURE_BOOKMARK, item.id),
+            }),
 
-          <Task
-            id={`${item.id}:snapshot-review-fix`}
-            output={outputs.report}
-            timeoutMs={60_000}
-            skipIf={approved || issues.length === 0}
-          >
-            {() => snapshotChange(workdir, item.id, "review-fix")}
-          </Task>
-        </Sequence>
-      </Ralph>
-
-      <Task
-        id={`${item.id}:final-report`}
-        output={outputs.report}
-      >
-        {{
-          ticketId: item.id,
-          status:
-            latestValidationPassed(ctx, item.id) &&
-            allReviewersApproved(ctx, item.id, REVIEWERS)
-              ? "done"
-              : "partial",
-          summary:
-            latestValidationPassed(ctx, item.id) &&
-            allReviewersApproved(ctx, item.id, REVIEWERS)
-              ? `Completed ${item.id} with required verification and reviewer approval.`
-              : `Stopped ${item.id} without clearing every verification or review gate.`,
-        }}
-      </Task>
-
-      <Task
-        id={`${item.id}:push-bookmark`}
-        output={outputs.report}
-        timeoutMs={TASK_TIMEOUT_MS}
-        skipIf={
-          !jjBookmark ||
-          !latestValidationPassed(ctx, item.id) ||
-          !allReviewersApproved(ctx, item.id, REVIEWERS)
-        }
-      >
-        {() => pushBookmark(workdir, FEATURE_BOOKMARK, item.id)}
-      </Task>
-    </Sequence>
-  );
+            Task({
+              id: `${item.id}:complete-report`,
+              output: outputs.report,
+              children: {
+                ticketId: item.id,
+                status: "done",
+                summary: `Completed ${item.id} with required verification, reviewer approval, and todo.md updated.`,
+              },
+            }),
+          ],
+        }),
+      }),
+    ],
+  });
 }
 
 export default smithers((ctx) => {
   const items = latestPlannedItems(ctx);
-  const firstBlockedIndex = items.findIndex((item) => item.blockedReason);
-  const visibleItems =
-    firstBlockedIndex >= 0 ? items.slice(0, firstBlockedIndex + 1) : items;
-  const blockedItems = visibleItems.filter((item) => item.blockedReason);
-  const actionableItems = visibleItems.filter((item) => !item.blockedReason);
+  const currentItem = items[0] ?? null;
 
-  return (
-    <Workflow name="todo-driver" cache>
-      <Sequence>
-        <Task
-          id="prepare-repo"
-          output={outputs.report}
-        >
-          {async () => {
+  return Workflow({
+    name: "todo-driver",
+    cache: true,
+    children: Sequence({
+      children: [
+        Task({
+          id: "prepare-repo",
+          output: outputs.report,
+          children: async () => {
             const gitDir = resolve(REPO_ROOT, ".git");
             const jjDir = resolve(REPO_ROOT, ".jj");
             if (existsSync(gitDir) || existsSync(jjDir)) {
@@ -530,22 +603,14 @@ export default smithers((ctx) => {
             const tempCloneRoot = resolve(CONTROL_ROOT, "tmp");
             const tempClone = resolve(tempCloneRoot, `repo-${Date.now()}`);
             await $`mkdir -p ${tempCloneRoot}`;
-            await $`git clone ${jjRepo} ${tempClone}`.cwd(CONTROL_ROOT);
-            await $`jj git init`.cwd(tempClone);
+            if (jjBookmark) {
+              await $`jj git clone --branch ${jjBookmark} ${jjRepo} ${tempClone}`.cwd(CONTROL_ROOT);
+            } else {
+              await $`jj git clone ${jjRepo} ${tempClone}`.cwd(CONTROL_ROOT);
+            }
             await $`find ${REPO_ROOT} -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +`.quiet().nothrow();
             await $`sh -lc 'cd "$1" && tar -cf - . | (cd "$2" && tar -xf -)' sh ${tempClone} ${REPO_ROOT}`;
             await $`rm -rf ${tempClone}`;
-            if (jjBookmark) {
-              const checkout = await $`git checkout ${jjBookmark}`.cwd(REPO_ROOT).nothrow().quiet();
-              if (checkout.exitCode !== 0) {
-                const track = await $`git checkout -b ${jjBookmark} --track origin/${jjBookmark}`.cwd(REPO_ROOT).nothrow().quiet();
-                if (track.exitCode !== 0) {
-                  throw new Error(
-                    `Failed to check out JJ bookmark '${jjBookmark}' after cloning ${jjRepo}. Ensure the remote branch exists before dispatch.`,
-                  );
-                }
-              }
-            }
             return {
               ticketId: "prepare-repo",
               status: "done",
@@ -553,14 +618,13 @@ export default smithers((ctx) => {
                 ? `Cloned ${jjRepo} into ${REPO_ROOT} and checked out ${jjBookmark}`
                 : `Cloned ${jjRepo} into ${REPO_ROOT}`,
             };
-          }}
-        </Task>
+          },
+        }),
 
-        <Task
-          id="ensure-todo"
-          output={outputs.report}
-        >
-          {() => {
+        Task({
+          id: "ensure-todo",
+          output: outputs.report,
+          children: () => {
             if (!existsSync(TODO_PATH)) {
               throw new Error(
                 `Missing todo.md in ${REPO_ROOT}. This workflow expects the cloned repo to contain a verification-first todo file at the repo root.`,
@@ -571,65 +635,67 @@ export default smithers((ctx) => {
               status: "done",
               summary: `Found todo.md at ${TODO_PATH}`,
             };
-          }}
-        </Task>
+          },
+        }),
 
-        <Task
-          id="plan-todo"
-          output={outputs.todoPlan}
-        >
-          {() => {
-            const parsedItems = parseTodoItems(TODO_PATH);
-            const limitedItems =
-              MAX_TODO_ITEMS > 0
-                ? parsedItems.slice(0, MAX_TODO_ITEMS)
-                : parsedItems;
+        Ralph({
+          id: "todo-loop",
+          until: todoLoopComplete(ctx),
+          maxIterations: MAX_ITERATIONS,
+          onMaxReached: "fail",
+          children: Sequence({
+            children: [
+              Task({
+                id: "plan-todo-loop",
+                output: outputs.todoPlan,
+                children: () => {
+                const parsedItems = parseTodoItems(TODO_PATH);
+                const pendingItems = parsedItems.filter((item) => item.status !== "done");
+                const limitedItems =
+                  MAX_TODO_ITEMS > 0
+                    ? pendingItems.slice(0, MAX_TODO_ITEMS)
+                    : pendingItems;
 
-            return {
-              todoPath: TODO_PATH,
-              totalItems: parsedItems.length,
-              selectedItems: limitedItems.length,
-              items: limitedItems,
-            };
-          }}
-        </Task>
+                return {
+                  todoPath: TODO_PATH,
+                  totalItems: parsedItems.length,
+                  selectedItems: limitedItems.length,
+                  items: limitedItems,
+                };
+                },
+              }),
 
-        <Sequence>
-          {blockedItems.map((item) => (
-            <Task
-              key={`${item.id}:blocked`}
-              id={`${item.id}:blocked`}
-              output={outputs.report}
-            >
-              {{
-                ticketId: item.id,
-                status: "blocked",
-                summary: item.blockedReason ?? `Blocked ${item.id}`,
-              }}
-            </Task>
-          ))}
-        </Sequence>
-
-        <Task
-          id="prepare-workspaces"
-          output={outputs.report}
-          timeoutMs={TASK_TIMEOUT_MS}
-          skipIf={actionableItems.length === 0}
-        >
-          {() =>
-            prepareWorkspaces(
-              REPO_ROOT,
-              WORKSPACES_DIR,
-              actionableItems.map((item) => item.id),
-            )}
-        </Task>
-
-        <Sequence>
-          {actionableItems.map((item) => (
-            <TodoItemPipeline key={item.id} item={item} ctx={ctx} />
-          ))}
-        </Sequence>
-      </Sequence>
-    </Workflow>
-  );
+              Branch({
+                if: currentItem === null,
+                then: Task({
+                  id: "todo-loop-complete",
+                  output: outputs.report,
+                  children: {
+                    ticketId: "todo-loop",
+                    status: "done",
+                    summary: "No pending todo items remain.",
+                  },
+                }),
+                else: Sequence({
+                  children: currentItem?.blockedReason
+                    ? [
+                        Task({
+                          id: `${currentItem.id}:blocked`,
+                          output: outputs.report,
+                          children: {
+                            ticketId: currentItem.id,
+                            status: "blocked",
+                            summary: currentItem.blockedReason,
+                          },
+                        }),
+                      ]
+                    : [currentItem ? TodoItemPipeline({ item: currentItem, ctx }) : null],
+                }),
+              }),
+            ],
+          }),
+        }),
+      ],
+    }),
+  });
 });

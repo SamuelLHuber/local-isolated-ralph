@@ -25,6 +25,9 @@ RUN arch="$(apk --print-arch)" \
   && wget -qO- "https://github.com/jj-vcs/jj/releases/download/v${JJ_VERSION}/jj-v${JJ_VERSION}-${jj_arch}-unknown-linux-musl.tar.gz" \
     | tar -xz -C /usr/local/bin ./jj
 
+RUN git --version \
+  && jj --version
+
 # Smithers CLI requires Bun at runtime (shebang: /usr/bin/env bun).
 RUN npm install --global \
   bun \
