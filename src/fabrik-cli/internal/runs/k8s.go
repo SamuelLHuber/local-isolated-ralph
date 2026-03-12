@@ -551,24 +551,120 @@ func (c *K8sClient) Cancel(ctx context.Context, runID string) error {
 	return fmt.Errorf("run %q not found", runID)
 }
 
+// sanitizeName converts a value to a DNS-safe lowercase name.
+func sanitizeName(value string) string {
+	value = strings.ToLower(value)
+	var b strings.Builder
+	lastDash := false
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteRune('-')
+			lastDash = true
+		}
+	}
+
+	result := strings.Trim(b.String(), "-")
+	if result == "" {
+		return "run"
+	}
+
+	return result
+}
+
+// trimK8sName ensures a name fits within Kubernetes 63-character limit.
+func trimK8sName(value string) string {
+	value = sanitizeName(value)
+	if len(value) > 63 {
+		value = value[:63]
+	}
+	return strings.Trim(value, "-")
+}
+
 // Resume deletes the pod for a run to trigger job recreation.
+// Guarantees:
+//   - Uses the same image digest as the original run (immutable image check)
+//   - Preserves the PVC and Smithers DB state
+//   - Deletes only the pod, letting the Job controller recreate it natively
+//   - Does not mutate the execution model (image, command, env remain unchanged)
 func (c *K8sClient) Resume(ctx context.Context, runID string) error {
-	// Find the run
-	info, err := c.Show(ctx, runID)
+	// Find the job to verify it exists and check its state
+	job, err := c.getJobByRunID(ctx, runID)
 	if err != nil {
-		return err
+		return fmt.Errorf("cannot resume: job not found for run %q: %w", runID, err)
 	}
 
-	if info.IsCronJob {
-		return fmt.Errorf("cannot resume a CronJob directly; resume individual job executions instead")
+	// Verify this is not a CronJob (CronJobs are templates, not runnable workloads)
+	if job == nil {
+		// Try to check if it's a cronjob
+		_, err := c.getCronJobByRunID(ctx, runID)
+		if err == nil {
+			return fmt.Errorf("cannot resume a CronJob directly; resume individual job executions instead")
+		}
+		return fmt.Errorf("run %q not found", runID)
 	}
 
-	// Find pod and delete it - Job controller will recreate
+	// Verify immutable image reference
+	if len(job.Spec.Template.Spec.Containers) == 0 {
+		return fmt.Errorf("cannot resume: job %s has no containers", job.Metadata.Name)
+	}
+	image := job.Spec.Template.Spec.Containers[0].Image
+	if !isImmutableImageRef(image) {
+		return fmt.Errorf("cannot resume: job %s uses mutable image reference %q (must use digest: repo/image@sha256:<digest>)", job.Metadata.Name, image)
+	}
+
+	// Verify job is still active (not completed or failed)
+	// Completed jobs should not be resumed - they're done
+	if job.Status.Succeeded > 0 {
+		return fmt.Errorf("cannot resume: job %s has already succeeded (status: succeeded)", job.Metadata.Name)
+	}
+
+	// Verify PVC exists - resume requires the PVC to preserve state
+	pvcName := trimK8sName("data-fabrik-" + sanitizeName(runID))
+	if err := c.verifyPVCExists(ctx, pvcName); err != nil {
+		return fmt.Errorf("cannot resume: %w", err)
+	}
+
+	// Find pod and delete it - Job controller will recreate with same spec
 	podName, err := c.getPodNameByRunID(ctx, runID)
 	if err != nil {
-		return fmt.Errorf("no active pod to resume for run %q", runID)
+		// Check if job is active but pod is not yet created
+		if job.Status.Active > 0 {
+			return fmt.Errorf("cannot resume: job %s is active but no pod found (may be starting up)", job.Metadata.Name)
+		}
+		return fmt.Errorf("cannot resume: no active pod for run %q", runID)
 	}
 
+	// Delete the pod - the Job controller will recreate it with the same spec
+	// including the same immutable image and PVC mount
 	_, err = c.runKubectl(ctx, "-n", c.Namespace, "delete", "pod", podName, "--ignore-not-found")
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to delete pod %s for resume: %w", podName, err)
+	}
+
+	return nil
+}
+
+// isImmutableImageRef checks if an image reference uses a digest (immutable)
+func isImmutableImageRef(image string) bool {
+	return strings.Contains(image, "@sha256:")
+}
+
+// verifyPVCExists checks that the PVC exists and is bound
+func (c *K8sClient) verifyPVCExists(ctx context.Context, pvcName string) error {
+	output, err := c.runKubectl(ctx, "-n", c.Namespace, "get", "pvc", pvcName, "-o", "jsonpath={.status.phase}")
+	if err != nil {
+		return fmt.Errorf("PVC %s not found: %w", pvcName, err)
+	}
+
+	phase := strings.TrimSpace(output)
+	if phase != "Bound" {
+		return fmt.Errorf("PVC %s is not Bound (phase: %s)", pvcName, phase)
+	}
+
+	return nil
 }

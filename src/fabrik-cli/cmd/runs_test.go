@@ -473,10 +473,14 @@ exit 1
 }
 
 func TestRunResume(t *testing.T) {
-	// Simplified mock that handles the resume flow
+	// Mock that handles the resume flow with immutable image and PVC verification
 	script := "#!/bin/sh\n"
 	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=test-resume-run"; then
-		echo '{"items":[{"metadata":{"name":"test-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"test-resume-run","fabrik.sh/managed-by":"fabrik"}},"spec":{"template":{"spec":{"containers":[{"image":"test"}]}}},"status":{"active":1}}]}'
+		echo '{"items":[{"metadata":{"name":"test-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"test-resume-run","fabrik.sh/managed-by":"fabrik"}},"spec":{"template":{"spec":{"containers":[{"image":"ghcr.io/fabrik/smithers@sha256:abc123def456789"}]}}},"status":{"active":1}}]}'
+		exit 0
+	fi
+	if echo "$*" | grep -q "get pvc.*data-fabrik-test-resume-run"; then
+		echo 'Bound'
 		exit 0
 	fi
 	if echo "$*" | grep -q "get pods.*job-name=test-job"; then

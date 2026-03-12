@@ -564,17 +564,14 @@ exit 1
 }
 
 func TestResumeDeletesPod(t *testing.T) {
-	// Resume first calls Show which tries to enrichJobInfo with pod lookup,
-	// then calls getPodNameByRunID for the actual resume
-	// Simplified: just test that Resume uses the correct flow via a mock
-	// that accepts all the kubectl calls in sequence
+	// Resume verifies job exists with immutable image, checks PVC, then deletes pod
 	script := "#!/bin/sh\n"
 	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=test-resume"; then
-		echo '{"items":[{"metadata":{"name":"test-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"test-resume","fabrik.sh/managed-by":"fabrik"}},"spec":{"template":{"spec":{"containers":[{"image":"test"}]}}},"status":{"active":1}}]}'
+		echo '{"items":[{"metadata":{"name":"test-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"test-resume","fabrik.sh/managed-by":"fabrik"}},"spec":{"template":{"spec":{"containers":[{"image":"ghcr.io/fabrik/smithers@sha256:abc123def456"}]}}},"status":{"active":1}}]}'
 		exit 0
 	fi
-	if echo "$*" | grep -q "get pods.*job-name=test-job"; then
-		echo '{"items":[]}'
+	if echo "$*" | grep -q "get pvc.*data-fabrik-test-resume"; then
+		echo 'Bound'
 		exit 0
 	fi
 	if echo "$*" | grep -q "jsonpath={.items\[0\].metadata.name}"; then
@@ -599,6 +596,153 @@ func TestResumeDeletesPod(t *testing.T) {
 	err := client.Resume(context.Background(), "test-resume")
 	if err != nil {
 		t.Fatalf("Resume failed: %v", err)
+	}
+}
+
+func TestResumeFailsWithMutableImage(t *testing.T) {
+	// Resume should fail if the job uses a mutable image (tag-based)
+	script := "#!/bin/sh\n"
+	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=test-mutable"; then
+		echo '{"items":[{"metadata":{"name":"test-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"test-mutable"}},"spec":{"template":{"spec":{"containers":[{"image":"ghcr.io/fabrik/smithers:latest"}]}}},"status":{"active":1}}]}'
+		exit 0
+	fi
+	exit 1
+`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	err := client.Resume(context.Background(), "test-mutable")
+	if err == nil {
+		t.Fatal("expected Resume to fail with mutable image")
+	}
+	if !strings.Contains(err.Error(), "mutable image reference") {
+		t.Errorf("expected 'mutable image reference' error, got %v", err)
+	}
+}
+
+func TestResumeFailsWhenJobSucceeded(t *testing.T) {
+	// Resume should fail if the job has already succeeded
+	script := "#!/bin/sh\n"
+	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=test-succeeded"; then
+		echo '{"items":[{"metadata":{"name":"test-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"test-succeeded"}},"spec":{"template":{"spec":{"containers":[{"image":"ghcr.io/fabrik/smithers@sha256:abc123"}]}}},"status":{"succeeded":1}}]}'
+		exit 0
+	fi
+	exit 1
+`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	err := client.Resume(context.Background(), "test-succeeded")
+	if err == nil {
+		t.Fatal("expected Resume to fail when job already succeeded")
+	}
+	if !strings.Contains(err.Error(), "already succeeded") {
+		t.Errorf("expected 'already succeeded' error, got %v", err)
+	}
+}
+
+func TestResumeFailsWhenPVCMissing(t *testing.T) {
+	// Resume should fail if the PVC doesn't exist (state would be lost)
+	script := "#!/bin/sh\n"
+	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=test-missing-pvc"; then
+		echo '{"items":[{"metadata":{"name":"test-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"test-missing-pvc"}},"spec":{"template":{"spec":{"containers":[{"image":"ghcr.io/fabrik/smithers@sha256:abc123"}]}}},"status":{"active":1}}]}'
+		exit 0
+	fi
+	if echo "$*" | grep -q "get pvc.*data-fabrik-test-missing-pvc"; then
+		echo 'Error from server (NotFound): persistentvolumeclaims "data-fabrik-test-missing-pvc" not found' >&2
+		exit 1
+	fi
+	exit 1
+`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	err := client.Resume(context.Background(), "test-missing-pvc")
+	if err == nil {
+		t.Fatal("expected Resume to fail when PVC missing")
+	}
+	if !strings.Contains(err.Error(), "PVC") {
+		t.Errorf("expected PVC error, got %v", err)
+	}
+}
+
+func TestResumeFailsWhenPVCPending(t *testing.T) {
+	// Resume should fail if the PVC is not Bound
+	script := "#!/bin/sh\n"
+	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=test-pending-pvc"; then
+		echo '{"items":[{"metadata":{"name":"test-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"test-pending-pvc"}},"spec":{"template":{"spec":{"containers":[{"image":"ghcr.io/fabrik/smithers@sha256:abc123"}]}}},"status":{"active":1}}]}'
+		exit 0
+	fi
+	if echo "$*" | grep -q "get pvc.*data-fabrik-test-pending-pvc"; then
+		echo 'Pending'
+		exit 0
+	fi
+	exit 1
+`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	err := client.Resume(context.Background(), "test-pending-pvc")
+	if err == nil {
+		t.Fatal("expected Resume to fail when PVC not Bound")
+	}
+	if !strings.Contains(err.Error(), "not Bound") {
+		t.Errorf("expected 'not Bound' error, got %v", err)
+	}
+}
+
+func TestResumeFailsWhenJobNotFound(t *testing.T) {
+	// Resume should fail when job doesn't exist
+	script := "#!/bin/sh\n"
+	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=test-no-job"; then
+	echo '{"items":[]}'
+	exit 0
+	fi
+	if echo "$*" | grep -q "get cronjobs.*fabrik.sh/run-id=test-no-job"; then
+	echo '{"items":[]}'
+	exit 0
+	fi
+	exit 1
+`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	err := client.Resume(context.Background(), "test-no-job")
+	if err == nil {
+		t.Fatal("expected Resume to fail when job not found")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected 'not found' error, got %v", err)
 	}
 }
 

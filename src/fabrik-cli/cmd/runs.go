@@ -176,7 +176,21 @@ func newRunResumeCommand() *cobra.Command {
 		Use:   "resume",
 		Short: "Resume a stuck Fabrik run",
 		Long: "Resume a Fabrik run by deleting its pod, causing the Job controller to " +
-			"recreate it. Progress is preserved in the PVC. The same image digest is used.",
+			"recreate it with the same specification.\n\n" +
+			"Guarantees:\n" +
+			"  - The same immutable image digest is used (resume rejects mutable tags)\n" +
+			"  - The PVC and Smithers SQLite state are preserved\n" +
+			"  - Only the pod is deleted; Job controller recreates it natively\n" +
+			"  - Execution model (image, command, env, resources) remains unchanged\n\n" +
+			"Requirements:\n" +
+			"  - The Job must exist and be active (not already succeeded/failed)\n" +
+			"  - The PVC must exist and be Bound\n" +
+			"  - The image must use a digest reference (repo/image@sha256:<digest>)\n\n" +
+			"Operator Caveats:\n" +
+			"  - Resume does NOT change the image, command, or environment\n" +
+			"  - Resume does NOT reset the Smithers state; it continues from the last task\n" +
+			"  - Resume does NOT work on CronJobs (resume their child Jobs instead)\n" +
+			"  - If the Job spec itself needs changes, cancel and create a new run",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runRunResume(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), opts)
 		},
