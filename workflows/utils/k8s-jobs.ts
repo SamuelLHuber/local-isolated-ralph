@@ -182,11 +182,8 @@ function buildVerifierScript(
   return lines.join("\n");
 }
 
-export async function runVerificationJob(
-  options: VerificationJobOptions,
-): Promise<VerificationResult> {
-  const timeoutMs = (options.timeoutSeconds ?? 900) * 1000;
-  const manifest = {
+export function buildVerificationJobManifest(options: VerificationJobOptions) {
+  return {
     apiVersion: "batch/v1",
     kind: "Job",
     metadata: {
@@ -228,6 +225,12 @@ export async function runVerificationJob(
                   options.cleanupCommands ?? [],
                 ),
               ],
+              env: [
+                { name: "FABRIK_RUN_IMAGE", value: options.image },
+                { name: "KUBERNETES_NAMESPACE", value: options.namespace },
+                { name: "FABRIK_WORKSPACE_PVC", value: options.pvcName },
+                { name: "KUBERNETES_NODE_NAME", value: options.nodeName },
+              ],
               workingDir: options.workspacePath,
               volumeMounts: [
                 {
@@ -249,6 +252,13 @@ export async function runVerificationJob(
       },
     },
   };
+}
+
+export async function runVerificationJob(
+  options: VerificationJobOptions,
+): Promise<VerificationResult> {
+  const timeoutMs = (options.timeoutSeconds ?? 900) * 1000;
+  const manifest = buildVerificationJobManifest(options);
 
   const created = await createJob(options.namespace, manifest);
   const startedAt = Date.now();

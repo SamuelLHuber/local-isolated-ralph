@@ -1,8 +1,30 @@
 import { expect, test } from "bun:test";
-import workflow from "./todo-driver";
+import workflow, { repoResetCommand, verifierCommands } from "./todo-driver";
 import { buildContext } from "../node_modules/smithers-orchestrator/src/context";
 import { parseTodoContent } from "./utils/todo-plan";
 import { markTodoContentDone } from "./utils/todo-status";
+
+function collectTaskIDs(node: unknown): string[] {
+  const ids: string[] = [];
+
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== "object") return;
+    const element = value as { props?: Record<string, unknown> };
+    const props = element.props ?? {};
+    const id = props.id;
+    if (typeof id === "string") ids.push(id);
+
+    const children = props.children;
+    if (Array.isArray(children)) {
+      for (const child of children) visit(child);
+      return;
+    }
+    visit(children);
+  };
+
+  visit(node);
+  return ids;
+}
 
 test("parseTodoContent stops at non-task level-two headings", () => {
   const items = parseTodoContent(`
@@ -134,4 +156,412 @@ test("todo-driver builds a Smithers workflow from context", () => {
 
   const tree = workflow.build(ctx);
   expect(tree).toBeTruthy();
+});
+
+test("repo reset command preserves smithers state", () => {
+  const command = repoResetCommand("/workspace/workdir");
+  expect(command).toContain("! -name .smithers");
+  expect(command).toContain("/workspace/workdir");
+});
+
+test("runs-inspection verifier uses focused checks instead of full verify-cli", () => {
+  const commands = verifierCommands(
+    {
+      id: "runs-inspection",
+      title: "Runs Inspection",
+      status: "pending",
+      task: "Inspect runs from Kubernetes.",
+      specTieIn: ["orchestrator metadata"],
+      guarantees: ["list reflects cluster state"],
+      verificationToBuildFirst: ["add deterministic tests"],
+      requiredChecks: ["`make verify-cli`"],
+      documentationUpdates: [],
+      blockedReason: null,
+    },
+    "/workspace/workdir",
+  );
+
+  expect(commands[0]).toBe("cd /workspace/workdir/src/fabrik-cli");
+  expect(commands).toContain("go test ./cmd ./internal/runs");
+  expect(commands.join("\n")).not.toContain("make verify-cli");
+});
+
+test("todo-driver schedules review after a successful validation pass", () => {
+  const ctx = buildContext({
+    runId: "preview",
+    iteration: 1,
+    iterations: {},
+    input: {},
+    outputs: {
+      todoPlan: [
+        {
+          nodeId: "plan-todo-loop",
+          iteration: 1,
+          items: [
+            {
+              id: "runs-inspection",
+              title: "Runs Inspection",
+              status: "pending",
+              task: "Inspect runs from Kubernetes.",
+              specTieIn: ["orchestrator metadata"],
+              guarantees: ["list reflects cluster state"],
+              verificationToBuildFirst: ["add deterministic tests"],
+              requiredChecks: ["`make verify-cli`"],
+              documentationUpdates: [],
+              blockedReason: null,
+            },
+          ],
+        },
+      ],
+      implement: [
+        {
+          nodeId: "runs-inspection:implement",
+          iteration: 0,
+          summary: "implemented",
+          changes: [],
+          verification: [],
+          documentation: [],
+        },
+      ],
+      validate: [
+        {
+          nodeId: "runs-inspection:validate",
+          iteration: 0,
+          allPassed: true,
+          commands: [],
+          evidence: [],
+          failingSummary: null,
+        },
+      ],
+    },
+    zodToKeyName: workflow.zodToKeyName,
+  });
+
+  const ids = collectTaskIDs(workflow.build(ctx));
+  expect(ids).toContain("runs-inspection:review:spec-alignment");
+  expect(ids).not.toContain("runs-inspection:implement");
+});
+
+test("todo-driver schedules finalization after reviewers approve", () => {
+  const ctx = buildContext({
+    runId: "preview",
+    iteration: 2,
+    iterations: {},
+    input: {},
+    outputs: {
+      todoPlan: [
+        {
+          nodeId: "plan-todo-loop",
+          iteration: 2,
+          items: [
+            {
+              id: "runs-inspection",
+              title: "Runs Inspection",
+              status: "pending",
+              task: "Inspect runs from Kubernetes.",
+              specTieIn: ["orchestrator metadata"],
+              guarantees: ["list reflects cluster state"],
+              verificationToBuildFirst: ["add deterministic tests"],
+              requiredChecks: ["`make verify-cli`"],
+              documentationUpdates: [],
+              blockedReason: null,
+            },
+          ],
+        },
+      ],
+      implement: [
+        {
+          nodeId: "runs-inspection:implement",
+          iteration: 0,
+          summary: "implemented",
+          changes: [],
+          verification: [],
+          documentation: [],
+        },
+      ],
+      validate: [
+        {
+          nodeId: "runs-inspection:validate",
+          iteration: 0,
+          allPassed: true,
+          commands: [],
+          evidence: [],
+          failingSummary: null,
+        },
+      ],
+      review: [
+        {
+          nodeId: "runs-inspection:review:spec-alignment",
+          iteration: 1,
+          reviewer: "Spec Alignment",
+          approved: true,
+          issues: [],
+          requiredFollowUps: [],
+        },
+        {
+          nodeId: "runs-inspection:review:maintainability",
+          iteration: 1,
+          reviewer: "Maintainability",
+          approved: true,
+          issues: [],
+          requiredFollowUps: [],
+        },
+        {
+          nodeId: "runs-inspection:review:verification",
+          iteration: 1,
+          reviewer: "Verification",
+          approved: true,
+          issues: [],
+          requiredFollowUps: [],
+        },
+      ],
+    },
+    zodToKeyName: workflow.zodToKeyName,
+  });
+
+  const ids = collectTaskIDs(workflow.build(ctx));
+  expect(ids).toContain("runs-inspection:mark-todo-done");
+  expect(ids).toContain("runs-inspection:snapshot-complete");
+  expect(ids).not.toContain("runs-inspection:implement");
+});
+
+test("todo-driver re-runs validation after a failed validation and new implementation", () => {
+  const ctx = buildContext({
+    runId: "preview",
+    iteration: 2,
+    iterations: {},
+    input: {},
+    outputs: {
+      todoPlan: [
+        {
+          nodeId: "plan-todo-loop",
+          iteration: 2,
+          items: [
+            {
+              id: "runs-inspection",
+              title: "Runs Inspection",
+              status: "pending",
+              task: "Inspect runs from Kubernetes.",
+              specTieIn: ["orchestrator metadata"],
+              guarantees: ["list reflects cluster state"],
+              verificationToBuildFirst: ["add deterministic tests"],
+              requiredChecks: ["`make verify-cli`"],
+              documentationUpdates: [],
+              blockedReason: null,
+            },
+          ],
+        },
+      ],
+      implement: [
+        {
+          nodeId: "runs-inspection:implement",
+          iteration: 2,
+          summary: "revised implementation",
+          changes: ["src/fabrik-cli/cmd/runs.go"],
+          verification: [],
+          documentation: [],
+        },
+      ],
+      validate: [
+        {
+          nodeId: "runs-inspection:validate",
+          iteration: 0,
+          allPassed: false,
+          commands: [],
+          evidence: ["previous validation failed"],
+          failingSummary: "validation failed",
+        },
+      ],
+      report: [
+        {
+          nodeId: "runs-inspection:snapshot-implement",
+          iteration: 2,
+          ticketId: "runs-inspection",
+          status: "partial",
+          summary: "snapshotted revised implementation",
+        },
+      ],
+    },
+    zodToKeyName: workflow.zodToKeyName,
+  });
+
+  const ids = collectTaskIDs(workflow.build(ctx));
+  expect(ids).toContain("runs-inspection:validate");
+  expect(ids).not.toContain("runs-inspection:implement");
+});
+
+test("todo-driver ignores stale review issues after a new implementation and revalidates", () => {
+  const ctx = buildContext({
+    runId: "preview",
+    iteration: 3,
+    iterations: {},
+    input: {},
+    outputs: {
+      todoPlan: [
+        {
+          nodeId: "plan-todo-loop",
+          iteration: 3,
+          items: [
+            {
+              id: "runs-inspection",
+              title: "Runs Inspection",
+              status: "pending",
+              task: "Inspect runs from Kubernetes.",
+              specTieIn: ["orchestrator metadata"],
+              guarantees: ["list reflects cluster state"],
+              verificationToBuildFirst: ["add deterministic tests"],
+              requiredChecks: ["`make verify-cli`"],
+              documentationUpdates: [],
+              blockedReason: null,
+            },
+          ],
+        },
+      ],
+      implement: [
+        {
+          nodeId: "runs-inspection:implement",
+          iteration: 3,
+          summary: "implemented review feedback",
+          changes: ["src/fabrik-cli/internal/runs/inspect.go"],
+          verification: [],
+          documentation: [],
+        },
+      ],
+      validate: [
+        {
+          nodeId: "runs-inspection:validate",
+          iteration: 1,
+          allPassed: true,
+          commands: [],
+          evidence: [],
+          failingSummary: null,
+        },
+      ],
+      review: [
+        {
+          nodeId: "runs-inspection:review:spec-alignment",
+          iteration: 1,
+          reviewer: "spec-alignment",
+          approved: false,
+          issues: ["close the metadata gap"],
+          requiredFollowUps: [],
+        },
+      ],
+      report: [
+        {
+          nodeId: "runs-inspection:snapshot-review-fix",
+          iteration: 2,
+          ticketId: "runs-inspection",
+          status: "partial",
+          summary: "snapshotted review fix",
+        },
+        {
+          nodeId: "runs-inspection:snapshot-implement",
+          iteration: 3,
+          ticketId: "runs-inspection",
+          status: "partial",
+          summary: "snapshotted revised implementation",
+        },
+      ],
+    },
+    zodToKeyName: workflow.zodToKeyName,
+  });
+
+  const ids = collectTaskIDs(workflow.build(ctx));
+  expect(ids).toContain("runs-inspection:validate");
+  expect(ids).not.toContain("runs-inspection:implement");
+  expect(ids).not.toContain("runs-inspection:review:spec-alignment");
+});
+
+test("todo-driver requires fresh reviews after a new validation pass", () => {
+  const ctx = buildContext({
+    runId: "preview",
+    iteration: 3,
+    iterations: {},
+    input: {},
+    outputs: {
+      todoPlan: [
+        {
+          nodeId: "plan-todo-loop",
+          iteration: 3,
+          items: [
+            {
+              id: "runs-inspection",
+              title: "Runs Inspection",
+              status: "pending",
+              task: "Inspect runs from Kubernetes.",
+              specTieIn: ["orchestrator metadata"],
+              guarantees: ["list reflects cluster state"],
+              verificationToBuildFirst: ["add deterministic tests"],
+              requiredChecks: ["`make verify-cli`"],
+              documentationUpdates: [],
+              blockedReason: null,
+            },
+          ],
+        },
+      ],
+      implement: [
+        {
+          nodeId: "runs-inspection:implement",
+          iteration: 2,
+          summary: "implemented",
+          changes: ["src/fabrik-cli/cmd/runs.go"],
+          verification: [],
+          documentation: [],
+        },
+      ],
+      validate: [
+        {
+          nodeId: "runs-inspection:validate",
+          iteration: 3,
+          allPassed: true,
+          commands: [],
+          evidence: [],
+          failingSummary: null,
+        },
+      ],
+      review: [
+        {
+          nodeId: "runs-inspection:review:spec-alignment",
+          iteration: 1,
+          reviewer: "Spec Alignment",
+          approved: true,
+          issues: [],
+          requiredFollowUps: [],
+        },
+        {
+          nodeId: "runs-inspection:review:maintainability",
+          iteration: 1,
+          reviewer: "Maintainability",
+          approved: true,
+          issues: [],
+          requiredFollowUps: [],
+        },
+        {
+          nodeId: "runs-inspection:review:verification",
+          iteration: 1,
+          reviewer: "Verification",
+          approved: true,
+          issues: [],
+          requiredFollowUps: [],
+        },
+      ],
+      report: [
+        {
+          nodeId: "runs-inspection:snapshot-implement",
+          iteration: 2,
+          ticketId: "runs-inspection",
+          status: "partial",
+          summary: "snapshotted implementation",
+        },
+      ],
+    },
+    zodToKeyName: workflow.zodToKeyName,
+  });
+
+  const ids = collectTaskIDs(workflow.build(ctx));
+  expect(ids).toContain("runs-inspection:review:spec-alignment");
+  expect(ids).toContain("runs-inspection:review:maintainability");
+  expect(ids).toContain("runs-inspection:review:verification");
+  expect(ids).not.toContain("runs-inspection:mark-todo-done");
 });

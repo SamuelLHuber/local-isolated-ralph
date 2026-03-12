@@ -97,6 +97,13 @@ type Reviewer = {
   prompt: string;
 };
 
+type OutputTableKey = keyof WorkflowCtx["outputs"];
+
+type OutputRowWithNodeId = {
+  nodeId?: unknown;
+  iteration?: unknown;
+};
+
 const REVIEWERS: Reviewer[] = [
   {
     id: "spec-alignment",
@@ -158,6 +165,10 @@ function itemWorkspace(itemId: string): string {
   return REPO_ROOT;
 }
 
+export function repoResetCommand(rootDir: string): string {
+  return `find ${rootDir} -mindepth 1 -maxdepth 1 ! -name .smithers -exec rm -rf -- {} +`;
+}
+
 function sanitizeK8sName(value: string): string {
   return value
     .toLowerCase()
@@ -174,21 +185,20 @@ function requiredSetting(name: string): string {
   return value;
 }
 
-function verifierSetupCommands(workdir: string): string[] {
+function verifierBuildCommands(workdir: string): string[] {
   return [
-    `cd ${workdir}`,
-    "make verify-cli",
-    "cd src/fabrik-cli",
+    `cd ${workdir}/src/fabrik-cli`,
     "go build -o /tmp/fabrik-verify .",
   ];
 }
 
-function verifierCommands(item: TodoItem, workdir: string): string[] {
-  const base = verifierSetupCommands(workdir);
+export function verifierCommands(item: TodoItem, workdir: string): string[] {
+  const base = verifierBuildCommands(workdir);
 
   if (item.id === "runs-inspection") {
     return [
       ...base,
+      "go test ./cmd ./internal/runs",
       "VERIFY_RUN_ID=fabrik-verify-runs-$(date +%s)",
       `/tmp/fabrik-verify run --run-id "$VERIFY_RUN_ID" --spec ${VERIFY_SPEC_PATH} --project verify --image "$FABRIK_RUN_IMAGE" --namespace "$KUBERNETES_NAMESPACE" --pvc-size 1Gi --job-command 'echo cluster-verify' --interactive=false`,
       "kubectl -n \"$KUBERNETES_NAMESPACE\" wait --for=condition=complete \"job/fabrik-$VERIFY_RUN_ID\" --timeout=180s",
@@ -308,16 +318,57 @@ function todoLoopComplete(ctx: WorkflowCtx): boolean {
   return report?.status === "done";
 }
 
+function latestOutputRow<T>(
+  ctx: WorkflowCtx,
+  table: OutputTableKey,
+  nodeId: string,
+): (T & { iteration?: number }) | undefined {
+  const rows = (ctx.outputs[table] as unknown[] | undefined) ?? [];
+  let latest: (T & { iteration?: number }) | undefined;
+  let latestIteration = -1;
+
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as OutputRowWithNodeId & T;
+    if (record.nodeId !== nodeId) continue;
+    const iteration =
+      typeof record.iteration === "number" ? record.iteration : -1;
+    if (iteration >= latestIteration) {
+      latest = record as T & { iteration?: number };
+      latestIteration = iteration;
+    }
+  }
+
+  return latest;
+}
+
+function latestOutputIteration(
+  ctx: WorkflowCtx,
+  table: OutputTableKey,
+  nodeId: string,
+): number | null {
+  return latestOutputRow(ctx, table, nodeId)?.iteration ?? null;
+}
+
 function collectReviewIssues(
   ctx: WorkflowCtx,
   itemId: string,
   reviewers: Reviewer[],
+  minimumIteration: number | null = null,
 ): string[] {
   const issues: string[] = [];
   for (const reviewer of reviewers) {
-    const review = ctx.latest("review", `${itemId}:review:${reviewer.id}`) as
-      | Review
-      | undefined;
+    const review = latestOutputRow<Review>(
+      ctx,
+      "review",
+      `${itemId}:review:${reviewer.id}`,
+    );
+    if (
+      minimumIteration !== null &&
+      (review?.iteration ?? -1) < minimumIteration
+    ) {
+      continue;
+    }
     if (review?.issues?.length) issues.push(...review.issues);
   }
   return issues;
@@ -327,11 +378,20 @@ function allReviewersApproved(
   ctx: WorkflowCtx,
   itemId: string,
   reviewers: Reviewer[],
+  minimumIteration: number | null = null,
 ): boolean {
   return reviewers.every((reviewer) => {
-    const review = ctx.latest("review", `${itemId}:review:${reviewer.id}`) as
-      | Review
-      | undefined;
+    const review = latestOutputRow<Review>(
+      ctx,
+      "review",
+      `${itemId}:review:${reviewer.id}`,
+    );
+    if (
+      minimumIteration !== null &&
+      (review?.iteration ?? -1) < minimumIteration
+    ) {
+      return false;
+    }
     return review?.approved === true;
   });
 }
@@ -341,7 +401,7 @@ function latestValidationPassed(ctx: WorkflowCtx, itemId: string): boolean {
 }
 
 function latestValidation(ctx: WorkflowCtx, itemId: string): Validate | undefined {
-  return ctx.latest("validate", `${itemId}:validate`) as Validate | undefined;
+  return latestOutputRow<Validate>(ctx, "validate", `${itemId}:validate`);
 }
 
 function latestReportDone(ctx: WorkflowCtx, taskId: string): boolean {
@@ -351,15 +411,15 @@ function latestReportDone(ctx: WorkflowCtx, taskId: string): boolean {
   return report?.status === "done";
 }
 
+function hasImplementation(ctx: WorkflowCtx, itemId: string): boolean {
+  return Boolean(ctx.latest("implement", `${itemId}:implement`));
+}
+
 function ReviewGroup({
   item,
-  ctx,
 }: {
   item: TodoItem;
-  ctx: WorkflowCtx;
 }) {
-  if (!latestValidationPassed(ctx, item.id)) return null;
-
   return Parallel({
     children: REVIEWERS.map((reviewer) =>
       Task({
@@ -409,12 +469,67 @@ function TodoItemPipeline({
   ctx: WorkflowCtx;
 }) {
   const workdir = itemWorkspace(item.id);
-  const issues = collectReviewIssues(ctx, item.id, REVIEWERS);
-  const approved = allReviewersApproved(ctx, item.id, REVIEWERS);
-  const validationPassed = latestValidationPassed(ctx, item.id);
+  const implemented = hasImplementation(ctx, item.id);
+  const latestValidate = latestValidation(ctx, item.id);
+  const hasValidation = latestValidate !== undefined;
+  const latestImplementIteration = latestOutputIteration(
+    ctx,
+    "implement",
+    `${item.id}:implement`,
+  );
+  const latestReviewFixIteration = latestOutputIteration(
+    ctx,
+    "report",
+    `${item.id}:snapshot-review-fix`,
+  );
+  const latestMutationIteration = Math.max(
+    latestImplementIteration ?? -1,
+    latestReviewFixIteration ?? -1,
+  );
+  const latestValidationIteration = latestOutputIteration(
+    ctx,
+    "validate",
+    `${item.id}:validate`,
+  );
+  const validationCurrent =
+    latestValidationIteration !== null &&
+    latestValidationIteration >= latestMutationIteration;
+  const validationPassed = validationCurrent && latestValidate?.allPassed === true;
+  const reviewMinimumIteration = Math.max(
+    latestValidationIteration ?? -1,
+    latestMutationIteration,
+  );
+  const issues = collectReviewIssues(
+    ctx,
+    item.id,
+    REVIEWERS,
+    reviewMinimumIteration,
+  );
+  const approved = allReviewersApproved(
+    ctx,
+    item.id,
+    REVIEWERS,
+    reviewMinimumIteration,
+  );
   const todoMarkedDone = latestReportDone(ctx, `${item.id}:mark-todo-done`);
-  const readyToFinalize = validationPassed && approved && !todoMarkedDone;
   const blocked = item.blockedReason !== null;
+  const needsImplementation =
+    !implemented || (validationCurrent && !validationPassed) || issues.length > 0;
+  const needsValidation =
+    !blocked && !needsImplementation && (!hasValidation || !validationCurrent);
+  const needsReview =
+    !blocked &&
+    !needsImplementation &&
+    validationCurrent &&
+    validationPassed &&
+    !approved;
+  const readyToFinalize =
+    !blocked &&
+    !needsImplementation &&
+    validationCurrent &&
+    validationPassed &&
+    approved &&
+    !todoMarkedDone;
 
   return Sequence({
     key: item.id,
@@ -433,7 +548,7 @@ function TodoItemPipeline({
       }),
 
       Branch({
-        if: !blocked && !readyToFinalize,
+        if: needsImplementation,
         then: Sequence({
           children: [
             Task({
@@ -469,6 +584,18 @@ ${item.documentationUpdates.length > 0 ? item.documentationUpdates.map((entry) =
 Reviewer feedback from the previous loop:
 ${issues.length > 0 ? issues.map((entry) => `- ${entry}`).join("\n") : "- none"}
 
+Latest validation result:
+${latestValidate
+  ? latestValidate.allPassed
+    ? "- last validation passed"
+    : [
+        latestValidate.failingSummary
+          ? `- failure: ${latestValidate.failingSummary}`
+          : "- failure: validation did not pass",
+        ...latestValidate.evidence.map((entry) => `- ${entry}`),
+      ].join("\n")
+  : "- validation has not run yet"}
+
 Rules:
 - Build or update the required verification before claiming completion.
 - Do not run jj or git commands.
@@ -476,6 +603,10 @@ Rules:
 - Make the smallest maintainable change that satisfies the guarantees.
 - Update docs and code comments only where the todo item requires them.
 - If a guarantee cannot be completed safely in this run, say so clearly in the JSON output.
+- Do not spend a loop only restating the schema or apologizing.
+- Use the latest validation failure to decide the next code change.
+- Make real repository changes before returning unless the task is genuinely blocked.
+- If you return an empty changes array, the summary must explain the concrete blocker preventing further edits.
 
 Return ONLY JSON matching the schema.`,
             }),
@@ -488,25 +619,12 @@ Return ONLY JSON matching the schema.`,
             }),
 
             Task({
-              id: `${item.id}:validate`,
-              output: outputs.validate,
-              timeoutMs: TASK_TIMEOUT_MS,
-              retries: 1,
-              children: () => runTodoValidation(item),
-            }),
-
-            ReviewGroup({ item, ctx }),
-
-            Task({
               id: `${item.id}:loop-report`,
               output: outputs.report,
               children: {
                 ticketId: item.id,
                 status: "partial",
-                summary:
-                  validationPassed && approved
-                    ? `Validated ${item.id}; the next Ralph loop will mark todo.md done and push the bookmark.`
-                    : `Completed another Ralph loop for ${item.id}; waiting for validation and reviewer approval.`,
+                summary: `Implemented ${item.id}; the next Ralph loop will run validation.`,
               },
             }),
           ],
@@ -514,7 +632,56 @@ Return ONLY JSON matching the schema.`,
       }),
 
       Branch({
-        if: !blocked && readyToFinalize,
+        if: needsValidation,
+        then: Sequence({
+          children: [
+            Task({
+              id: `${item.id}:validate`,
+              output: outputs.validate,
+              timeoutMs: TASK_TIMEOUT_MS,
+              retries: 1,
+              children: () => runTodoValidation(item),
+            }),
+
+            Task({
+              id: `${item.id}:loop-report`,
+              output: outputs.report,
+              children: () => {
+                const validate = latestValidation(ctx, item.id);
+                return {
+                  ticketId: item.id,
+                  status: validate?.allPassed ? "partial" : "blocked",
+                  summary: validate?.allPassed
+                    ? `Validated ${item.id}; the next Ralph loop will run reviewers.`
+                    : `Validation failed for ${item.id}; the next Ralph loop will revise the implementation.`,
+                };
+              },
+            }),
+          ],
+        }),
+      }),
+
+      Branch({
+        if: needsReview,
+        then: Sequence({
+          children: [
+            ReviewGroup({ item }),
+
+            Task({
+              id: `${item.id}:loop-report`,
+              output: outputs.report,
+              children: {
+                ticketId: item.id,
+                status: "partial",
+                summary: `Reviewed ${item.id}; the next Ralph loop will either finalize or address reviewer feedback.`,
+              },
+            }),
+          ],
+        }),
+      }),
+
+      Branch({
+        if: readyToFinalize,
         then: Sequence({
           children: [
             Task({
@@ -608,7 +775,7 @@ export default smithers((ctx) => {
             } else {
               await $`jj git clone ${jjRepo} ${tempClone}`.cwd(CONTROL_ROOT);
             }
-            await $`find ${REPO_ROOT} -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +`.quiet().nothrow();
+            await $`sh -lc ${repoResetCommand(REPO_ROOT)}`.quiet().nothrow();
             await $`sh -lc 'cd "$1" && tar -cf - . | (cd "$2" && tar -xf -)' sh ${tempClone} ${REPO_ROOT}`;
             await $`rm -rf ${tempClone}`;
             return {
