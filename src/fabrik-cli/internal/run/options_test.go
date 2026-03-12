@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -304,6 +305,15 @@ func TestResolveOptionsPrintsGitHubAuthGuidanceWhenEnvFileLacksToken(t *testing.
 }
 
 func TestResolveOptionsInteractiveGitHubAuthCanWriteEnvFile(t *testing.T) {
+	// Skip if kubectl is not available or has no valid contexts
+	if _, err := exec.LookPath("kubectl"); err != nil {
+		t.Skip("kubectl not available")
+	}
+	// Verify we have at least one context available
+	if out, err := exec.Command("kubectl", "config", "get-contexts", "-o", "name").Output(); err != nil || len(out) == 0 {
+		t.Skip("no kubectl contexts available")
+	}
+
 	dir := t.TempDir()
 	envFile := filepath.Join(dir, ".env.dispatch")
 	if err := os.WriteFile(envFile, []byte("DATABASE_URL=postgres://demo\n"), 0o644); err != nil {
@@ -326,7 +336,6 @@ func TestResolveOptionsInteractiveGitHubAuthCanWriteEnvFile(t *testing.T) {
 		InputJSON:          "{}",
 		JJRepo:             "https://github.com/example/private-repo",
 		Namespace:          "fabrik-runs",
-		KubeContext:        "k3d-dev",
 		PVCSize:            "1Gi",
 		WaitTimeout:        "5m",
 		Interactive:        true,

@@ -153,7 +153,11 @@ What user-facing docs, sample docs, or code comments must change.
 
 The order below is intentional. We should first close the operator loop around inspect / resume / cancel, then strengthen env and lifecycle workflows, then move into security / observability / cluster management.
 
-## 1. Runs Inspection
+## 1. Runs Inspection [done]
+Status: done
+Verified by workflow run: hoth-todo-loop-e2e-20260312-32
+Verification summary: Verification job hoth-todo-loop-e2e-20260312-32-runs-inspection-verify succeeded.
+
 
 ### Task
 

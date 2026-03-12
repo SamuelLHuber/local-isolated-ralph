@@ -468,10 +468,16 @@ func truncate(s string, maxLen int) string {
 // This is called from main.go to wire up the commands.
 func AddRunCommands(root *cobra.Command) {
 	root.AddCommand(newRunsCommand())
-	
-	// Add the run subcommands directly under 'run' for convenience
-	// These use the run command's persistent flags
-	root.AddCommand(newRunLogsCommand())
-	root.AddCommand(newRunCancelCommand())
-	root.AddCommand(newRunResumeCommand())
+
+	// Add the run subcommands under 'run' as specified in the spec:
+	// fabrik run logs, fabrik run cancel, fabrik run resume
+	// Find the run command and add subcommands to it
+	for _, cmd := range root.Commands() {
+		if cmd.Use == "run" {
+			cmd.AddCommand(newRunLogsCommand())
+			cmd.AddCommand(newRunCancelCommand())
+			cmd.AddCommand(newRunResumeCommand())
+			break
+		}
+	}
 }
