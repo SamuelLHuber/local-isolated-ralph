@@ -30,6 +30,30 @@ function collectTaskIDs(node: unknown): string[] {
   return ids;
 }
 
+function findTaskNode(node: unknown, id: string): { props?: Record<string, unknown> } | null {
+  let match: { props?: Record<string, unknown> } | null = null;
+
+  const visit = (value: unknown) => {
+    if (match || !value || typeof value !== "object") return;
+    const element = value as { props?: Record<string, unknown> };
+    const props = element.props ?? {};
+    if (props.id === id) {
+      match = element;
+      return;
+    }
+
+    const children = props.children;
+    if (Array.isArray(children)) {
+      for (const child of children) visit(child);
+      return;
+    }
+    visit(children);
+  };
+
+  visit(node);
+  return match;
+}
+
 test("parseTodoContent stops at non-task level-two headings", () => {
   const items = parseTodoContent(`
 # Fabrik CLI Todo
@@ -265,6 +289,74 @@ test("todo-driver schedules review after a successful validation pass", () => {
   const ids = collectTaskIDs(workflow.build(ctx));
   expect(ids).toContain("runs-inspection:review:spec-alignment");
   expect(ids).toContain("runs-inspection:implement");
+});
+
+test("todo-driver review prompt uses diff summary instead of embedding the full patch", () => {
+  const ctx = buildContext({
+    runId: "preview",
+    iteration: 1,
+    iterations: {},
+    input: {},
+    outputs: {
+      todoPlan: [
+        {
+          nodeId: "plan-todo-loop",
+          iteration: 1,
+          items: [
+            {
+              id: "runs-inspection",
+              title: "Runs Inspection",
+              status: "pending",
+              task: "Inspect runs from Kubernetes.",
+              specTieIn: ["orchestrator metadata"],
+              guarantees: ["list reflects cluster state"],
+              verificationToBuildFirst: ["add deterministic tests"],
+              requiredChecks: ["`make verify-cli`"],
+              documentationUpdates: [],
+              blockedReason: null,
+            },
+          ],
+        },
+      ],
+      implement: [
+        {
+          nodeId: "runs-inspection:implement",
+          iteration: 0,
+          summary: "implemented",
+          changes: ["src/fabrik-cli/cmd/runs.go"],
+          verification: [],
+          documentation: [],
+        },
+      ],
+      validate: [
+        {
+          nodeId: "runs-inspection:validate",
+          iteration: 0,
+          allPassed: true,
+          commands: [],
+          evidence: ["unit tests passed"],
+          failingSummary: null,
+        },
+      ],
+      reviewContext: [
+        {
+          nodeId: "runs-inspection:review-context",
+          iteration: 0,
+          changedFiles: ["src/fabrik-cli/cmd/runs.go"],
+          diffSummary: ["M src/fabrik-cli/cmd/runs.go"],
+        },
+      ],
+    },
+    zodToKeyName: workflow.zodToKeyName,
+  });
+
+  const built = workflow.build(ctx);
+  const reviewNode = findTaskNode(built, "runs-inspection:review:verification");
+  expect(reviewNode).not.toBeNull();
+  expect(typeof reviewNode?.props?.children).toBe("string");
+  expect(reviewNode?.props?.children).toContain("Relevant JJ diff summary");
+  expect(reviewNode?.props?.children).not.toContain("Relevant JJ patch");
+  expect(reviewNode?.props?.children).toContain("jj diff --summary -r @-");
 });
 
 test("todo-driver schedules finalization after reviewers approve", () => {

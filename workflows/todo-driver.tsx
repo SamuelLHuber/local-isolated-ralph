@@ -86,7 +86,6 @@ const reviewFixSchema = z.object({
 const reviewContextSchema = z.object({
   changedFiles: z.array(z.string()),
   diffSummary: z.array(z.string()),
-  diffPatch: z.string(),
 });
 
 const reportSchema = z.object({
@@ -259,30 +258,6 @@ async function latestSnapshotDiffSummary(workdir: string): Promise<string[]> {
     const path = parseSummaryPath(line);
     return path ? !isRuntimeArtifactPath(path) : true;
   });
-}
-
-function filterPatchSections(patch: string): string {
-  if (!patch.trim()) return "";
-  const sections = patch.split(/^diff --git /m);
-  const kept: string[] = [];
-
-  for (const section of sections) {
-    const trimmed = section.trim();
-    if (!trimmed) continue;
-    const firstLine = trimmed.split("\n", 1)[0] ?? "";
-    const match = firstLine.match(/^a\/(.+?) b\/(.+)$/);
-    const paths = match ? [match[1], match[2]] : [];
-    if (paths.some((path) => isRuntimeArtifactPath(path))) continue;
-    kept.push(`diff --git ${trimmed}`);
-  }
-
-  return kept.join("\n");
-}
-
-async function latestSnapshotDiffPatch(workdir: string): Promise<string> {
-  const result = await $`jj diff --git -r @-`.cwd(workdir).nothrow().quiet();
-  if (result.exitCode !== 0) return "";
-  return filterPatchSections(result.stdout.toString()).trim();
 }
 
 function sanitizeK8sName(value: string): string {
@@ -606,14 +581,15 @@ ${reviewContext?.changedFiles?.length ? reviewContext.changedFiles.map((entry) =
 Relevant JJ diff summary for the latest snapshotted change (@-):
 ${reviewContext?.diffSummary?.length ? reviewContext.diffSummary.map((entry) => `- ${entry}`).join("\n") : "- none"}
 
-Relevant JJ patch for the latest snapshotted change (@-):
-${reviewContext?.diffPatch || "- none"}
-
 Latest validation evidence:
 ${latestValidate.evidence.length > 0 ? latestValidate.evidence.map((entry) => `- ${entry}`).join("\n") : "- validation passed without extra evidence"}
 
 Review the latest snapshotted JJ change (@-) in ${workdir}.
 Ignore transient runtime artifacts under .smithers, .fabrik, .jj, and .git.
+If you need more detail than the summary above, inspect the repository directly with read/bash tools, for example:
+- read todo.md and the changed files
+- run \`jj diff --summary -r @-\`
+- run \`jj show -r @- --stat\`
 Do not claim missing context. Use the todo item, changed files, JJ diff, and validation evidence above as the complete review context.
 If cluster evidence is available in the repository state, logs, or validation notes, you may use it as supporting evidence.
 If evidence from exercising the CLI itself against the cluster is available, you may use that as supporting evidence too.
@@ -882,7 +858,6 @@ Return ONLY JSON matching the schema.`,
                     timeoutMs: 60_000,
                     children: async () => {
                       const diffSummary = await latestSnapshotDiffSummary(workdir);
-                      const diffPatch = await latestSnapshotDiffPatch(workdir);
                       const changedFiles = filterRelevantRepoPaths(
                         latestOutputRow<z.infer<typeof implementSchema>>(
                           ctx,
@@ -893,7 +868,6 @@ Return ONLY JSON matching the schema.`,
                       return {
                         changedFiles,
                         diffSummary,
-                        diffPatch,
                       };
                     },
                   }),
