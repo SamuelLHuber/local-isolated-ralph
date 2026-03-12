@@ -312,6 +312,7 @@ function latestPlannedItems(ctx: WorkflowCtx): TodoItem[] {
 }
 
 function currentTodoItemsFromFile(): TodoItem[] {
+  if (!existsSync(TODO_PATH)) return [];
   const parsedItems = parseTodoItems(TODO_PATH);
   const pendingItems = parsedItems.filter((item) => item.status !== "done");
   return MAX_TODO_ITEMS > 0 ? pendingItems.slice(0, MAX_TODO_ITEMS) : pendingItems;
@@ -329,6 +330,7 @@ function currentTodoItem(ctx: WorkflowCtx): TodoItem | null {
 }
 
 function todoLoopComplete(ctx: WorkflowCtx): boolean {
+  if (!existsSync(TODO_PATH)) return false;
   return currentTodoItem(ctx) === null;
 }
 
