@@ -592,7 +592,43 @@ Resumes a stuck Fabrik run by deleting its pod, causing the Job controller to re
 fabrik run resume --id 01JK7V8X1234567890ABCDEFGH
 ```
 
-Note: Cannot resume CronJobs directly; resume individual job executions instead.
+**Guarantees:**
+- Uses the same immutable image digest as the original run (rejects mutable tags like `:latest`)
+- Preserves the PVC and Smithers SQLite state across pod restarts
+- Deletes only the pod; the Job controller recreates it with identical spec
+- Does not mutate execution model (image, command, env, resources remain unchanged)
+
+**Requirements:**
+- The Job must exist and be active (not already succeeded/failed)
+- The PVC must exist and be Bound
+- The image must use a digest reference (`repo/image@sha256:<digest>`)
+
+**RBAC Requirements:**
+The service account used by the CLI must have permission to delete pods in the target namespace:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: fabrik-runner
+  namespace: fabrik-runs
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list"]
+```
+
+**Operator Caveats:**
+- Resume does NOT change the image, command, or environment
+- Resume does NOT reset the Smithers state; it continues from the last completed task
+- Resume does NOT work on CronJobs (resume their child Jobs instead)
+- If the Job spec itself needs changes, cancel and create a new run
 
 ### kubectl Parity
 
