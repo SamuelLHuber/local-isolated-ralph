@@ -53,9 +53,14 @@ const RUNTIME_ARTIFACT_PREFIXES = [
 ];
 
 const todoPlanSchema = z.object({
-  todoPath: z.string(),
-  totalItems: z.number().int().nonnegative(),
-  selectedItems: z.number().int().nonnegative(),
+  todoPath: z.string().default(TODO_PATH),
+  totalItems: z.number().int().nonnegative().default(0),
+  selectedItems: z.number().int().nonnegative().default(0),
+  activeItemId: z.string().nullable().default(null),
+  activePhase: z
+    .enum(["implement", "validate", "review", "finalize", "done", "blocked"])
+    .nullable()
+    .default(null),
   items: z.array(todoItemSchema),
 });
 
@@ -115,6 +120,8 @@ type ReviewFix = z.infer<typeof reviewFixSchema>;
 type ReviewContext = z.infer<typeof reviewContextSchema>;
 type Validate = z.infer<typeof validateSchema>;
 type WorkflowCtx = Parameters<Parameters<typeof smithers>[0]>[0];
+type TodoPlanRow = z.infer<typeof todoPlanSchema>;
+type TodoLoopPhase = NonNullable<TodoPlanRow["activePhase"]>;
 
 type Reviewer = {
   id: string;
@@ -398,18 +405,8 @@ async function runTodoValidation(item: TodoItem): Promise<Validate> {
 }
 
 function latestPlannedItems(ctx: WorkflowCtx): TodoItem[] {
-  const planRows = (ctx.outputs as { todoPlan?: unknown[] }).todoPlan ?? [];
-  const plan = planRows.length > 0 ? planRows[planRows.length - 1] : null;
-  if (!plan || typeof plan !== "object") return [];
-  const row = plan as { items?: unknown };
-  if (!Array.isArray(row.items)) return [];
-
-  const items: TodoItem[] = [];
-  for (const item of row.items) {
-    const parsed = todoItemSchema.safeParse(item);
-    if (parsed.success && parsed.data.status !== "done") items.push(parsed.data);
-  }
-  return items;
+  const row = latestTodoPlan(ctx);
+  return row?.items ?? [];
 }
 
 function currentTodoItemsFromFile(): TodoItem[] {
@@ -419,24 +416,30 @@ function currentTodoItemsFromFile(): TodoItem[] {
   return MAX_TODO_ITEMS > 0 ? pendingItems.slice(0, MAX_TODO_ITEMS) : pendingItems;
 }
 
-function latestFinishingItem(ctx: WorkflowCtx): TodoItem | null {
-  for (const item of latestPlannedItems(ctx)) {
-    if (!latestReportDone(ctx, `${item.id}:complete-report`)) return item;
-  }
-  return null;
+function latestTodoPlan(ctx: WorkflowCtx): TodoPlanRow | null {
+  const planRows = (ctx.outputs as { todoPlan?: unknown[] }).todoPlan ?? [];
+  const row = planRows.length > 0 ? planRows[planRows.length - 1] : null;
+  const parsed = todoPlanSchema.safeParse(row);
+  return parsed.success ? parsed.data : null;
 }
 
 export function chooseCurrentTodoItem(
-  fileItems: readonly TodoItem[],
-  finishingItem: TodoItem | null,
+  plannedItems: readonly TodoItem[],
+  activeItemId: string | null,
+  fallbackFileItems: readonly TodoItem[],
 ): TodoItem | null {
-  return finishingItem ?? fileItems[0] ?? null;
+  if (activeItemId) {
+    return plannedItems.find((item) => item.id === activeItemId) ?? null;
+  }
+  return plannedItems[0] ?? fallbackFileItems[0] ?? null;
 }
 
 function currentTodoItem(ctx: WorkflowCtx): TodoItem | null {
+  const latestPlan = latestTodoPlan(ctx);
   return chooseCurrentTodoItem(
+    latestPlan?.items ?? [],
+    latestPlan?.activeItemId ?? null,
     currentTodoItemsFromFile(),
-    latestFinishingItem(ctx),
   );
 }
 
@@ -588,6 +591,146 @@ function latestReportDone(ctx: WorkflowCtx, taskId: string): boolean {
     | z.infer<typeof reportSchema>
     | undefined;
   return report?.status === "done";
+}
+
+function todoLoopState(
+  ctx: WorkflowCtx,
+  item: TodoItem,
+): {
+  phase: TodoLoopPhase;
+  approved: boolean;
+  blocked: boolean;
+  latestImplementIteration: number;
+  latestValidationIteration: number;
+  latestReviewIteration: number;
+  reviewIssuesForLatestValidation: string[];
+  latestValidate: Validate | undefined;
+  readyToFinalize: boolean;
+  needsImplementation: boolean;
+  needsValidation: boolean;
+  needsReview: boolean;
+  needsMarkTodoDone: boolean;
+  needsCompletionSnapshot: boolean;
+  needsBookmarkPush: boolean;
+  needsCompletionReport: boolean;
+} {
+  const latestValidate = latestValidation(ctx, item.id);
+  const latestImplementIteration =
+    latestOutputIteration(ctx, "implement", `${item.id}:implement`) ?? -1;
+  const latestValidationIteration =
+    latestOutputIteration(ctx, "validate", `${item.id}:validate`) ?? -1;
+  const latestReviewIteration = Math.max(
+    ...REVIEWERS.map(
+      (reviewer) =>
+        latestOutputIteration(ctx, "review", `${item.id}:review:${reviewer.id}`) ??
+        -1,
+    ),
+  );
+  const reviewIssuesForLatestValidation =
+    latestValidationIteration >= 0
+      ? collectReviewIssues(ctx, item.id, REVIEWERS, latestValidationIteration)
+      : [];
+  const approved = itemLoopApproved(ctx, item.id);
+  const todoMarkedDone = latestReportDone(ctx, `${item.id}:mark-todo-done`);
+  const completionSnapshotted = latestReportDone(
+    ctx,
+    `${item.id}:snapshot-complete`,
+  );
+  const bookmarkPushed =
+    !jjBookmark || latestReportDone(ctx, `${item.id}:push-bookmark`);
+  const completionReported = latestReportDone(
+    ctx,
+    `${item.id}:complete-report`,
+  );
+  const blocked = item.blockedReason !== null;
+  const readyToFinalize = !blocked && approved;
+  const needsMarkTodoDone = readyToFinalize && !todoMarkedDone;
+  const needsCompletionSnapshot =
+    readyToFinalize && todoMarkedDone && !completionSnapshotted;
+  const needsBookmarkPush =
+    readyToFinalize &&
+    todoMarkedDone &&
+    completionSnapshotted &&
+    !bookmarkPushed;
+  const needsCompletionReport =
+    readyToFinalize &&
+    todoMarkedDone &&
+    completionSnapshotted &&
+    bookmarkPushed &&
+    !completionReported;
+  const latestImplementationValidated =
+    latestImplementIteration >= 0 &&
+    latestValidationIteration >= latestImplementIteration &&
+    latestValidate?.allPassed === true;
+  const latestImplementationNeedsReview =
+    latestImplementationValidated &&
+    latestReviewIteration < latestValidationIteration;
+  const latestImplementationHasReviewIssues =
+    latestImplementationValidated &&
+    latestReviewIteration >= latestValidationIteration &&
+    reviewIssuesForLatestValidation.length > 0;
+  const needsImplementation =
+    !blocked &&
+    !readyToFinalize &&
+    (
+      latestImplementIteration < 0 ||
+      (latestValidationIteration >= latestImplementIteration &&
+        latestValidate?.allPassed === false) ||
+      latestImplementationHasReviewIssues
+    );
+  const needsValidation =
+    !blocked &&
+    !readyToFinalize &&
+    !needsImplementation &&
+    latestImplementIteration > latestValidationIteration;
+  const needsReview =
+    !blocked &&
+    !readyToFinalize &&
+    !needsImplementation &&
+    !needsValidation &&
+    latestImplementationNeedsReview;
+
+  const phase: TodoLoopPhase = blocked
+    ? "blocked"
+    : needsMarkTodoDone ||
+        needsCompletionSnapshot ||
+        needsBookmarkPush ||
+        needsCompletionReport
+      ? "finalize"
+      : needsReview
+        ? "review"
+        : needsValidation
+          ? "validate"
+          : needsImplementation
+            ? "implement"
+            : completionReported
+              ? "done"
+              : readyToFinalize
+                ? "finalize"
+                : latestImplementationValidated
+                  ? "review"
+                  : latestImplementIteration >= 0
+                    ? "validate"
+                    : "implement";
+
+  return {
+    phase,
+    approved,
+    blocked,
+    latestImplementIteration,
+    latestValidationIteration,
+    latestReviewIteration,
+    reviewIssuesForLatestValidation,
+    latestValidate,
+    readyToFinalize,
+    needsImplementation,
+    needsValidation,
+    needsReview,
+    needsMarkTodoDone,
+    needsCompletionSnapshot,
+    needsBookmarkPush,
+    needsCompletionReport,
+  };
 }
 
 function withNodeKey<T extends React.ReactElement>(
@@ -783,81 +926,20 @@ function TodoItemPipeline({
   );
   const latestValidate = latestValidation(ctx, item.id);
   const latestFix = latestReviewFix(ctx, item.id);
-  const latestImplementIteration =
-    latestOutputIteration(ctx, "implement", `${item.id}:implement`) ?? -1;
-  const latestValidationIteration =
-    latestOutputIteration(ctx, "validate", `${item.id}:validate`) ?? -1;
-  const latestReviewIteration = Math.max(
-    ...REVIEWERS.map(
-      (reviewer) =>
-        latestOutputIteration(ctx, "review", `${item.id}:review:${reviewer.id}`) ??
-        -1,
-    ),
-  );
-  const reviewIssuesForLatestValidation =
-    latestValidationIteration >= 0
-      ? collectReviewIssues(ctx, item.id, REVIEWERS, latestValidationIteration)
-      : [];
   const issues = collectReviewIssues(ctx, item.id, REVIEWERS);
-  const approved = itemLoopApproved(ctx, item.id);
-  const todoMarkedDone = latestReportDone(ctx, `${item.id}:mark-todo-done`);
-  const completionSnapshotted = latestReportDone(
-    ctx,
-    `${item.id}:snapshot-complete`,
-  );
-  const bookmarkPushed =
-    !jjBookmark || latestReportDone(ctx, `${item.id}:push-bookmark`);
-  const completionReported = latestReportDone(
-    ctx,
-    `${item.id}:complete-report`,
-  );
-  const blocked = item.blockedReason !== null;
-  const readyToFinalize = !blocked && approved;
-  const needsMarkTodoDone = readyToFinalize && !todoMarkedDone;
-  const needsCompletionSnapshot =
-    readyToFinalize && todoMarkedDone && !completionSnapshotted;
-  const needsBookmarkPush =
-    readyToFinalize &&
-    todoMarkedDone &&
-    completionSnapshotted &&
-    !bookmarkPushed;
-  const needsCompletionReport =
-    readyToFinalize &&
-    todoMarkedDone &&
-    completionSnapshotted &&
-    bookmarkPushed &&
-    !completionReported;
-  const latestImplementationValidated =
-    latestImplementIteration >= 0 &&
-    latestValidationIteration >= latestImplementIteration &&
-    latestValidate?.allPassed === true;
-  const latestImplementationNeedsReview =
-    latestImplementationValidated &&
-    latestReviewIteration < latestValidationIteration;
-  const latestImplementationHasReviewIssues =
-    latestImplementationValidated &&
-    latestReviewIteration >= latestValidationIteration &&
-    reviewIssuesForLatestValidation.length > 0;
-  const needsImplementation =
-    !blocked &&
-    !readyToFinalize &&
-    (
-      latestImplementIteration < 0 ||
-      (latestValidationIteration >= latestImplementIteration &&
-        latestValidate?.allPassed === false) ||
-      latestImplementationHasReviewIssues
-    );
-  const needsValidation =
-    !blocked &&
-    !readyToFinalize &&
-    !needsImplementation &&
-    latestImplementIteration > latestValidationIteration;
-  const needsReview =
-    !blocked &&
-    !readyToFinalize &&
-    !needsImplementation &&
-    !needsValidation &&
-    latestImplementationNeedsReview;
+  const loopState = todoLoopState(ctx, item);
+  const {
+    approved,
+    blocked,
+    readyToFinalize,
+    needsImplementation,
+    needsValidation,
+    needsReview,
+    needsMarkTodoDone,
+    needsCompletionSnapshot,
+    needsBookmarkPush,
+    needsCompletionReport,
+  } = loopState;
   return Sequence({
     key: item.id,
     children: [
@@ -1206,12 +1288,40 @@ export default smithers((ctx) => {
                     MAX_TODO_ITEMS > 0
                       ? pendingItems.slice(0, MAX_TODO_ITEMS)
                       : pendingItems;
+                  const previousPlan = latestTodoPlan(ctx);
+                  const previousActive =
+                    previousPlan?.activeItemId
+                      ? parsedItems.find(
+                          (item) => item.id === previousPlan.activeItemId,
+                        ) ??
+                        previousPlan.items.find(
+                          (item) => item.id === previousPlan.activeItemId,
+                        ) ??
+                        null
+                      : null;
+                  const previousActivePhase = previousActive
+                    ? todoLoopState(ctx, previousActive).phase
+                    : null;
+                  const activeItem =
+                    previousActive &&
+                      previousActivePhase !== "done" &&
+                      previousActivePhase !== "blocked"
+                      ? previousActive
+                      : limitedItems[0] ?? null;
+                  const selectedItems = activeItem &&
+                      !limitedItems.some((item) => item.id === activeItem.id)
+                    ? [activeItem, ...limitedItems]
+                    : limitedItems;
 
                   return {
                     todoPath: TODO_PATH,
                     totalItems: parsedItems.length,
-                    selectedItems: limitedItems.length,
-                    items: limitedItems,
+                    selectedItems: selectedItems.length,
+                    activeItemId: activeItem?.id ?? null,
+                    activePhase: activeItem
+                      ? todoLoopState(ctx, activeItem).phase
+                      : null,
+                    items: selectedItems,
                   };
                 },
               }),

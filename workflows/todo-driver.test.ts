@@ -173,8 +173,8 @@ Inspect runs from Kubernetes.
   expect(reparsed[0]?.status).toBe("done");
 });
 
-test("chooseCurrentTodoItem prioritizes finishing work before the next file item", () => {
-  const finishingItem = {
+test("chooseCurrentTodoItem prioritizes the active planned item before the next file item", () => {
+  const activeItem = {
     id: "runs-inspection",
     title: "Runs Inspection",
     status: "pending",
@@ -199,10 +199,14 @@ test("chooseCurrentTodoItem prioritizes finishing work before the next file item
     blockedReason: null,
   } as const;
 
-  expect(chooseCurrentTodoItem([nextFileItem], finishingItem)).toEqual(
-    finishingItem,
+  expect(
+    chooseCurrentTodoItem([activeItem, nextFileItem], activeItem.id, [nextFileItem]),
+  ).toEqual(
+    activeItem,
   );
-  expect(chooseCurrentTodoItem([nextFileItem], null)).toEqual(nextFileItem);
+  expect(chooseCurrentTodoItem([nextFileItem], null, [nextFileItem])).toEqual(
+    nextFileItem,
+  );
 });
 
 test("todo-driver builds a Smithers workflow from context", () => {
@@ -1177,4 +1181,112 @@ test("todo-driver emits a completion report after bookmark push", () => {
   const ids = collectTaskIDs(workflow.build(ctx));
   expect(ids).toContain("runs-inspection:complete-report");
   expect(ids).not.toContain("runs-inspection:push-bookmark");
+});
+
+test("todo-driver keeps the active item mounted through finalize even after todo.md marks it done", () => {
+  const verificationMap = {
+    id: "verification-map",
+    title: "Verification Map",
+    status: "done",
+    task: "Document the verification map.",
+    specTieIn: ["orchestrator verification"],
+    guarantees: ["verification guidance is documented"],
+    verificationToBuildFirst: ["doc checks"],
+    requiredChecks: ["`make verify-cli`"],
+    documentationUpdates: [],
+    blockedReason: null,
+  } as const;
+  const envPromotion = {
+    id: "env-promotion-protected-environments",
+    title: "Env Promotion / Protected Environments",
+    status: "pending",
+    task: "Harden env promotion.",
+    specTieIn: ["environment protections"],
+    guarantees: ["promotion respects protection rules"],
+    verificationToBuildFirst: ["deterministic checks"],
+    requiredChecks: ["`make verify-cli`"],
+    documentationUpdates: [],
+    blockedReason: null,
+  } as const;
+
+  const ctx = buildContext({
+    runId: "preview",
+    iteration: 9,
+    iterations: {},
+    input: {},
+    outputs: {
+      todoPlan: [
+        {
+          nodeId: "plan-todo-loop",
+          iteration: 8,
+          todoPath: "todo.md",
+          totalItems: 10,
+          selectedItems: 2,
+          activeItemId: "verification-map",
+          activePhase: "finalize",
+          items: [verificationMap, envPromotion],
+        },
+      ],
+      implement: [
+        {
+          nodeId: "verification-map:implement",
+          iteration: 8,
+          summary: "implemented",
+          changes: [],
+          verification: [],
+          documentation: [],
+        },
+      ],
+      validate: [
+        {
+          nodeId: "verification-map:validate",
+          iteration: 8,
+          allPassed: true,
+          commands: [],
+          evidence: [],
+          failingSummary: null,
+        },
+      ],
+      review: [
+        {
+          nodeId: "verification-map:review:spec-alignment",
+          iteration: 8,
+          reviewer: "Spec Alignment",
+          approved: true,
+          issues: [],
+          requiredFollowUps: [],
+        },
+        {
+          nodeId: "verification-map:review:maintainability",
+          iteration: 8,
+          reviewer: "Maintainability",
+          approved: true,
+          issues: [],
+          requiredFollowUps: [],
+        },
+        {
+          nodeId: "verification-map:review:verification",
+          iteration: 8,
+          reviewer: "Verification",
+          approved: true,
+          issues: [],
+          requiredFollowUps: [],
+        },
+      ],
+      report: [
+        {
+          nodeId: "verification-map:mark-todo-done",
+          iteration: 8,
+          ticketId: "verification-map",
+          status: "done",
+          summary: "Marked done",
+        },
+      ],
+    },
+    zodToKeyName: workflow.zodToKeyName,
+  });
+
+  const ids = collectTaskIDs(workflow.build(ctx));
+  expect(ids).toContain("verification-map:snapshot-complete");
+  expect(ids).not.toContain("env-promotion-protected-environments:implement");
 });
