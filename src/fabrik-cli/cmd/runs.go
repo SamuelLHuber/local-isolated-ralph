@@ -291,11 +291,24 @@ func runRunCancel(ctx context.Context, stdout, stderr io.Writer, opts runCancelO
 		Namespace:   opts.Namespace,
 	}
 
-	if err := client.Cancel(ctx, opts.RunID); err != nil {
+	result, err := client.Cancel(ctx, opts.RunID)
+	if err != nil {
 		return err
 	}
 
-	_, err := fmt.Fprintf(stdout, "Canceled run %s\n", opts.RunID)
+	// Provide clear status based on what was cancelled
+	if result.WasActive {
+		_, err := fmt.Fprintf(stdout, "Canceled active run %s (%s %s)\n", opts.RunID, result.Resource, result.Name)
+		return err
+	}
+
+	if result.WasFinished {
+		_, err := fmt.Fprintf(stdout, "Cleaned up finished run %s (status: %s, %s %s)\n",
+			opts.RunID, result.Status, result.Resource, result.Name)
+		return err
+	}
+
+	_, err = fmt.Fprintf(stdout, "Canceled run %s (%s %s)\n", opts.RunID, result.Resource, result.Name)
 	return err
 }
 

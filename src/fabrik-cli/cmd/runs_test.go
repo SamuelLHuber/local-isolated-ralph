@@ -431,7 +431,7 @@ func TestRunCancel(t *testing.T) {
 	script += "echo \"$@\" >> " + kubectlLog + "\n"
 	script += `case "$*" in
 	*"get jobs"*"fabrik.sh/run-id=test-cancel-run"*)
-		printf '{"items":[{"metadata":{"name":"test-job"}}]}\n'
+		printf '{"items":[{"metadata":{"name":"test-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"test-cancel-run"}},"spec":{"template":{"spec":{"containers":[{"image":"test"}]}}},"status":{"active":1}}]}\n'
 		exit 0
 		;;
 	*"delete job"*)
@@ -462,6 +462,9 @@ exit 1
 	if !strings.Contains(output, "Canceled") {
 		t.Errorf("expected output to confirm cancel, got:\n%s", output)
 	}
+	if !strings.Contains(output, "active") {
+		t.Errorf("expected output to mention 'active' for active job, got:\n%s", output)
+	}
 
 	logData, err := os.ReadFile(kubectlLog)
 	if err != nil {
@@ -469,6 +472,88 @@ exit 1
 	}
 	if !strings.Contains(string(logData), "delete job") {
 		t.Errorf("expected kubectl delete to be called")
+	}
+}
+
+func TestRunCancelFinishedJob(t *testing.T) {
+	// Canceling a finished job should indicate cleanup, not active cancellation
+	script := "#!/bin/sh\n"
+	script += `case "$*" in
+	*"get jobs"*"fabrik.sh/run-id=finished-cancel-run"*)
+		printf '{"items":[{"metadata":{"name":"finished-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"finished-cancel-run"}},"spec":{"template":{"spec":{"containers":[{"image":"test"}]}}},"status":{"succeeded":1}}]}\n'
+		exit 0
+		;;
+	*"delete job"*)
+		printf 'job deleted\n'
+		exit 0
+		;;
+esac
+exit 1
+`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	opts := runCancelOptions{
+		RunID:     "finished-cancel-run",
+		Namespace: "fabrik-runs",
+	}
+
+	if err := runRunCancel(context.Background(), &out, &errOut, opts); err != nil {
+		t.Fatalf("runRunCancel failed: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Cleaned up") {
+		t.Errorf("expected output to say 'Cleaned up' for finished job, got:\n%s", output)
+	}
+	if !strings.Contains(output, "succeeded") {
+		t.Errorf("expected output to mention 'succeeded' status, got:\n%s", output)
+	}
+}
+
+func TestRunCancelMissingRun(t *testing.T) {
+	// Canceling a missing run should return error
+	script := "#!/bin/sh\n"
+	script += `case "$*" in
+	*"get jobs"*"fabrik.sh/run-id=missing-run"*)
+		printf '{"items":[]}\n'
+		exit 0
+		;;
+	*"get cronjobs"*"fabrik.sh/run-id=missing-run"*)
+		printf '{"items":[]}\n'
+		exit 0
+		;;
+esac
+exit 1
+`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	opts := runCancelOptions{
+		RunID:     "missing-run",
+		Namespace: "fabrik-runs",
+	}
+
+	err := runRunCancel(context.Background(), &out, &errOut, opts)
+	if err == nil {
+		t.Fatal("expected runRunCancel to fail for missing run")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected error to mention 'not found', got: %v", err)
 	}
 }
 

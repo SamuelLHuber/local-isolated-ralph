@@ -531,7 +531,7 @@ func TestCancelDeletesJob(t *testing.T) {
 	script += "echo \"$@\" >> " + kubectlLog + "\n"
 	script += `case "$*" in
 	*"get jobs"*"fabrik.sh/run-id=test-run-123"*)
-		printf '{"items":[{"metadata":{"name":"test-job"}}]}\n'
+		printf '{"items":[{"metadata":{"name":"test-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"test-run-123"}},"spec":{"template":{"spec":{"containers":[{"image":"test"}]}}},"status":{"active":1}}]}\n'
 		exit 0
 		;;
 	*"delete job"*)
@@ -548,9 +548,16 @@ exit 1
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	client := &K8sClient{Namespace: "fabrik-runs"}
-	err := client.Cancel(context.Background(), "test-run-123")
+	result, err := client.Cancel(context.Background(), "test-run-123")
 	if err != nil {
 		t.Fatalf("Cancel failed: %v", err)
+	}
+
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.RunID != "test-run-123" {
+		t.Errorf("expected run-id test-run-123, got %s", result.RunID)
 	}
 
 	logData, err := os.ReadFile(kubectlLog)
@@ -896,4 +903,353 @@ func TestRunInfoJSONSerialization(t *testing.T) {
 func timeMustParse(s string) time.Time {
 	t, _ := time.Parse("2006-01-02T15:04:05Z", s)
 	return t
+}
+
+// Cancel verification tests - ensure spec guarantees are met:
+// - cancel deletes the Job or CronJob-owned child run correctly
+// - status/output clearly indicates what was cancelled
+// - cancellation does not leave ambiguous state
+
+func TestCancelActiveJob(t *testing.T) {
+	// Active job (status.active > 0) should be cancelled with WasActive=true
+	script := "#!/bin/sh\n"
+	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=active-run-123"; then
+	echo '{"items":[{"metadata":{"name":"active-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"active-run-123","fabrik.sh/phase":"implement"}},"spec":{"template":{"spec":{"containers":[{"image":"test"}]}}},"status":{"active":1}}]}'
+	exit 0
+fi
+if echo "$*" | grep -q "delete job active-job"; then
+	echo 'job.batch "active-job" deleted'
+	exit 0
+fi
+exit 1
+`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	result, err := client.Cancel(context.Background(), "active-run-123")
+	if err != nil {
+		t.Fatalf("Cancel failed: %v", err)
+	}
+
+	if result.RunID != "active-run-123" {
+		t.Errorf("expected run-id active-run-123, got %s", result.RunID)
+	}
+	if result.Resource != "job" {
+		t.Errorf("expected resource 'job', got %s", result.Resource)
+	}
+	if result.Name != "active-job" {
+		t.Errorf("expected job name 'active-job', got %s", result.Name)
+	}
+	if !result.WasActive {
+		t.Errorf("expected WasActive=true for active job")
+	}
+	if result.WasFinished {
+		t.Errorf("expected WasFinished=false for active job")
+	}
+	if result.Status != "active" {
+		t.Errorf("expected status 'active', got %s", result.Status)
+	}
+}
+
+func TestCancelSucceededJob(t *testing.T) {
+	// Already-succeeded job should be cleaned up with WasFinished=true
+	script := "#!/bin/sh\n"
+	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=succeeded-run-456"; then
+	echo '{"items":[{"metadata":{"name":"succeeded-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"succeeded-run-456"}},"spec":{"template":{"spec":{"containers":[{"image":"test"}]}}},"status":{"succeeded":1}}]}'
+	exit 0
+fi
+if echo "$*" | grep -q "delete job succeeded-job"; then
+	echo 'job.batch "succeeded-job" deleted'
+	exit 0
+fi
+exit 1
+`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	result, err := client.Cancel(context.Background(), "succeeded-run-456")
+	if err != nil {
+		t.Fatalf("Cancel failed: %v", err)
+	}
+
+	if !result.WasFinished {
+		t.Errorf("expected WasFinished=true for succeeded job")
+	}
+	if result.WasActive {
+		t.Errorf("expected WasActive=false for succeeded job")
+	}
+	if result.Status != "succeeded" {
+		t.Errorf("expected status 'succeeded', got %s", result.Status)
+	}
+}
+
+func TestCancelFailedJob(t *testing.T) {
+	// Failed job should be cleaned up with WasFinished=true
+	script := "#!/bin/sh\n"
+	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=failed-run-789"; then
+	echo '{"items":[{"metadata":{"name":"failed-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"failed-run-789"}},"spec":{"template":{"spec":{"containers":[{"image":"test"}]}}},"status":{"failed":1}}]}'
+	exit 0
+fi
+if echo "$*" | grep -q "delete job failed-job"; then
+	echo 'job.batch "failed-job" deleted'
+	exit 0
+fi
+exit 1
+`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	result, err := client.Cancel(context.Background(), "failed-run-789")
+	if err != nil {
+		t.Fatalf("Cancel failed: %v", err)
+	}
+
+	if !result.WasFinished {
+		t.Errorf("expected WasFinished=true for failed job")
+	}
+	if result.Status != "failed" {
+		t.Errorf("expected status 'failed', got %s", result.Status)
+	}
+}
+
+func TestCancelMissingRun(t *testing.T) {
+	// Missing run should return clear error with no ambiguous state
+	script := "#!/bin/sh\n"
+	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=missing-run"; then
+	echo '{"items":[]}'
+	exit 0
+fi
+if echo "$*" | grep -q "get cronjobs.*fabrik.sh/run-id=missing-run"; then
+	echo '{"items":[]}'
+	exit 0
+fi
+exit 1
+`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	result, err := client.Cancel(context.Background(), "missing-run")
+	if err == nil {
+		t.Fatal("expected Cancel to fail for missing run")
+	}
+	if result != nil {
+		t.Errorf("expected nil result for missing run, got %+v", result)
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected 'not found' error, got %v", err)
+	}
+}
+
+func TestCancelCronJob(t *testing.T) {
+	// CronJob should be cancelled with Resource="cronjob"
+	script := "#!/bin/sh\n"
+	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=cron-schedule-1"; then
+	echo '{"items":[]}'
+	exit 0
+fi
+if echo "$*" | grep -q "get cronjobs.*fabrik.sh/run-id=cron-schedule-1"; then
+	echo '{"items":[{"metadata":{"name":"fabrik-cron-daily","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"cron-schedule-1"}},"spec":{"schedule":"0 2 * * *"}}]}'
+	exit 0
+fi
+if echo "$*" | grep -q "delete cronjob fabrik-cron-daily"; then
+	echo 'cronjob.batch "fabrik-cron-daily" deleted'
+	exit 0
+fi
+exit 1
+`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	result, err := client.Cancel(context.Background(), "cron-schedule-1")
+	if err != nil {
+		t.Fatalf("Cancel failed: %v", err)
+	}
+
+	if result.Resource != "cronjob" {
+		t.Errorf("expected resource 'cronjob', got %s", result.Resource)
+	}
+	if result.Name != "fabrik-cron-daily" {
+		t.Errorf("expected cronjob name 'fabrik-cron-daily', got %s", result.Name)
+	}
+	if result.Status != "scheduled" {
+		t.Errorf("expected status 'scheduled', got %s", result.Status)
+	}
+}
+
+func TestCancelCronJobChildJob(t *testing.T) {
+	// CronJob-created child job (name contains run-id but no label) should be detected and cancelled
+	script := "#!/bin/sh\n"
+	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=child-run-abc123"; then
+	echo '{"items":[]}'
+	exit 0
+fi
+if echo "$*" | grep -q "get cronjobs.*fabrik.sh/run-id=child-run-abc123"; then
+	echo '{"items":[]}'
+	exit 0
+fi
+if echo "$*" | grep -q "get jobs" && echo "$*" | grep -qv "fabrik.sh/run-id"; then
+	# List all jobs to find child job by name
+	echo '{"items":[{"metadata":{"name":"fabrik-cron-child-run-abc123-1741800000","namespace":"fabrik-runs","labels":{"fabrik.sh/managed-by":"fabrik"}},"spec":{"template":{"spec":{"containers":[{"image":"test"}]}}},"status":{"active":1}}]}'
+	exit 0
+fi
+if echo "$*" | grep -q "delete job fabrik-cron-child-run-abc123-1741800000"; then
+	echo 'job.batch "fabrik-cron-child-run-abc123-1741800000" deleted'
+	exit 0
+fi
+exit 1
+`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	result, err := client.Cancel(context.Background(), "child-run-abc123")
+	if err != nil {
+		t.Fatalf("Cancel failed: %v", err)
+	}
+
+	if result.Resource != "child-job" {
+		t.Errorf("expected resource 'child-job', got %s", result.Resource)
+	}
+	if !strings.Contains(result.Name, "child-run-abc123") {
+		t.Errorf("expected job name to contain run-id, got %s", result.Name)
+	}
+	if !result.WasActive {
+		t.Errorf("expected WasActive=true for active child job")
+	}
+}
+
+func TestCancelRBACPermissionDenied(t *testing.T) {
+	// RBAC permission error should provide clear guidance
+	script := "#!/bin/sh\n"
+	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=rbac-deny-run"; then
+	echo '{"items":[{"metadata":{"name":"denied-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"rbac-deny-run"}},"spec":{"template":{"spec":{"containers":[{"image":"test"}]}}},"status":{"active":1}}]}'
+	exit 0
+fi
+if echo "$*" | grep -q "delete job denied-job"; then
+	echo 'Error from server (Forbidden): jobs "denied-job" is forbidden: User "system:serviceaccount:fabrik-runs:test" cannot delete resource "jobs" in API group "batch" in the namespace "fabrik-runs"' >&2
+	exit 1
+fi
+exit 1
+`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	result, err := client.Cancel(context.Background(), "rbac-deny-run")
+	if err == nil {
+		t.Fatal("expected Cancel to fail with RBAC error")
+	}
+	if result != nil {
+		t.Errorf("expected nil result when delete fails, got %+v", result)
+	}
+	if !strings.Contains(err.Error(), "insufficient permissions") && !strings.Contains(err.Error(), "rbac.yaml") {
+		t.Errorf("expected error to mention permissions and rbac.yaml, got: %v", err)
+	}
+}
+
+func TestCancelPendingJob(t *testing.T) {
+	// Pending job (no active/succeeded/failed status) should be cancelled
+	script := "#!/bin/sh\n"
+	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=pending-run-xyz"; then
+	echo '{"items":[{"metadata":{"name":"pending-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"pending-run-xyz"}},"spec":{"template":{"spec":{"containers":[{"image":"test"}]}}},"status":{}}]}'
+	exit 0
+fi
+if echo "$*" | grep -q "delete job pending-job"; then
+	echo 'job.batch "pending-job" deleted'
+	exit 0
+fi
+exit 1
+`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	result, err := client.Cancel(context.Background(), "pending-run-xyz")
+	if err != nil {
+		t.Fatalf("Cancel failed: %v", err)
+	}
+
+	if result.WasActive || result.WasFinished {
+		t.Errorf("expected neither WasActive nor WasFinished for pending job")
+	}
+	if result.Status != "pending" {
+		t.Errorf("expected status 'pending', got %s", result.Status)
+	}
+}
+
+func TestCancelResultHasPhaseInfo(t *testing.T) {
+	// Cancel result should include phase information from job labels
+	script := "#!/bin/sh\n"
+	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=phase-test-run"; then
+	echo '{"items":[{"metadata":{"name":"phase-test-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"phase-test-run","fabrik.sh/phase":"review","fabrik.sh/project":"myapp"}},"spec":{"template":{"spec":{"containers":[{"image":"test"}]}}},"status":{"active":1}}]}'
+	exit 0
+fi
+if echo "$*" | grep -q "delete job phase-test-job"; then
+	echo 'job.batch "phase-test-job" deleted'
+	exit 0
+fi
+exit 1
+`
+
+	dir := t.TempDir()
+	kubectlPath := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write mock kubectl: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client := &K8sClient{Namespace: "fabrik-runs"}
+	result, err := client.Cancel(context.Background(), "phase-test-run")
+	if err != nil {
+		t.Fatalf("Cancel failed: %v", err)
+	}
+
+	if result.Phase != "review" {
+		t.Errorf("expected phase 'review', got %s", result.Phase)
+	}
 }

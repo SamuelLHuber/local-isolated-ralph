@@ -528,27 +528,147 @@ func (c *K8sClient) cronJobToRunInfo(cj *runCronJobJSON) RunInfo {
 	return run
 }
 
+// CancelResult holds the result of a cancel operation for clear status reporting.
+type CancelResult struct {
+	RunID       string
+	Resource    string // "job", "cronjob", or "child-job"
+	Name        string
+	WasActive   bool
+	WasFinished bool
+	Phase       string
+	Status      string
+}
+
 // Cancel deletes a run by deleting its Job or CronJob.
-func (c *K8sClient) Cancel(ctx context.Context, runID string) error {
-	// Try to find and delete Job first
-	_, err := c.getJobByRunID(ctx, runID)
-	if err == nil {
-		_, err = c.runKubectl(ctx, "-n", c.Namespace, "delete", "job",
-			"-l", "fabrik.sh/run-id="+runID,
-			"--ignore-not-found")
-		return err
+// It provides clear status about what was cancelled and handles edge cases:
+//   - Active jobs: deleted, returns WasActive=true
+//   - Already-finished jobs: deleted (cleanup), returns WasFinished=true
+//   - Missing runs: returns error
+//   - CronJob-owned child jobs: detected and deleted by name pattern
+//
+// Guarantees:
+//   - Deletes the Job or CronJob-owned child run correctly
+//   - Status clearly indicates what was cancelled (active vs finished)
+//   - No ambiguous state - returns error for missing runs
+func (c *K8sClient) Cancel(ctx context.Context, runID string) (*CancelResult, error) {
+	// Try to find Job with the run-id label first
+	job, err := c.getJobByRunID(ctx, runID)
+	if err == nil && job != nil {
+		return c.cancelJob(ctx, job, runID)
 	}
 
-	// Try CronJob
-	_, err = c.getCronJobByRunID(ctx, runID)
-	if err == nil {
-		_, err = c.runKubectl(ctx, "-n", c.Namespace, "delete", "cronjob",
-			"-l", "fabrik.sh/run-id="+runID,
-			"--ignore-not-found")
-		return err
+	// Try CronJob with the run-id label
+	cronJob, err := c.getCronJobByRunID(ctx, runID)
+	if err == nil && cronJob != nil {
+		return c.cancelCronJob(ctx, cronJob, runID)
 	}
 
-	return fmt.Errorf("run %q not found", runID)
+	// Try child jobs from CronJobs (they have run-id in name but not always in labels)
+	childJob, err := c.getChildJobByRunID(ctx, runID)
+	if err == nil && childJob != nil {
+		return c.cancelChildJob(ctx, childJob, runID)
+	}
+
+	return nil, fmt.Errorf("run %q not found", runID)
+}
+
+// cancelJob deletes a Job and returns clear status about what was cancelled.
+func (c *K8sClient) cancelJob(ctx context.Context, job *runJobJSON, runID string) (*CancelResult, error) {
+	result := &CancelResult{
+		RunID:    runID,
+		Resource: "job",
+		Name:     job.Metadata.Name,
+		Phase:    job.Metadata.Labels["fabrik.sh/phase"],
+	}
+
+	// Determine if job is active or already finished
+	switch {
+	case job.Status.Active > 0:
+		result.WasActive = true
+		result.Status = "active"
+	case job.Status.Succeeded > 0:
+		result.WasFinished = true
+		result.Status = "succeeded"
+	case job.Status.Failed > 0:
+		result.WasFinished = true
+		result.Status = "failed"
+	default:
+		result.Status = "pending"
+	}
+
+	// Delete the job
+	_, err := c.runKubectl(ctx, "-n", c.Namespace, "delete", "job", job.Metadata.Name, "--ignore-not-found")
+	if err != nil {
+		// Check for RBAC permission errors and provide helpful guidance
+		if isRBACPermissionError(err) {
+			return nil, fmt.Errorf("cannot cancel: insufficient permissions to delete job %s. "+
+				"Ensure your service account has 'jobs/delete' permission in namespace %s. "+
+				"See k8s/rbac.yaml for the required Role and RoleBinding: %w", job.Metadata.Name, c.Namespace, err)
+		}
+		return nil, fmt.Errorf("failed to delete job %s: %w", job.Metadata.Name, err)
+	}
+
+	return result, nil
+}
+
+// cancelCronJob deletes a CronJob and returns clear status.
+func (c *K8sClient) cancelCronJob(ctx context.Context, cronJob *runCronJobJSON, runID string) (*CancelResult, error) {
+	result := &CancelResult{
+		RunID:    runID,
+		Resource: "cronjob",
+		Name:     cronJob.Metadata.Name,
+		Status:   "scheduled",
+	}
+
+	// Delete the cronjob
+	_, err := c.runKubectl(ctx, "-n", c.Namespace, "delete", "cronjob", cronJob.Metadata.Name, "--ignore-not-found")
+	if err != nil {
+		if isRBACPermissionError(err) {
+			return nil, fmt.Errorf("cannot cancel: insufficient permissions to delete cronjob %s. "+
+				"Ensure your service account has 'cronjobs/delete' permission in namespace %s: %w",
+				cronJob.Metadata.Name, c.Namespace, err)
+		}
+		return nil, fmt.Errorf("failed to delete cronjob %s: %w", cronJob.Metadata.Name, err)
+	}
+
+	return result, nil
+}
+
+// cancelChildJob deletes a CronJob-created child job by name.
+func (c *K8sClient) cancelChildJob(ctx context.Context, job *runJobJSON, runID string) (*CancelResult, error) {
+	result := &CancelResult{
+		RunID:    runID,
+		Resource: "child-job",
+		Name:     job.Metadata.Name,
+	}
+
+	// Determine status
+	switch {
+	case job.Status.Active > 0:
+		result.WasActive = true
+		result.Status = "active"
+	case job.Status.Succeeded > 0:
+		result.WasFinished = true
+		result.Status = "succeeded"
+	case job.Status.Failed > 0:
+		result.WasFinished = true
+		result.Status = "failed"
+	default:
+		result.Status = "pending"
+	}
+
+	// Delete by specific name (child jobs may not have the run-id label)
+	_, err := c.runKubectl(ctx, "-n", c.Namespace, "delete", "job", job.Metadata.Name, "--ignore-not-found")
+	if err != nil {
+		if isRBACPermissionError(err) {
+			return nil, fmt.Errorf("cannot cancel: insufficient permissions to delete job %s. "+
+				"Ensure your service account has 'jobs/delete' permission in namespace %s: %w",
+				job.Metadata.Name, c.Namespace, err)
+		}
+		return nil, fmt.Errorf("failed to delete job %s: %w", job.Metadata.Name, err)
+	}
+
+	return result, nil
 }
 
 // sanitizeName converts a value to a DNS-safe lowercase name.
