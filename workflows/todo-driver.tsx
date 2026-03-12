@@ -11,6 +11,7 @@ import {
 import { $ } from "bun";
 import { existsSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
+import React from "react";
 import { z } from "zod";
 import { runVerificationJob } from "./utils/k8s-jobs";
 import { pushBookmark, snapshotChange } from "./utils/jj-shell";
@@ -533,6 +534,14 @@ function latestReportDone(ctx: WorkflowCtx, taskId: string): boolean {
   return report?.status === "done";
 }
 
+function withNodeKey<T extends React.ReactElement>(
+  element: T | null,
+  key: string,
+): T | null {
+  if (!element) return null;
+  return React.cloneElement(element, { key });
+}
+
 function ReviewGroup({
   item,
   ctx,
@@ -751,6 +760,7 @@ function TodoItemPipeline({
     key: item.id,
     children: [
       Branch({
+        key: `${item.id}:blocked-branch`,
         if: blocked,
         then: Task({
           id: `${item.id}:blocked-report`,
@@ -764,17 +774,22 @@ function TodoItemPipeline({
       }),
 
       Branch({
+        key: `${item.id}:loop-branch`,
         if: !blocked && !readyToFinalize,
         then: Sequence({
+          key: `${item.id}:loop-sequence`,
           children: [
             Ralph({
+              key: `${item.id}:implement-review-loop`,
               id: `${item.id}:implement-review-loop`,
               until: itemLoopApproved(ctx, item.id),
               maxIterations: MAX_REVIEW_ROUNDS,
               onMaxReached: "return-last",
               children: Sequence({
+                key: `${item.id}:implement-review-sequence`,
                 children: [
                   Task({
+                    key: `${item.id}:implement`,
                     id: `${item.id}:implement`,
                     output: outputs.implement,
                     agent: piWriteAt(workdir),
@@ -844,6 +859,7 @@ Return ONLY JSON matching the schema.`,
                   }),
 
                   Task({
+                    key: `${item.id}:snapshot-implement`,
                     id: `${item.id}:snapshot-implement`,
                     output: outputs.report,
                     timeoutMs: 60_000,
@@ -851,6 +867,7 @@ Return ONLY JSON matching the schema.`,
                   }),
 
                   Task({
+                    key: `${item.id}:validate`,
                     id: `${item.id}:validate`,
                     output: outputs.validate,
                     timeoutMs: TASK_TIMEOUT_MS,
@@ -859,6 +876,7 @@ Return ONLY JSON matching the schema.`,
                   }),
 
                   Task({
+                    key: `${item.id}:review-context`,
                     id: `${item.id}:review-context`,
                     output: outputs.reviewContext,
                     timeoutMs: 60_000,
@@ -880,8 +898,8 @@ Return ONLY JSON matching the schema.`,
                     },
                   }),
 
-                  ReviewGroup({ item, ctx }),
-                  ReviewFixStep({ item, ctx }),
+                  withNodeKey(ReviewGroup({ item, ctx }), `${item.id}:review-group`),
+                  withNodeKey(ReviewFixStep({ item, ctx }), `${item.id}:review-fix`),
                 ],
               }),
             }),
@@ -890,10 +908,13 @@ Return ONLY JSON matching the schema.`,
       }),
 
       Branch({
+        key: `${item.id}:mark-done-branch`,
         if: needsMarkTodoDone,
         then: Sequence({
+          key: `${item.id}:mark-done-sequence`,
           children: [
             Task({
+              key: `${item.id}:mark-todo-done`,
               id: `${item.id}:mark-todo-done`,
               output: outputs.report,
               timeoutMs: 60_000,
@@ -917,10 +938,13 @@ Return ONLY JSON matching the schema.`,
       }),
 
       Branch({
+        key: `${item.id}:completion-snapshot-branch`,
         if: needsCompletionSnapshot,
         then: Sequence({
+          key: `${item.id}:completion-snapshot-sequence`,
           children: [
             Task({
+              key: `${item.id}:snapshot-complete`,
               id: `${item.id}:snapshot-complete`,
               output: outputs.report,
               timeoutMs: 60_000,
@@ -931,10 +955,13 @@ Return ONLY JSON matching the schema.`,
       }),
 
       Branch({
+        key: `${item.id}:push-bookmark-branch`,
         if: needsBookmarkPush,
         then: Sequence({
+          key: `${item.id}:push-bookmark-sequence`,
           children: [
             Task({
+              key: `${item.id}:push-bookmark`,
               id: `${item.id}:push-bookmark`,
               output: outputs.report,
               timeoutMs: TASK_TIMEOUT_MS,
@@ -946,10 +973,13 @@ Return ONLY JSON matching the schema.`,
       }),
 
       Branch({
+        key: `${item.id}:completion-report-branch`,
         if: needsCompletionReport,
         then: Sequence({
+          key: `${item.id}:completion-report-sequence`,
           children: [
             Task({
+              key: `${item.id}:complete-report`,
               id: `${item.id}:complete-report`,
               output: outputs.report,
               children: {
@@ -974,6 +1004,7 @@ export default smithers((ctx) => {
     children: Sequence({
       children: [
         Task({
+          key: "prepare-repo",
           id: "prepare-repo",
           output: outputs.report,
           children: async () => {
@@ -1018,6 +1049,7 @@ export default smithers((ctx) => {
         }),
 
         Task({
+          key: "ensure-todo",
           id: "ensure-todo",
           output: outputs.report,
           children: () => {
@@ -1035,6 +1067,7 @@ export default smithers((ctx) => {
         }),
 
         Task({
+          key: "plan-todo-loop",
           id: "plan-todo-loop",
           output: outputs.todoPlan,
           children: () => {
@@ -1055,8 +1088,10 @@ export default smithers((ctx) => {
         }),
 
         Branch({
+          key: "todo-loop-branch",
           if: currentItem === null,
           then: Task({
+            key: "todo-loop-complete",
             id: "todo-loop-complete",
             output: outputs.report,
             children: {
@@ -1066,9 +1101,11 @@ export default smithers((ctx) => {
             },
           }),
           else: Sequence({
+            key: "todo-item-sequence",
             children: currentItem?.blockedReason
               ? [
                   Task({
+                    key: `${currentItem.id}:blocked`,
                     id: `${currentItem.id}:blocked`,
                     output: outputs.report,
                     children: {
