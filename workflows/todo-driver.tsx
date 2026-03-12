@@ -408,8 +408,18 @@ function latestFinishingItem(ctx: WorkflowCtx): TodoItem | null {
   return null;
 }
 
+export function chooseCurrentTodoItem(
+  fileItems: readonly TodoItem[],
+  finishingItem: TodoItem | null,
+): TodoItem | null {
+  return finishingItem ?? fileItems[0] ?? null;
+}
+
 function currentTodoItem(ctx: WorkflowCtx): TodoItem | null {
-  return currentTodoItemsFromFile()[0] ?? latestFinishingItem(ctx);
+  return chooseCurrentTodoItem(
+    currentTodoItemsFromFile(),
+    latestFinishingItem(ctx),
+  );
 }
 
 function latestOutputRow<T>(

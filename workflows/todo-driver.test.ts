@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import workflow, {
+  chooseCurrentTodoItem,
   filterRelevantRepoPaths,
   repoResetCommand,
   verifierCommands,
@@ -170,6 +171,38 @@ Inspect runs from Kubernetes.
 
   const reparsed = parseTodoContent(updated);
   expect(reparsed[0]?.status).toBe("done");
+});
+
+test("chooseCurrentTodoItem prioritizes finishing work before the next file item", () => {
+  const finishingItem = {
+    id: "runs-inspection",
+    title: "Runs Inspection",
+    status: "pending",
+    task: "Inspect runs from Kubernetes.",
+    specTieIn: ["orchestrator metadata"],
+    guarantees: ["list reflects cluster state"],
+    verificationToBuildFirst: ["add deterministic tests"],
+    requiredChecks: ["`make verify-cli`"],
+    documentationUpdates: [],
+    blockedReason: null,
+  } as const;
+  const nextFileItem = {
+    id: "resume",
+    title: "Resume",
+    status: "pending",
+    task: "Resume runs.",
+    specTieIn: ["orchestrator metadata"],
+    guarantees: ["resume preserves PVC and image digest"],
+    verificationToBuildFirst: ["resume command tests"],
+    requiredChecks: ["`make verify-cli`"],
+    documentationUpdates: [],
+    blockedReason: null,
+  } as const;
+
+  expect(chooseCurrentTodoItem([nextFileItem], finishingItem)).toEqual(
+    finishingItem,
+  );
+  expect(chooseCurrentTodoItem([nextFileItem], null)).toEqual(nextFileItem);
 });
 
 test("todo-driver builds a Smithers workflow from context", () => {
