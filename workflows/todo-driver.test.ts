@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import workflow, { repoResetCommand, verifierCommands } from "./todo-driver";
+import workflow, {
+  filterRelevantRepoPaths,
+  repoResetCommand,
+  verifierCommands,
+} from "./todo-driver";
 import { buildContext } from "../node_modules/smithers-orchestrator/src/context";
 import { parseTodoContent } from "./utils/todo-plan";
 import { markTodoContentDone } from "./utils/todo-status";
@@ -162,6 +166,21 @@ test("repo reset command preserves smithers state", () => {
   const command = repoResetCommand("/workspace/workdir");
   expect(command).toContain("! -name .smithers");
   expect(command).toContain("/workspace/workdir");
+});
+
+test("review path filtering removes smithers runtime artifacts", () => {
+  expect(
+    filterRelevantRepoPaths([
+      ".smithers/todo-driver.db-wal",
+      ".fabrik/tmp/repo-123",
+      "src/fabrik-cli/cmd/runs.go",
+      "workflows/todo-driver.tsx",
+      "src/fabrik-cli/cmd/runs.go",
+    ]),
+  ).toEqual([
+    "src/fabrik-cli/cmd/runs.go",
+    "workflows/todo-driver.tsx",
+  ]);
 });
 
 test("runs-inspection verifier uses focused checks instead of full verify-cli", () => {

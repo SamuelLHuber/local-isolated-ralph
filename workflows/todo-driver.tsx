@@ -41,6 +41,12 @@ const PI_ENV = {
   PI_CODING_AGENT_DIR: "/tmp/pi-agent",
 };
 const VERIFY_SPEC_PATH = "specs/051-k3s-orchestrator.md";
+const RUNTIME_ARTIFACT_PREFIXES = [
+  ".smithers/",
+  ".fabrik/",
+  ".jj/",
+  ".git/",
+];
 
 const todoPlanSchema = z.object({
   todoPath: z.string(),
@@ -140,6 +146,14 @@ const SYSTEM_PROMPT = [
   "Keep changes aligned to repo instructions, specs, and maintainable boundaries.",
 ].join("\n");
 
+const REVIEW_SYSTEM_PROMPT = [
+  "You are the Fabrik review agent.",
+  "Review only the explicit implementation change and validation evidence provided in the prompt.",
+  "Do not ask for missing context when the prompt already includes the todo item, changed files, JJ diff, and validation evidence.",
+  "Ignore transient runtime artifacts under .smithers, .fabrik, .jj, and .git.",
+  "Return only the requested JSON.",
+].join("\n");
+
 function piReadAt(workdir: string): PiAgent {
   return new PiAgent({
     provider: PI_PROVIDER,
@@ -168,6 +182,20 @@ function piWriteAt(workdir: string): PiAgent {
   });
 }
 
+function piReviewAt(workdir: string): PiAgent {
+  return new PiAgent({
+    provider: PI_PROVIDER,
+    model: PI_MODEL,
+    mode: "json",
+    noTools: false,
+    tools: ["read", "bash"],
+    noSession: true,
+    systemPrompt: REVIEW_SYSTEM_PROMPT,
+    cwd: workdir,
+    env: PI_ENV,
+  });
+}
+
 function itemWorkspace(itemId: string): string {
   void itemId;
   return REPO_ROOT;
@@ -175,6 +203,71 @@ function itemWorkspace(itemId: string): string {
 
 export function repoResetCommand(rootDir: string): string {
   return `find ${rootDir} -mindepth 1 -maxdepth 1 ! -name .smithers -exec rm -rf -- {} +`;
+}
+
+export function isRuntimeArtifactPath(value: string): boolean {
+  const normalized = value
+    .trim()
+    .replace(/^a\//, "")
+    .replace(/^b\//, "")
+    .replace(/^"+|"+$/g, "");
+  return RUNTIME_ARTIFACT_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
+export function filterRelevantRepoPaths(paths: readonly string[]): string[] {
+  const filtered: string[] = [];
+  for (const path of paths) {
+    const normalized = path.trim();
+    if (!normalized || isRuntimeArtifactPath(normalized)) continue;
+    if (!filtered.includes(normalized)) filtered.push(normalized);
+  }
+  return filtered;
+}
+
+function parseSummaryPath(line: string): string | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  const match = trimmed.match(/^(?:[A-Z?]+\s+)(.+)$/);
+  if (!match?.[1]) return null;
+  return match[1].trim();
+}
+
+async function latestSnapshotDiffSummary(workdir: string): Promise<string[]> {
+  const result = await $`jj diff --summary -r @-`.cwd(workdir).nothrow().quiet();
+  if (result.exitCode !== 0) return [];
+  const lines = result.stdout
+    .toString()
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.filter((line) => {
+    const path = parseSummaryPath(line);
+    return path ? !isRuntimeArtifactPath(path) : true;
+  });
+}
+
+function filterPatchSections(patch: string): string {
+  if (!patch.trim()) return "";
+  const sections = patch.split(/^diff --git /m);
+  const kept: string[] = [];
+
+  for (const section of sections) {
+    const trimmed = section.trim();
+    if (!trimmed) continue;
+    const firstLine = trimmed.split("\n", 1)[0] ?? "";
+    const match = firstLine.match(/^a\/(.+?) b\/(.+)$/);
+    const paths = match ? [match[1], match[2]] : [];
+    if (paths.some((path) => isRuntimeArtifactPath(path))) continue;
+    kept.push(`diff --git ${trimmed}`);
+  }
+
+  return kept.join("\n");
+}
+
+async function latestSnapshotDiffPatch(workdir: string): Promise<string> {
+  const result = await $`jj diff --git -r @-`.cwd(workdir).nothrow().quiet();
+  if (result.exitCode !== 0) return "";
+  return filterPatchSections(result.stdout.toString()).trim();
 }
 
 function sanitizeK8sName(value: string): string {
@@ -448,6 +541,7 @@ function ReviewGroup({
     `${item.id}:implement`,
   );
   const latestValidate = latestValidation(ctx, item.id);
+  const relevantChangedFiles = filterRelevantRepoPaths(latestImplement?.changes ?? []);
 
   if (!latestValidate?.allPassed) return null;
 
@@ -457,11 +551,15 @@ function ReviewGroup({
         key: `${item.id}:review:${reviewer.id}`,
         id: `${item.id}:review:${reviewer.id}`,
         output: outputs.review,
-        agent: piReadAt(itemWorkspace(item.id)),
+        agent: piReviewAt(itemWorkspace(item.id)),
         timeoutMs: REVIEW_TIMEOUT_MS,
         retries: 1,
         continueOnFail: true,
-        children: `Reviewer: ${reviewer.title}
+        children: async () => {
+          const diffSummary = await latestSnapshotDiffSummary(workdir);
+          const diffPatch = await latestSnapshotDiffPatch(workdir);
+
+          return `Reviewer: ${reviewer.title}
 
 Use this reviewer rubric:
 ${reviewer.prompt}
@@ -488,13 +586,20 @@ Latest implementation summary:
 ${latestImplement?.summary ?? "- none"}
 
 Latest changed files:
-${latestImplement?.changes?.length ? latestImplement.changes.map((entry) => `- ${entry}`).join("\n") : "- none"}
+${relevantChangedFiles.length > 0 ? relevantChangedFiles.map((entry) => `- ${entry}`).join("\n") : "- none"}
+
+Relevant JJ diff summary for the latest snapshotted change (@-):
+${diffSummary.length > 0 ? diffSummary.map((entry) => `- ${entry}`).join("\n") : "- none"}
+
+Relevant JJ patch for the latest snapshotted change (@-):
+${diffPatch || "- none"}
 
 Latest validation evidence:
 ${latestValidate.evidence.length > 0 ? latestValidate.evidence.map((entry) => `- ${entry}`).join("\n") : "- validation passed without extra evidence"}
 
-Review the repository state at ${workdir}.
-Do not claim missing context. Use the repository files, implementation summary, and validation evidence above as the complete review context.
+Review the latest snapshotted JJ change (@-) in ${workdir}.
+Ignore transient runtime artifacts under .smithers, .fabrik, .jj, and .git.
+Do not claim missing context. Use the todo item, changed files, JJ diff, and validation evidence above as the complete review context.
 Only report issues you can defend from the repository state or validation evidence.
 If the change is acceptable, set approved=true and issues=[].
 
@@ -502,7 +607,8 @@ Return ONLY a JSON object with these fields:
 - reviewer: string
 - approved: boolean
 - issues: string[]
-- requiredFollowUps: string[]`,
+- requiredFollowUps: string[]`;
+        },
       }),
     ),
   });
@@ -526,6 +632,7 @@ function ReviewFixStep({
     "implement",
     `${item.id}:implement`,
   );
+  const relevantChangedFiles = filterRelevantRepoPaths(latestImplement?.changes ?? []);
   const issues = collectReviewIssues(
     ctx,
     item.id,
@@ -556,7 +663,7 @@ Current implementation summary:
 ${latestImplement?.summary ?? "- none"}
 
 Current changed files:
-${latestImplement?.changes?.length ? latestImplement.changes.map((entry) => `- ${entry}`).join("\n") : "- none"}
+${relevantChangedFiles.length > 0 ? relevantChangedFiles.map((entry) => `- ${entry}`).join("\n") : "- none"}
 
 Validation evidence:
 ${latestValidate?.evidence?.length ? latestValidate.evidence.map((entry) => `- ${entry}`).join("\n") : "- none"}
