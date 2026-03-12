@@ -519,6 +519,147 @@ func TestPromoteWithYesFlagSkipsPrompt(t *testing.T) {
 	}
 }
 
+// Test renderPromotePreview output for protected environment
+func TestRenderPromotePreviewProtected(t *testing.T) {
+	var stdout bytes.Buffer
+
+	preview := PromotePreview{
+		Diff:         DiffResult{ToEnv: "prod"},
+		TargetExists: true,
+	}
+	opts := PromoteOptions{ToEnv: "prod"}
+
+	err := renderPromotePreview(&stdout, preview, opts)
+	if err != nil {
+		t.Fatalf("renderPromotePreview: %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "PROTECTED ENVIRONMENT") {
+		t.Errorf("expected output to contain 'PROTECTED ENVIRONMENT' for prod, got: %s", output)
+	}
+}
+
+// Test renderPromotePreview output for non-existent target
+func TestRenderPromotePreviewNewTarget(t *testing.T) {
+	var stdout bytes.Buffer
+
+	preview := PromotePreview{
+		Diff:         DiffResult{ToEnv: "staging"},
+		TargetExists: false,
+	}
+	opts := PromoteOptions{ToEnv: "staging"}
+
+	err := renderPromotePreview(&stdout, preview, opts)
+	if err != nil {
+		t.Fatalf("renderPromotePreview: %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "does not exist") {
+		t.Errorf("expected output to mention target does not exist, got: %s", output)
+	}
+}
+
+// Test renderPromotePreview when no changes needed
+func TestRenderPromotePreviewNoChanges(t *testing.T) {
+	var stdout bytes.Buffer
+
+	preview := PromotePreview{
+		Diff:         DiffResult{ToEnv: "dev", OnlyInSource: map[string]string{}, OnlyInTarget: map[string]string{}, Changed: map[string]ValueChange{}},
+		TargetExists: true,
+	}
+	opts := PromoteOptions{ToEnv: "dev", FromEnv: "staging"}
+
+	err := renderPromotePreview(&stdout, preview, opts)
+	if err != nil {
+		t.Fatalf("renderPromotePreview: %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "no changes") {
+		t.Errorf("expected output to mention no changes, got: %s", output)
+	}
+}
+
+// Test protected environment detection with additional edge cases
+func TestIsProtectedEnvironmentEdgeCases(t *testing.T) {
+	tests := []struct {
+		envName  string
+		expected bool
+	}{
+		{"prod", true},
+		{"production", true},
+		{"live", true},
+		{"PROD", true},
+		{"Production", true},
+		{"  prod  ", true}, // whitespace should be trimmed
+		{"dev", false},
+		{"staging", false},
+		{"preview", false},
+		{"test", false},
+		{"local", false},
+		{"", false},
+		{"my-prod", false},    // contains but not exact
+		{"prod-env", false},   // contains but not exact
+		{"prods", false},      // substring match but not exact
+		{"productions", false}, // substring match but not exact
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.envName, func(t *testing.T) {
+			if got := IsProtectedEnvironment(tt.envName); got != tt.expected {
+				t.Errorf("IsProtectedEnvironment(%q) = %v, want %v", tt.envName, got, tt.expected)
+			}
+		})
+	}
+}
+
+// Test that diff properly handles empty environments
+func TestDiffEmptyEnvironments(t *testing.T) {
+	// Empty to empty should have no differences
+	emptyResult := DiffResult{
+		Project:      "myapp",
+		FromEnv:      "empty1",
+		ToEnv:        "empty2",
+		OnlyInSource: map[string]string{},
+		OnlyInTarget: map[string]string{},
+		Changed:      map[string]ValueChange{},
+		Unchanged:    map[string]string{},
+	}
+
+	if emptyResult.IsDifferent() {
+		t.Error("expected empty to empty comparison to not be different")
+	}
+
+	added, removed, modified, unchanged := emptyResult.Stats()
+	if added != 0 || removed != 0 || modified != 0 || unchanged != 0 {
+		t.Errorf("expected all zero stats for empty diff, got added=%d, removed=%d, modified=%d, unchanged=%d",
+			added, removed, modified, unchanged)
+	}
+}
+
+// Test ValueChange struct behavior
+func TestValueChangeStruct(t *testing.T) {
+	change := ValueChange{
+		FromValue: "old-value",
+		ToValue:   "new-value",
+	}
+
+	if change.FromValue != "old-value" {
+		t.Errorf("expected FromValue to be 'old-value', got %q", change.FromValue)
+	}
+	if change.ToValue != "new-value" {
+		t.Errorf("expected ToValue to be 'new-value', got %q", change.ToValue)
+	}
+
+	// Test with empty values
+	emptyChange := ValueChange{}
+	if emptyChange.FromValue != "" || emptyChange.ToValue != "" {
+		t.Error("expected empty ValueChange to have empty strings")
+	}
+}
+
 // Test that the diff categories are correctly computed
 func TestDiffCategories(t *testing.T) {
 	fromData := map[string]string{

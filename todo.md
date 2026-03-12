@@ -313,7 +313,11 @@ Create an explicit spec-to-verification map for all CLI lifecycle features.
   - Future task template for consistent verification planning
   - Glossary and command reference
 
-## 5. Env Promotion / Protected Environments
+## 5. Env Promotion / Protected Environments [done]
+Status: done
+Verified by workflow run: hoth-todo-loop-e2e-20260312-39
+Verification summary: Verification job hoth-todo-loop-e2e-20260312-39-env-promotion-protected-environm succeeded.
+
 
 ### Task
 
