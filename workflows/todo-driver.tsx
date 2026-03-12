@@ -27,7 +27,6 @@ const DB_PATH = resolve(DB_DIR, "todo-driver.db");
 const jjRepo = process.env.SMITHERS_JJ_REPO?.trim() ?? "";
 const jjBookmark = process.env.SMITHERS_JJ_BOOKMARK?.trim() ?? "";
 
-const MAX_ITERATIONS = Number(process.env.MAX_ITERATIONS ?? "80");
 const MAX_REVIEW_ROUNDS = Number(process.env.MAX_REVIEW_ROUNDS ?? "8");
 const MAX_TODO_ITEMS = Number(process.env.MAX_TODO_ITEMS ?? "1");
 const TASK_TIMEOUT_MS = 2 * 60 * 60 * 1000;
@@ -338,11 +337,6 @@ function currentTodoItem(ctx: WorkflowCtx): TodoItem | null {
   return currentTodoItemsFromFile()[0] ?? latestFinishingItem(ctx);
 }
 
-function todoLoopComplete(ctx: WorkflowCtx): boolean {
-  if (!existsSync(TODO_PATH)) return false;
-  return currentTodoItem(ctx) === null;
-}
-
 function latestOutputRow<T>(
   ctx: WorkflowCtx,
   table: OutputTableKey,
@@ -438,10 +432,6 @@ function latestReportDone(ctx: WorkflowCtx, taskId: string): boolean {
     | z.infer<typeof reportSchema>
     | undefined;
   return report?.status === "done";
-}
-
-function hasImplementation(ctx: WorkflowCtx, itemId: string): boolean {
-  return Boolean(ctx.latest("implement", `${itemId}:implement`));
 }
 
 function ReviewGroup({
@@ -904,61 +894,51 @@ export default smithers((ctx) => {
           },
         }),
 
-        Ralph({
-          id: "todo-loop",
-          until: todoLoopComplete(ctx),
-          maxIterations: MAX_ITERATIONS,
-          onMaxReached: "fail",
-          children: Sequence({
-            children: [
-              Task({
-                id: "plan-todo-loop",
-                output: outputs.todoPlan,
-                children: () => {
-                const parsedItems = parseTodoItems(TODO_PATH);
-                const pendingItems = parsedItems.filter((item) => item.status !== "done");
-                const limitedItems =
-                  MAX_TODO_ITEMS > 0
-                    ? pendingItems.slice(0, MAX_TODO_ITEMS)
-                    : pendingItems;
+        Task({
+          id: "plan-todo-loop",
+          output: outputs.todoPlan,
+          children: () => {
+            const parsedItems = parseTodoItems(TODO_PATH);
+            const pendingItems = parsedItems.filter((item) => item.status !== "done");
+            const limitedItems =
+              MAX_TODO_ITEMS > 0
+                ? pendingItems.slice(0, MAX_TODO_ITEMS)
+                : pendingItems;
 
-                return {
-                  todoPath: TODO_PATH,
-                  totalItems: parsedItems.length,
-                  selectedItems: limitedItems.length,
-                  items: limitedItems,
-                };
-                },
-              }),
+            return {
+              todoPath: TODO_PATH,
+              totalItems: parsedItems.length,
+              selectedItems: limitedItems.length,
+              items: limitedItems,
+            };
+          },
+        }),
 
-              Branch({
-                if: currentItem === null,
-                then: Task({
-                  id: "todo-loop-complete",
-                  output: outputs.report,
-                  children: {
-                    ticketId: "todo-loop",
-                    status: "done",
-                    summary: "No pending todo items remain.",
-                  },
-                }),
-                else: Sequence({
-                  children: currentItem?.blockedReason
-                    ? [
-                        Task({
-                          id: `${currentItem.id}:blocked`,
-                          output: outputs.report,
-                          children: {
-                            ticketId: currentItem.id,
-                            status: "blocked",
-                            summary: currentItem.blockedReason,
-                          },
-                        }),
-                      ]
-                    : [currentItem ? TodoItemPipeline({ item: currentItem, ctx }) : null],
-                }),
-              }),
-            ],
+        Branch({
+          if: currentItem === null,
+          then: Task({
+            id: "todo-loop-complete",
+            output: outputs.report,
+            children: {
+              ticketId: "todo-loop",
+              status: "done",
+              summary: "No pending todo items remain.",
+            },
+          }),
+          else: Sequence({
+            children: currentItem?.blockedReason
+              ? [
+                  Task({
+                    id: `${currentItem.id}:blocked`,
+                    output: outputs.report,
+                    children: {
+                      ticketId: currentItem.id,
+                      status: "blocked",
+                      summary: currentItem.blockedReason,
+                    },
+                  }),
+                ]
+              : [currentItem ? TodoItemPipeline({ item: currentItem, ctx }) : null],
           }),
         }),
       ],
