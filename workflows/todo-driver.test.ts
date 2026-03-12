@@ -950,6 +950,99 @@ test("todo-driver ignores bogus missing-context review complaints when review co
   expect(ids).not.toContain("runs-inspection:review-fix");
 });
 
+test("todo-driver ignores broader missing-context review complaints when validation and review context exist", () => {
+  const ctx = buildContext({
+    runId: "preview",
+    iteration: 3,
+    iterations: {},
+    input: {},
+    outputs: {
+      todoPlan: [
+        {
+          nodeId: "plan-todo-loop",
+          iteration: 3,
+          items: [
+            {
+              id: "env-promotion-protected-environments",
+              title: "Env Promotion / Protected Environments",
+              status: "pending",
+              task: "Support preview and confirmation for env promotion.",
+              specTieIn: ["orchestrator env management"],
+              guarantees: ["promotion flow is explicit and reviewable"],
+              verificationToBuildFirst: ["deterministic checks"],
+              requiredChecks: ["`make verify-cli`"],
+              documentationUpdates: [],
+              blockedReason: null,
+            },
+          ],
+        },
+      ],
+      implement: [
+        {
+          nodeId: "env-promotion-protected-environments:implement",
+          iteration: 2,
+          summary: "implemented",
+          changes: [],
+          verification: [],
+          documentation: [],
+        },
+      ],
+      validate: [
+        {
+          nodeId: "env-promotion-protected-environments:validate",
+          iteration: 2,
+          allPassed: true,
+          commands: [],
+          evidence: ["Verifier logs: ok"],
+          failingSummary: null,
+        },
+      ],
+      reviewContext: [
+        {
+          nodeId: "env-promotion-protected-environments:review-context",
+          iteration: 2,
+          changedFiles: [],
+          diffSummary: ["M src/fabrik-cli/internal/run/env.go"],
+        },
+      ],
+      review: [
+        {
+          nodeId: "env-promotion-protected-environments:review:spec-alignment",
+          iteration: 2,
+          reviewer: "Spec Alignment",
+          approved: true,
+          issues: [],
+          requiredFollowUps: [],
+        },
+        {
+          nodeId: "env-promotion-protected-environments:review:maintainability",
+          iteration: 2,
+          reviewer: "Maintainability",
+          approved: false,
+          issues: [
+            "No todo item or review content was provided in the prompt for evaluation.",
+            "Cannot approve or reject changes without explicit implementation change and validation evidence.",
+          ],
+          requiredFollowUps: ["Provide the todo item and validation evidence."],
+        },
+        {
+          nodeId: "env-promotion-protected-environments:review:verification",
+          iteration: 2,
+          reviewer: "Verification",
+          approved: true,
+          issues: [],
+          requiredFollowUps: [],
+        },
+      ],
+    },
+    zodToKeyName: workflow.zodToKeyName,
+  });
+
+  const ids = collectTaskIDs(workflow.build(ctx));
+  expect(ids).toContain("env-promotion-protected-environments:mark-todo-done");
+  expect(ids).not.toContain("env-promotion-protected-environments:review-fix");
+});
+
 test("todo-driver snapshots completion after marking todo done", () => {
   const ctx = buildContext({
     runId: "preview",

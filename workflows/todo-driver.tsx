@@ -256,6 +256,16 @@ function parseSummaryPath(line: string): string | null {
   return match[1].trim();
 }
 
+function pathsFromDiffSummary(lines: readonly string[]): string[] {
+  const paths: string[] = [];
+  for (const line of lines) {
+    const path = parseSummaryPath(line);
+    if (!path || isRuntimeArtifactPath(path) || paths.includes(path)) continue;
+    paths.push(path);
+  }
+  return paths;
+}
+
 async function latestSnapshotDiffSummary(workdir: string): Promise<string[]> {
   const result = await $`jj diff --summary -r @-`.cwd(workdir).nothrow().quiet();
   if (result.exitCode !== 0) return [];
@@ -486,6 +496,11 @@ function isIgnorableContextComplaint(issue: string): boolean {
     normalized.includes("review content not provided") ||
     normalized.includes("review material not provided") ||
     normalized.includes("no review content provided") ||
+    normalized.includes("no todo item") ||
+    normalized.includes("changed files") && normalized.includes("not provided") ||
+    normalized.includes("validation evidence") && normalized.includes("not provided") ||
+    normalized.includes("jj diff") && normalized.includes("not provided") ||
+    normalized.includes("cannot approve or reject changes without explicit implementation change and validation evidence") ||
     normalized.includes("todo item, changed files, jj diff, and validation evidence are not present") ||
     normalized.includes("todo item, jj diff, and validation evidence not found") ||
     normalized.includes("cannot verify implementation changes without explicit diff and validation evidence")
@@ -509,12 +524,7 @@ function reviewContextIsAvailable(
   ) {
     return false;
   }
-  return Boolean(
-    reviewContext &&
-      (reviewContext.changedFiles.length > 0 || reviewContext.diffSummary.length > 0) &&
-      validate &&
-      validate.evidence.length > 0,
-  );
+  return Boolean(reviewContext && validate);
 }
 
 function normalizedReviewIssues(
@@ -1082,13 +1092,7 @@ Return ONLY JSON matching the schema.`,
               timeoutMs: 60_000,
               children: async () => {
                 const diffSummary = await latestSnapshotDiffSummary(workdir);
-                const changedFiles = filterRelevantRepoPaths(
-                  latestOutputRow<z.infer<typeof implementSchema>>(
-                    ctx,
-                    "implement",
-                    `${item.id}:implement`,
-                  )?.changes ?? [],
-                );
+                const changedFiles = pathsFromDiffSummary(diffSummary);
                 return {
                   changedFiles,
                   diffSummary,
