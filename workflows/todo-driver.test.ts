@@ -341,6 +341,7 @@ test("remaining todo items fall back to deterministic repo-wide verification", (
     expect(commands).toEqual([
       "cd /workspace/workdir/src/fabrik-cli",
       "go build -o /tmp/fabrik-verify .",
+      "cd /workspace/workdir",
       "make verify-cli",
     ]);
   }

@@ -297,6 +297,7 @@ export function verifierCommands(item: TodoItem, workdir: string): string[] {
   const base = verifierBuildCommands(workdir);
   const repoWideChecks = [
     ...base,
+    `cd ${workdir}`,
     "make verify-cli",
   ];
 
