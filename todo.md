@@ -13,6 +13,8 @@ Nothing in this file should be marked done until:
 5. the relevant cluster verification passes in the right environment,
 6. the result matches the applicable spec.
 
+Workflow-managed completion is recorded by changing the item heading to `## <n>. Title [done]`.
+
 ## Core Rule
 
 Build the verification layer first, then implement the feature, then check it off.

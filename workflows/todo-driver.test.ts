@@ -268,6 +268,64 @@ test("runs-inspection verifier uses focused checks instead of full verify-cli", 
   expect(commands.join("\n")).not.toContain("make verify-cli");
 });
 
+test("verification-map verifier uses portable search commands", () => {
+  const commands = verifierCommands(
+    {
+      id: "verification-map",
+      title: "Verification Map",
+      status: "pending",
+      task: "Document the verification map.",
+      specTieIn: ["orchestrator verification"],
+      guarantees: ["verification guidance is documented"],
+      verificationToBuildFirst: ["doc checks"],
+      requiredChecks: ["`make verify-cli`"],
+      documentationUpdates: [],
+      blockedReason: null,
+    },
+    "/workspace/workdir",
+  );
+
+  expect(commands[0]).toBe("cd /workspace/workdir/src/fabrik-cli");
+  expect(commands[2]).toBe("cd /workspace/workdir");
+  expect(commands[3]).toContain("command -v rg");
+  expect(commands[3]).toContain("grep -En");
+  expect(commands[4]).toContain("Workflow Validation In Clusters");
+  expect(commands[5]).toContain("same-cluster verifier Jobs");
+});
+
+test("remaining todo items fall back to deterministic repo-wide verification", () => {
+  for (const id of [
+    "env-promotion",
+    "retention-cleanup",
+    "security-hardening-alignment",
+    "observability-loki",
+    "rootserver-k3s-parity",
+    "sample-contract",
+  ] as const) {
+    const commands = verifierCommands(
+      {
+        id,
+        title: id,
+        status: "pending",
+        task: "todo",
+        specTieIn: ["spec"],
+        guarantees: ["guarantee"],
+        verificationToBuildFirst: ["verification"],
+        requiredChecks: ["`make verify-cli`"],
+        documentationUpdates: [],
+        blockedReason: null,
+      },
+      "/workspace/workdir",
+    );
+
+    expect(commands).toEqual([
+      "cd /workspace/workdir/src/fabrik-cli",
+      "go build -o /tmp/fabrik-verify .",
+      "make verify-cli",
+    ]);
+  }
+});
+
 test("todo-driver schedules review after a successful validation pass", () => {
   const ctx = buildContext({
     runId: "preview",

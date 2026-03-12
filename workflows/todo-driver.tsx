@@ -285,6 +285,10 @@ function verifierBuildCommands(workdir: string): string[] {
 
 export function verifierCommands(item: TodoItem, workdir: string): string[] {
   const base = verifierBuildCommands(workdir);
+  const repoWideChecks = [
+    ...base,
+    "make verify-cli",
+  ];
 
   if (item.id === "runs-inspection") {
     return [
@@ -325,10 +329,21 @@ export function verifierCommands(item: TodoItem, workdir: string): string[] {
     return [
       ...base,
       `cd ${workdir}`,
-      "rg -n \"## Verification Ladder|## Definition Of Done Template|## Priority Order\" todo.md",
-      "rg -n \"Workflow Validation In Clusters\" src/fabrik-cli/docs/getting-started.md",
-      "rg -n \"same-cluster verifier Jobs\" workflows/README.md",
+      "(command -v rg >/dev/null 2>&1 && rg -n \"## Verification Ladder|## Definition Of Done Template|## Priority Order\" todo.md) || grep -En \"## Verification Ladder|## Definition Of Done Template|## Priority Order\" todo.md",
+      "(command -v rg >/dev/null 2>&1 && rg -n \"Workflow Validation In Clusters\" src/fabrik-cli/docs/getting-started.md) || grep -En \"Workflow Validation In Clusters\" src/fabrik-cli/docs/getting-started.md",
+      "(command -v rg >/dev/null 2>&1 && rg -n \"same-cluster verifier Jobs\" workflows/README.md) || grep -En \"same-cluster verifier Jobs\" workflows/README.md",
     ];
+  }
+
+  if (
+    item.id === "env-promotion" ||
+    item.id === "retention-cleanup" ||
+    item.id === "security-hardening-alignment" ||
+    item.id === "observability-loki" ||
+    item.id === "rootserver-k3s-parity" ||
+    item.id === "sample-contract"
+  ) {
+    return repoWideChecks;
   }
 
   throw new Error(
