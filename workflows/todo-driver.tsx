@@ -144,6 +144,9 @@ const SYSTEM_PROMPT = [
   "Todo work is verification-first: build or update the required checks before claiming the feature is complete.",
   "Do not run jj or git commands. Deterministic repository state transitions are handled by the workflow helpers.",
   "Keep changes aligned to repo instructions, specs, and maintainable boundaries.",
+  "You may use in-cluster Kubernetes inspection as supporting evidence during implementation, for example kubectl get/describe/logs against Jobs, Pods, PVCs, CronJobs, and related resources in the current namespace.",
+  "You may also exercise the CLI itself against the cluster to confirm intended behavior, for example fabrik runs list, fabrik runs show, fabrik run logs, fabrik run resume, or fabrik run cancel against real cluster state when that helps implementation.",
+  "Use those cluster checks to understand behavior and confirm your changes, but do not replace the deterministic validation contract with ad hoc cluster-only verifier steps.",
 ].join("\n");
 
 const REVIEW_SYSTEM_PROMPT = [
@@ -151,6 +154,9 @@ const REVIEW_SYSTEM_PROMPT = [
   "Review only the explicit implementation change and validation evidence provided in the prompt.",
   "Do not ask for missing context when the prompt already includes the todo item, changed files, JJ diff, and validation evidence.",
   "Ignore transient runtime artifacts under .smithers, .fabrik, .jj, and .git.",
+  "You may consider supporting Kubernetes evidence gathered from the live cluster, such as kubectl output, pod logs, Job state, and PVC state, when it is included in the review context.",
+  "You may also consider evidence from exercising the CLI itself against the cluster, such as runs list/show/logs or resume/cancel behavior against real cluster resources.",
+  "Use cluster evidence to support or question the change, but do not demand new brittle cluster-only gates beyond the deterministic validation contract unless the todo item explicitly requires them.",
   "Return only the requested JSON.",
 ].join("\n");
 
@@ -300,17 +306,6 @@ export function verifierCommands(item: TodoItem, workdir: string): string[] {
     return [
       ...base,
       "go test ./cmd -run 'Runs|Logs'",
-      "test -d ./internal/runs -o -d ./internal/inspect",
-      "if [ -d ./internal/runs ]; then go test ./internal/runs; fi",
-      "if [ -d ./internal/inspect ]; then go test ./internal/inspect; fi",
-      "VERIFY_RUN_ID=fabrik-verify-runs-$(date +%s)",
-      `/tmp/fabrik-verify run --run-id "$VERIFY_RUN_ID" --spec ${VERIFY_SPEC_PATH} --project verify --image "$FABRIK_RUN_IMAGE" --namespace "$KUBERNETES_NAMESPACE" --pvc-size 1Gi --job-command 'echo cluster-verify' --interactive=false`,
-      "kubectl -n \"$KUBERNETES_NAMESPACE\" wait --for=condition=complete \"job/fabrik-$VERIFY_RUN_ID\" --timeout=180s",
-      "/tmp/fabrik-verify runs list --namespace \"$KUBERNETES_NAMESPACE\"",
-      "/tmp/fabrik-verify runs show --id \"$VERIFY_RUN_ID\" --namespace \"$KUBERNETES_NAMESPACE\"",
-      "/tmp/fabrik-verify run logs --id \"$VERIFY_RUN_ID\" --namespace \"$KUBERNETES_NAMESPACE\"",
-      "kubectl -n \"$KUBERNETES_NAMESPACE\" delete job \"fabrik-$VERIFY_RUN_ID\" --ignore-not-found",
-      "kubectl -n \"$KUBERNETES_NAMESPACE\" delete pvc \"data-fabrik-$VERIFY_RUN_ID\" --ignore-not-found",
     ];
   }
 
@@ -603,6 +598,9 @@ ${latestValidate.evidence.length > 0 ? latestValidate.evidence.map((entry) => `-
 Review the latest snapshotted JJ change (@-) in ${workdir}.
 Ignore transient runtime artifacts under .smithers, .fabrik, .jj, and .git.
 Do not claim missing context. Use the todo item, changed files, JJ diff, and validation evidence above as the complete review context.
+If cluster evidence is available in the repository state, logs, or validation notes, you may use it as supporting evidence.
+If evidence from exercising the CLI itself against the cluster is available, you may use that as supporting evidence too.
+Do not require new ad hoc cluster-only verification steps unless the todo item explicitly calls for them.
 Only report issues you can defend from the repository state or validation evidence.
 If the change is acceptable, set approved=true and issues=[].
 
@@ -831,6 +829,9 @@ Rules:
 - Use the latest validation failure to decide the next code change.
 - Make real repository changes before returning unless the task is genuinely blocked.
 - If you return an empty changes array, the summary must explain the concrete blocker preventing further edits.
+- You may run in-cluster kubectl checks in the current namespace to gather supporting evidence about behavior, logs, and resource state when that helps implementation.
+- You may also run the CLI itself against the cluster to confirm intended behavior against real resources when that helps implementation.
+- Treat those cluster checks as supporting evidence, not as a replacement for the deterministic validation gate.
 
 Return ONLY JSON matching the schema.`,
                   }),
