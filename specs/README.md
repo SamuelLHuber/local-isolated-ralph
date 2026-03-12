@@ -8,6 +8,7 @@
 - `055-run-analytics` - Collect/run analytics to improve specs, resources, and success rates.
 - `056-cost-management` - Infra + LLM cost tracking, estimation, and budget alerts.
 - `057-k3s-local-testing` - k3d-based local/CI k3s clusters for repeatable tests.
+- `070-cli-verification-map` - Explicit spec-to-verification mapping for all CLI lifecycle features.
 - `060-security-hardening` - Isolation and security controls for multi-tenant k3s clusters.
 - `061-incluster-optimizer` - In-cluster self-optimizing agent with A/B testing and auto-tuning.
 - `062-fabrik-laos-lint` - LAOS-backed performance lint + run feedback reports.

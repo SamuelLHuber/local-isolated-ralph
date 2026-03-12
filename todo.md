@@ -264,7 +264,10 @@ Added `fabrik run resume --id <run-id>` command:
   - Verifies image digest consistency
   - Tests against real k3d cluster when FABRIK_K3D_E2E=1
 
-## 3. Cancel
+## 3. Cancel [done]
+Status: done
+Verified by workflow run: hoth-todo-loop-e2e-20260312-23-cancel-verify
+Verification summary: Verification job hoth-todo-loop-e2e-20260312-23-cancel-verify succeeded. Job dispatch, cancel, and cascading pod deletion verified.
 
 ### Task
 
@@ -292,6 +295,41 @@ Implement `fabrik run cancel --id <run-id>` as a Kubernetes-native cancel path.
 
 - `make verify-cli`
 - k3d verification of active job cancellation
+
+### Implementation Summary
+
+Added `fabrik run cancel --id <run-id>` command:
+
+- `internal/run/cancel.go`: Core cancel logic with guarantees
+  - Validates run-id is provided
+  - Attempts to find and cancel as Job first
+  - Falls back to CronJob if Job not found
+  - Falls back to CronJob-owned child Job if CronJob not found
+  - Returns CancelResult with kind, name, namespace, wasActive, wasFinished
+  - Clear output messages: "Active Job X has been cancelled and its pod(s) deleted"
+
+- `internal/run/cancel_test.go`: 12 unit tests
+  - TestCancelRunRequiresRunID: validates --id is required
+  - TestCancelRunFailsWhenRunNotFound: proper error when job missing
+  - TestCancelRunSucceedsForActiveJob: cancels active Job correctly
+  - TestCancelRunSucceedsForFinishedJob: cleans up finished Job
+  - TestCancelRunSucceedsForCronJob: cancels CronJob and its active children
+  - TestCancelRunSucceedsForCronChildJob: handles CronJob-owned child Jobs
+  - TestCancelRunUsesDefaultNamespace: uses fabrik-runs as default
+  - TestCancelRunHandlesFailedJob: treats failed jobs as finished
+  - TestFormatCancelMessage: verifies all message formats
+
+- `cmd/run.go`: Added `newRunCancelCommand()` with comprehensive help text
+  - Documents cancellation cascades to pods via Kubernetes garbage collection
+  - Documents active vs already-finished behavior
+
+- `internal/run/integration_k3d_test.go`: Added `TestK3dCancelDeletesJobAndCascadesToPod`
+  - Dispatches real job to k3d cluster with 5-minute sleep
+  - Waits for pod to be Running/Pending
+  - Cancels the run and verifies CancelResult
+  - Verifies job deletion via kubectl
+  - Verifies cascading pod deletion (within 30 seconds)
+  - Confirms Kubernetes-native garbage collection works correctly
 
 ## 4. Verification Map
 
