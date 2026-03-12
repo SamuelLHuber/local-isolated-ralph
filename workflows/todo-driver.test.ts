@@ -201,7 +201,7 @@ test("runs-inspection verifier uses focused checks instead of full verify-cli", 
   );
 
   expect(commands[0]).toBe("cd /workspace/workdir/src/fabrik-cli");
-  expect(commands).toContain("go test ./cmd ./internal/runs");
+  expect(commands).toContain("go test ./cmd ./internal/...");
   expect(commands.join("\n")).not.toContain("make verify-cli");
 });
 
