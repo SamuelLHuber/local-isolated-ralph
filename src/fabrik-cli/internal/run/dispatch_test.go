@@ -908,6 +908,191 @@ func TestSyncWorkdirExcludesMatchDocumentedBuildArtifacts(t *testing.T) {
 	}
 }
 
+func TestExecuteRenderOnlyIncludesPodSecurityContext(t *testing.T) {
+	in := strings.NewReader("")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	opts := Options{
+		RunID:       "run-sec-test",
+		SpecPath:    "specs/demo.yaml",
+		Project:     "demo",
+		Image:       "repo/image@sha256:abcdef",
+		Namespace:   "fabrik-runs",
+		PVCSize:     "1Gi",
+		JobCommand:  "echo hi",
+		WaitTimeout: "5m",
+		RenderOnly:  true,
+		Interactive: false,
+	}
+
+	if err := Execute(context.Background(), in, &out, &errOut, opts); err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+
+	rendered := out.String()
+
+	// Pod-level security context assertions
+	if !strings.Contains(rendered, "runAsNonRoot: true") {
+		t.Fatalf("expected rendered manifest to include runAsNonRoot: true")
+	}
+	if !strings.Contains(rendered, "runAsUser: 1000") {
+		t.Fatalf("expected rendered manifest to include runAsUser: 1000")
+	}
+	if !strings.Contains(rendered, "runAsGroup: 1000") {
+		t.Fatalf("expected rendered manifest to include runAsGroup: 1000")
+	}
+	if !strings.Contains(rendered, "fsGroup: 1000") {
+		t.Fatalf("expected rendered manifest to include fsGroup: 1000")
+	}
+	if !strings.Contains(rendered, "seccompProfile:") {
+		t.Fatalf("expected rendered manifest to include seccompProfile")
+	}
+	if !strings.Contains(rendered, "type: RuntimeDefault") {
+		t.Fatalf("expected rendered manifest to include seccompProfile type: RuntimeDefault")
+	}
+
+	// Container-level security context assertions
+	if !strings.Contains(rendered, "allowPrivilegeEscalation: false") {
+		t.Fatalf("expected rendered manifest to include allowPrivilegeEscalation: false")
+	}
+	if !strings.Contains(rendered, "readOnlyRootFilesystem: true") {
+		t.Fatalf("expected rendered manifest to include readOnlyRootFilesystem: true")
+	}
+	if !strings.Contains(rendered, "capabilities:") {
+		t.Fatalf("expected rendered manifest to include capabilities")
+	}
+	if !strings.Contains(rendered, "drop:") {
+		t.Fatalf("expected rendered manifest to include capabilities drop")
+	}
+	if !strings.Contains(rendered, "- ALL") {
+		t.Fatalf("expected rendered manifest to include capabilities drop: [ALL]")
+	}
+}
+
+func TestExecuteRenderOnlyIncludesTmpVolumeAndMount(t *testing.T) {
+	in := strings.NewReader("")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	opts := Options{
+		RunID:       "run-tmp-vol-test",
+		SpecPath:    "specs/demo.yaml",
+		Project:     "demo",
+		Image:       "repo/image@sha256:abcdef",
+		Namespace:   "fabrik-runs",
+		PVCSize:     "1Gi",
+		JobCommand:  "echo hi",
+		WaitTimeout: "5m",
+		RenderOnly:  true,
+		Interactive: false,
+	}
+
+	if err := Execute(context.Background(), in, &out, &errOut, opts); err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+
+	rendered := out.String()
+
+	// Volume mount for /tmp
+	if !strings.Contains(rendered, "mountPath: /tmp") {
+		t.Fatalf("expected rendered manifest to include /tmp volume mount")
+	}
+
+	// EmptyDir volume for tmp
+	if !strings.Contains(rendered, "emptyDir:") {
+		t.Fatalf("expected rendered manifest to include emptyDir volume")
+	}
+	if !strings.Contains(rendered, "sizeLimit: 1Gi") {
+		t.Fatalf("expected rendered manifest to include emptyDir sizeLimit: 1Gi")
+	}
+}
+
+func TestExecuteRenderOnlyWorkflowUsesNonRootCodexPath(t *testing.T) {
+	dir := t.TempDir()
+	workflowPath := filepath.Join(dir, "workflow.tsx")
+	if err := os.WriteFile(workflowPath, []byte("export default {};"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := Options{
+		RunID:        "run-codex-path-test",
+		SpecPath:     "specs/demo.yaml",
+		Project:      "demo",
+		Image:        "repo/image@sha256:abcdef",
+		WorkflowPath: workflowPath,
+		InputJSON:    "{}",
+		Namespace:    "fabrik-runs",
+		PVCSize:      "1Gi",
+		WaitTimeout:  "5m",
+		RenderOnly:   true,
+		Interactive:  false,
+	}
+
+	resolved, err := ResolveOptions(context.Background(), strings.NewReader(""), &bytes.Buffer{}, opts)
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := Execute(context.Background(), strings.NewReader(""), &out, &errOut, resolved); err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+
+	rendered := out.String()
+
+	// Codex auth should be mounted at /workspace/.codex/ for non-root user access
+	if !strings.Contains(rendered, "mountPath: /workspace/.codex/auth.json") {
+		t.Fatalf("expected rendered manifest to mount codex auth at /workspace/.codex/ for non-root user")
+	}
+	if !strings.Contains(rendered, "mountPath: /workspace/.codex/config.toml") {
+		t.Fatalf("expected rendered manifest to mount codex config at /workspace/.codex/ for non-root user")
+	}
+
+	// Should NOT mount at /root/.codex/ anymore
+	if strings.Contains(rendered, "mountPath: /root/.codex/") {
+		t.Fatalf("expected rendered manifest NOT to mount codex at /root/.codex/ when running as non-root")
+	}
+}
+
+func TestExecuteRenderOnlyCronJobIncludesSecurityContext(t *testing.T) {
+	in := strings.NewReader("")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	opts := Options{
+		RunID:        "cron-sec-test",
+		SpecPath:     "specs/demo.yaml",
+		Project:      "demo",
+		Image:        "repo/image@sha256:abcdef",
+		CronSchedule: "*/10 * * * *",
+		Namespace:    "fabrik-runs",
+		PVCSize:      "1Gi",
+		JobCommand:   "echo hi",
+		WaitTimeout:  "5m",
+		RenderOnly:   true,
+		Interactive:  false,
+	}
+
+	if err := Execute(context.Background(), in, &out, &errOut, opts); err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+
+	rendered := out.String()
+
+	// CronJob should have the same security context as regular jobs
+	if !strings.Contains(rendered, "runAsNonRoot: true") {
+		t.Fatalf("expected cronjob rendered manifest to include runAsNonRoot: true")
+	}
+	if !strings.Contains(rendered, "allowPrivilegeEscalation: false") {
+		t.Fatalf("expected cronjob rendered manifest to include allowPrivilegeEscalation: false")
+	}
+	if !strings.Contains(rendered, "readOnlyRootFilesystem: true") {
+		t.Fatalf("expected cronjob rendered manifest to include readOnlyRootFilesystem: true")
+	}
+}
+
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }

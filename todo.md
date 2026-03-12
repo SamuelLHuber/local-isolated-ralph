@@ -384,7 +384,11 @@ Implement cleanup and retention commands around Job/PVC lifecycle.
 - `make verify-cli`
 - k3d cleanup verification
 
-## 7. Security Hardening Alignment
+## 7. Security Hardening Alignment [done]
+Status: done
+Verified by workflow run: hoth-todo-loop-e2e-20260312-39
+Verification summary: Verification job hoth-todo-loop-e2e-20260312-39-security-hardening-alignment-ver succeeded.
+
 
 ### Task
 
