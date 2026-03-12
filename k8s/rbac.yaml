@@ -58,7 +58,6 @@ metadata:
 subjects:
   - kind: Group
     name: system:serviceaccounts:fabrik-runs
-    namespace: fabrik-runs
 roleRef:
   kind: Role
   name: fabrik-runner
