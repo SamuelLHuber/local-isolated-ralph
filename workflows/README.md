@@ -28,6 +28,7 @@ What it does:
 - uses the same control-root layout in local and cluster environments so workflow state paths stay identical across verification contexts
 - reads `todo.md` from the cloned repo root
 - runs a single monolithic Ralph loop that always picks the next highest-priority unfinished todo item
+- keeps one active todo item sticky until that item either completes publication or becomes blocked; backlog planning must not switch items mid-flight
 - blocks if the todo item is missing `Spec tie-in`, `Guarantees`, `Verification to build first`, or `Required checks`
 - uses the repo working copy itself as the JJ-backed execution workspace
 - snapshots progress with JJ after each implementation loop and after completion
@@ -35,6 +36,9 @@ What it does:
 - validates through same-cluster child verification Jobs instead of trusting agent summaries alone
 - runs a review gate for spec alignment, maintainability, and verification evidence before reporting `done`
 - feeds reviewer issues back into the next Ralph loop iteration instead of running a separate nested review-fix loop
+- derives the current item phase from live Smithers outputs (`implement`, `validate`, `review`, `report`) rather than latching a planner-owned phase across iterations
+- builds review context from the latest JJ diff summary (`jj diff --summary -r @-`) so reviewer file context reflects actual repo changes instead of agent self-reporting
+- ignores reviewer complaints that only claim missing context when the workflow already provided the todo item, diff summary, and validation evidence
 
 Required runtime inputs:
 
@@ -58,6 +62,12 @@ Optional runtime inputs:
 
 - `SMITHERS_JJ_BOOKMARK` via `--jj-bookmark`
 - `MAX_TODO_ITEMS` in the env file if you want the planner to consider more than the default single-item selection window
+
+Operational learnings from Hoth:
+
+- dispatch-time workflow and manifest fixes only require a new `fabrik run` dispatch; do not rebuild the Smithers image unless runtime contents changed
+- verifier gates should stay deterministic and stable; exploratory cluster and CLI-against-cluster checks belong in implementation/review as supporting evidence
+- if the workflow starts repeating `validate`, inspect `.fabrik/smithers/todo-driver.db` on the workspace PVC before changing prompts; the persisted planner and validator rows will show whether the bug is state-machine logic or a real verifier failure
 
 The workflow assumes `todo.md` uses this section shape for each executable item:
 
