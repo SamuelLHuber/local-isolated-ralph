@@ -270,7 +270,10 @@ Implement `fabrik run cancel --id <run-id>` as a Kubernetes-native cancel path.
 - `make verify-cli`
 - k3d verification of active job cancellation
 
-## 4. Verification Map
+## 4. Verification Map [done]
+Status: done
+Verified by: comprehensive review and documentation
+Verification summary: Created specs/058-cli-verification-map.md with 60+ named verification targets across 12 CLI features.
 
 ### Task
 
@@ -280,6 +283,7 @@ Create an explicit spec-to-verification map for all CLI lifecycle features.
 
 - [`specs/051-k3s-orchestrator.md`](/Users/samuel/git/local-isolated-ralph/specs/051-k3s-orchestrator.md)
 - [`specs/057-k3s-local-testing.md`](/Users/samuel/git/local-isolated-ralph/specs/057-k3s-local-testing.md)
+- [`specs/058-cli-verification-map.md`](/Users/samuel/git/local-isolated-ralph/specs/058-cli-verification-map.md) (created)
 
 ### Guarantees
 
@@ -289,7 +293,7 @@ Create an explicit spec-to-verification map for all CLI lifecycle features.
 
 ### Verification to build first
 
-- a table or doc mapping features to:
+- [x] a table or doc mapping features to:
   - unit tests
   - integration tests
   - k3d checks
@@ -297,8 +301,17 @@ Create an explicit spec-to-verification map for all CLI lifecycle features.
 
 ### Required checks
 
-- review that all active CLI features appear in the map
-- ensure every new roadmap item added to this file also includes verification requirements
+- [x] review that all active CLI features appear in the map
+- [x] ensure every new roadmap item added to this file also includes verification requirements
+
+### Documentation updates
+
+- Created [`specs/058-cli-verification-map.md`](/Users/samuel/git/local-isolated-ralph/specs/058-cli-verification-map.md) with:
+  - 12 active CLI features mapped
+  - 60+ named verification targets
+  - L1-L6 verification layer definitions
+  - Future task template for consistent verification planning
+  - Glossary and command reference
 
 ## 5. Env Promotion / Protected Environments
 

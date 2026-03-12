@@ -32,3 +32,48 @@ func TestEnvHelpMentionsPullAndPromote(t *testing.T) {
 		}
 	}
 }
+
+func TestEnvPromoteHelpMentionsYesFlag(t *testing.T) {
+	var out bytes.Buffer
+	root := NewRootCommand(Streams{In: strings.NewReader(""), Out: &out, Err: &out}, "test")
+	root.SetArgs([]string{"env", "promote", "--help"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("execute help failed: %v", err)
+	}
+	help := out.String()
+	if !strings.Contains(help, "--yes") {
+		t.Fatalf("expected promote help to include --yes flag, got:\n%s", help)
+	}
+	if !strings.Contains(help, "confirmation") {
+		t.Fatalf("expected promote help to mention confirmation, got:\n%s", help)
+	}
+}
+
+func TestEnvPromoteHelpMentionsProtectedEnvironments(t *testing.T) {
+	var out bytes.Buffer
+	root := NewRootCommand(Streams{In: strings.NewReader(""), Out: &out, Err: &out}, "test")
+	root.SetArgs([]string{"env", "promote", "--help"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("execute help failed: %v", err)
+	}
+	help := out.String()
+	if !strings.Contains(help, "prod") && !strings.Contains(help, "Protected") {
+		t.Fatalf("expected promote help to mention protected environments, got:\n%s", help)
+	}
+}
+
+func TestEnvDiffHelpMentionsFromAndToFlags(t *testing.T) {
+	var out bytes.Buffer
+	root := NewRootCommand(Streams{In: strings.NewReader(""), Out: &out, Err: &out}, "test")
+	root.SetArgs([]string{"env", "diff", "--help"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("execute help failed: %v", err)
+	}
+	help := out.String()
+	if !strings.Contains(help, "--from") {
+		t.Fatalf("expected diff help to include --from flag, got:\n%s", help)
+	}
+	if !strings.Contains(help, "--to") {
+		t.Fatalf("expected diff help to include --to flag, got:\n%s", help)
+	}
+}

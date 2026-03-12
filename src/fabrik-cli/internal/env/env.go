@@ -1,6 +1,7 @@
 package env
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -41,16 +42,79 @@ type DiffOptions struct {
 	Options
 }
 
+// DiffResult provides structured comparison between two environments
+type DiffResult struct {
+	Project       string
+	FromEnv       string
+	ToEnv         string
+	OnlyInSource  map[string]string // keys only in FromEnv
+	OnlyInTarget  map[string]string // keys only in ToEnv
+	Changed       map[string]ValueChange // keys in both with different values
+	Unchanged     map[string]string // keys in both with same values
+}
+
+// ValueChange represents a changed value between environments
+type ValueChange struct {
+	FromValue string
+	ToValue   string
+}
+
+// IsDifferent returns true if there are any differences between environments
+func (d *DiffResult) IsDifferent() bool {
+	return len(d.OnlyInSource) > 0 || len(d.OnlyInTarget) > 0 || len(d.Changed) > 0
+}
+
+// Stats returns summary statistics for the diff
+func (d *DiffResult) Stats() (added, removed, modified, unchanged int) {
+	return len(d.OnlyInSource), len(d.OnlyInTarget), len(d.Changed), len(d.Unchanged)
+}
+
 type PromoteOptions struct {
-	Project string
-	FromEnv string
-	ToEnv   string
-	Replace bool
+	Project   string
+	FromEnv   string
+	ToEnv     string
+	Replace   bool
+	Yes       bool // Skip confirmation prompt
 	Options
+}
+
+type PromotePreview struct {
+	Diff           DiffResult
+	TargetExists   bool
+	SourceKeyCount int
+}
+
+// IsProtected returns true if the target environment requires additional protection
+func (p *PromotePreview) IsProtected() bool {
+	return IsProtectedEnvironment(p.Diff.ToEnv)
+}
+
+// RequiresConfirmation returns true if this promotion should prompt for confirmation
+func (p *PromotePreview) RequiresConfirmation() bool {
+	return p.IsProtected() || p.Diff.IsDifferent()
 }
 
 type secretResponse struct {
 	Data map[string]string `json:"data"`
+}
+
+// Protected environment names that require stronger gating
+var protectedEnvNames = []string{"prod", "production", "live"}
+
+// IsProtectedEnvironment returns true if the environment name indicates production-like usage
+func IsProtectedEnvironment(envName string) bool {
+	envLower := strings.ToLower(strings.TrimSpace(envName))
+	for _, protected := range protectedEnvNames {
+		if envLower == protected {
+			return true
+		}
+	}
+	return false
+}
+
+// SetProtectedEnvNames configures the list of protected environment names (for testing)
+func SetProtectedEnvNames(names []string) {
+	protectedEnvNames = names
 }
 
 func ValidateOptions(opts Options) error {
@@ -192,7 +256,18 @@ func Run(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opts Op
 	return cmd.Run()
 }
 
-func Diff(ctx context.Context, stdout io.Writer, opts DiffOptions) error {
+// ComputeDiff performs a structured comparison between two environments
+func ComputeDiff(ctx context.Context, opts DiffOptions) (DiffResult, error) {
+	result := DiffResult{
+		Project:      opts.Project,
+		FromEnv:      opts.FromEnv,
+		ToEnv:        opts.ToEnv,
+		OnlyInSource: map[string]string{},
+		OnlyInTarget: map[string]string{},
+		Changed:      map[string]ValueChange{},
+		Unchanged:    map[string]string{},
+	}
+
 	fromData, err := GetSecretData(ctx, Options{
 		Project:   opts.Project,
 		Env:       opts.FromEnv,
@@ -200,8 +275,9 @@ func Diff(ctx context.Context, stdout io.Writer, opts DiffOptions) error {
 		Context:   opts.Context,
 	})
 	if err != nil {
-		return err
+		return result, err
 	}
+
 	toData, err := GetSecretData(ctx, Options{
 		Project:   opts.Project,
 		Env:       opts.ToEnv,
@@ -209,58 +285,142 @@ func Diff(ctx context.Context, stdout io.Writer, opts DiffOptions) error {
 		Context:   opts.Context,
 	})
 	if err != nil {
+		return result, err
+	}
+
+	// Find keys only in source, only in target, changed, and unchanged
+	for key, fromValue := range fromData {
+		toValue, existsInTarget := toData[key]
+		if !existsInTarget {
+			result.OnlyInSource[key] = fromValue
+		} else if fromValue != toValue {
+			result.Changed[key] = ValueChange{FromValue: fromValue, ToValue: toValue}
+		} else {
+			result.Unchanged[key] = fromValue
+		}
+	}
+
+	for key, toValue := range toData {
+		if _, existsInSource := fromData[key]; !existsInSource {
+			result.OnlyInTarget[key] = toValue
+		}
+	}
+
+	return result, nil
+}
+
+func Diff(ctx context.Context, stdout io.Writer, opts DiffOptions) error {
+	result, err := ComputeDiff(ctx, opts)
+	if err != nil {
 		return err
 	}
 
-	seen := map[string]struct{}{}
-	allKeys := make([]string, 0, len(fromData)+len(toData))
-	for key := range fromData {
-		seen[key] = struct{}{}
-		allKeys = append(allKeys, key)
-	}
-	for key := range toData {
-		if _, ok := seen[key]; !ok {
-			allKeys = append(allKeys, key)
-		}
-	}
-	sort.Strings(allKeys)
-
-	var lines []string
-	for _, key := range allKeys {
-		fromValue, fromOK := fromData[key]
-		toValue, toOK := toData[key]
-		switch {
-		case fromOK && !toOK:
-			lines = append(lines, fmt.Sprintf("only-in-%s %s", opts.FromEnv, key))
-		case !fromOK && toOK:
-			lines = append(lines, fmt.Sprintf("only-in-%s %s", opts.ToEnv, key))
-		case fromValue != toValue:
-			lines = append(lines, fmt.Sprintf("changed %s", key))
-		}
-	}
-
-	if len(lines) == 0 {
+	if !result.IsDifferent() {
 		_, err := fmt.Fprintf(stdout, "no differences between %s and %s for project %s\n", opts.FromEnv, opts.ToEnv, opts.Project)
 		return err
 	}
-	for _, line := range lines {
-		if _, err := fmt.Fprintln(stdout, line); err != nil {
+
+	// Output structured diff with explicit categories
+	added, removed, modified, _ := result.Stats()
+
+	if len(result.OnlyInSource) > 0 {
+		if _, err := fmt.Fprintf(stdout, "\n[%d key(s) only in %s (will be added to %s)]\n", added, opts.FromEnv, opts.ToEnv); err != nil {
 			return err
 		}
+		for _, key := range sortedKeys(result.OnlyInSource) {
+			if _, err := fmt.Fprintf(stdout, "  + %s\n", key); err != nil {
+				return err
+			}
+		}
 	}
-	return nil
+
+	if len(result.OnlyInTarget) > 0 {
+		if _, err := fmt.Fprintf(stdout, "\n[%d key(s) only in %s (extra in %s)]\n", removed, opts.ToEnv, opts.ToEnv); err != nil {
+			return err
+		}
+		for _, key := range sortedKeys(result.OnlyInTarget) {
+			if _, err := fmt.Fprintf(stdout, "  - %s\n", key); err != nil {
+				return err
+			}
+		}
+	}
+
+	if len(result.Changed) > 0 {
+		if _, err := fmt.Fprintf(stdout, "\n[%d key(s) changed between %s and %s]\n", modified, opts.FromEnv, opts.ToEnv); err != nil {
+			return err
+		}
+		for _, key := range sortedChangedKeys(result.Changed) {
+			if _, err := fmt.Fprintf(stdout, "  ~ %s\n", key); err != nil {
+				return err
+			}
+		}
+	}
+
+	_, err = fmt.Fprintf(stdout, "\nsummary: %d added, %d removed, %d modified, %d unchanged\n",
+		added, removed, modified, len(result.Unchanged))
+	return err
 }
 
-func Promote(ctx context.Context, stdout io.Writer, opts PromoteOptions) error {
-	fromOpts := Options{
+// PreviewPromote shows what would happen during a promotion without applying changes
+func PreviewPromote(ctx context.Context, opts PromoteOptions) (PromotePreview, error) {
+	preview := PromotePreview{}
+
+	diffOpts := DiffOptions{
 		Project:   opts.Project,
-		Env:       opts.FromEnv,
+		FromEnv:   opts.FromEnv,
+		ToEnv:     opts.ToEnv,
+		Options:   opts.Options,
+	}
+
+	diff, err := ComputeDiff(ctx, diffOpts)
+	if err != nil {
+		return preview, err
+	}
+	preview.Diff = diff
+
+	// Check if target exists
+	targetOpts := Options{
+		Project:   opts.Project,
+		Env:       opts.ToEnv,
 		Namespace: opts.Namespace,
 		Context:   opts.Context,
 	}
-	toOpts := Options{
+	_, targetErr := GetSecretData(ctx, targetOpts)
+	preview.TargetExists = targetErr == nil || !IsSecretNotFound(targetErr)
+
+	// Count source keys
+	preview.SourceKeyCount = len(diff.OnlyInSource) + len(diff.Changed) + len(diff.Unchanged)
+
+	return preview, nil
+}
+
+func Promote(ctx context.Context, stdout io.Writer, opts PromoteOptions) error {
+	// Always compute preview first for safety
+	preview, err := PreviewPromote(ctx, opts)
+	if err != nil {
+		return err
+	}
+
+	// Show the preview/diff by default
+	if err := renderPromotePreview(stdout, preview, opts); err != nil {
+		return err
+	}
+
+	// If no differences and target exists, nothing to do
+	if !preview.Diff.IsDifferent() && preview.TargetExists {
+		_, err := fmt.Fprintf(stdout, "\nno changes needed: %s already matches %s\n", opts.ToEnv, opts.FromEnv)
+		return err
+	}
+
+	// Require confirmation for protected environments or when there are changes
+	if !opts.Yes && preview.RequiresConfirmation() {
+		return errors.New("promotion requires confirmation: use --yes to confirm, or review the diff above")
+	}
+
+	// Execute the promotion
+	fromOpts := Options{
 		Project:   opts.Project,
-		Env:       opts.ToEnv,
+		Env:       opts.FromEnv,
 		Namespace: opts.Namespace,
 		Context:   opts.Context,
 	}
@@ -271,7 +431,12 @@ func Promote(ctx context.Context, stdout io.Writer, opts PromoteOptions) error {
 	}
 
 	setOpts := SetOptions{
-		Options: toOpts,
+		Options: Options{
+			Project:   opts.Project,
+			Env:       opts.ToEnv,
+			Namespace: opts.Namespace,
+			Context:   opts.Context,
+		},
 		Replace: opts.Replace,
 	}
 	for key, value := range fromData {
@@ -280,7 +445,147 @@ func Promote(ctx context.Context, stdout io.Writer, opts PromoteOptions) error {
 	if err := Set(ctx, io.Discard, setOpts); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(stdout, "promoted %d key(s) from %s to %s for project %s\n", len(fromData), opts.FromEnv, opts.ToEnv, opts.Project)
+
+	action := "promoted"
+	if opts.Replace {
+		action = "replaced"
+	}
+
+	_, err = fmt.Fprintf(stdout, "\n%s %d key(s) from %s to %s for project %s\n",
+		action, len(fromData), opts.FromEnv, opts.ToEnv, opts.Project)
+	return err
+}
+
+// PromoteWithPrompt performs promotion with interactive confirmation
+func PromoteWithPrompt(ctx context.Context, stdin io.Reader, stdout io.Writer, opts PromoteOptions) error {
+	// Always compute preview first
+	preview, err := PreviewPromote(ctx, opts)
+	if err != nil {
+		return err
+	}
+
+	// Show the preview header
+	if err := renderPromotePreview(stdout, preview, opts); err != nil {
+		return err
+	}
+
+	// Show the diff between environments
+	diffOpts := DiffOptions{
+		Project:   opts.Project,
+		FromEnv:   opts.FromEnv,
+		ToEnv:     opts.ToEnv,
+		Options:   opts.Options,
+	}
+	if err := Diff(ctx, stdout, diffOpts); err != nil {
+		return err
+	}
+
+	// If no differences and target exists, nothing to do
+	if !preview.Diff.IsDifferent() && preview.TargetExists {
+		_, err := fmt.Fprintf(stdout, "\nno changes needed: %s already matches %s\n", opts.ToEnv, opts.FromEnv)
+		return err
+	}
+
+	// Skip confirmation if --yes was passed
+	if opts.Yes {
+		return executePromote(ctx, stdout, opts, preview)
+	}
+
+	// Prompt for confirmation
+	confirmed, err := promptConfirm(stdin, stdout, preview, opts)
+	if err != nil {
+		return err
+	}
+	if !confirmed {
+		_, err := fmt.Fprintf(stdout, "\npromotion cancelled\n")
+		return err
+	}
+
+	return executePromote(ctx, stdout, opts, preview)
+}
+
+func renderPromotePreview(stdout io.Writer, preview PromotePreview, opts PromoteOptions) error {
+	if preview.IsProtected() {
+		if _, err := fmt.Fprintf(stdout, "[PROTECTED ENVIRONMENT: %s]\n", opts.ToEnv); err != nil {
+			return err
+		}
+	}
+
+	if !preview.TargetExists {
+		if _, err := fmt.Fprintf(stdout, "target %s does not exist, will be created\n", opts.ToEnv); err != nil {
+			return err
+		}
+	}
+
+	// Show the diff stats if there are differences
+	if !preview.Diff.IsDifferent() {
+		if preview.TargetExists {
+			_, err := fmt.Fprintf(stdout, "no changes: %s already matches %s\n", opts.ToEnv, opts.FromEnv)
+			return err
+		}
+	}
+
+	return nil
+}
+
+func promptConfirm(stdin io.Reader, stdout io.Writer, preview PromotePreview, opts PromoteOptions) (bool, error) {
+	var prompt string
+	if preview.IsProtected() {
+		prompt = fmt.Sprintf("\nPromote to protected environment %s? [y/N]: ", opts.ToEnv)
+	} else {
+		prompt = fmt.Sprintf("\nPromote %d key(s) from %s to %s? [y/N]: ", preview.SourceKeyCount, opts.FromEnv, opts.ToEnv)
+	}
+
+	if _, err := fmt.Fprint(stdout, prompt); err != nil {
+		return false, err
+	}
+
+	reader := bufio.NewReader(stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return false, err
+	}
+
+	normalized := strings.ToLower(strings.TrimSpace(line))
+	return normalized == "y" || normalized == "yes", nil
+}
+
+func executePromote(ctx context.Context, stdout io.Writer, opts PromoteOptions, preview PromotePreview) error {
+	fromOpts := Options{
+		Project:   opts.Project,
+		Env:       opts.FromEnv,
+		Namespace: opts.Namespace,
+		Context:   opts.Context,
+	}
+
+	fromData, err := GetSecretData(ctx, fromOpts)
+	if err != nil {
+		return err
+	}
+
+	setOpts := SetOptions{
+		Options: Options{
+			Project:   opts.Project,
+			Env:       opts.ToEnv,
+			Namespace: opts.Namespace,
+			Context:   opts.Context,
+		},
+		Replace: opts.Replace,
+	}
+	for key, value := range fromData {
+		setOpts.Pairs = append(setOpts.Pairs, key+"="+value)
+	}
+	if err := Set(ctx, io.Discard, setOpts); err != nil {
+		return err
+	}
+
+	action := "promoted"
+	if opts.Replace {
+		action = "replaced"
+	}
+
+	_, err = fmt.Fprintf(stdout, "\n%s %d key(s) from %s to %s for project %s\n",
+		action, len(fromData), opts.FromEnv, opts.ToEnv, opts.Project)
 	return err
 }
 
@@ -483,6 +788,15 @@ func validateSecretData(data map[string]string) error {
 func sortedKeys(data map[string]string) []string {
 	keys := make([]string, 0, len(data))
 	for key := range data {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedChangedKeys(changed map[string]ValueChange) []string {
+	keys := make([]string, 0, len(changed))
+	for key := range changed {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)

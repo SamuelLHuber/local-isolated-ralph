@@ -120,24 +120,38 @@ func newEnvDiffCommand(common *env.Options) *cobra.Command {
 }
 
 func newEnvPromoteCommand(common *env.Options) *cobra.Command {
-	var opts env.PromoteOptions
+	opts := env.PromoteOptions{}
 	cmd := &cobra.Command{
 		Use:   "promote",
-		Short: "Copy keys from one environment secret to another",
+		Short: "Copy keys from one environment secret to another with preview/confirmation",
+		Long: `Promote copies environment variables from one environment to another.
+
+By default, this command shows a preview of what will change and requires confirmation.
+Use --yes to skip the confirmation prompt (still shows the preview).
+
+Protected environments (prod, production, live) require explicit confirmation.
+The diff output shows:
+  + keys that will be added to the target
+  - keys that exist only in the target (extra)
+  ~ keys that have different values between environments`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.FromEnv == "" || opts.ToEnv == "" {
 				return fmt.Errorf("missing required flags: --from and --to")
+			}
+			if common.Project == "" {
+				return fmt.Errorf("missing required flag: --project")
 			}
 			opts.Project = common.Project
 			opts.Options = env.Options{
 				Namespace: common.Namespace,
 				Context:   common.Context,
 			}
-			return env.Promote(cmd.Context(), cmd.OutOrStdout(), opts)
+			return env.PromoteWithPrompt(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), opts)
 		},
 	}
 	cmd.Flags().StringVar(&opts.FromEnv, "from", "", "Source environment name")
 	cmd.Flags().StringVar(&opts.ToEnv, "to", "", "Target environment name")
 	cmd.Flags().BoolVar(&opts.Replace, "replace", false, "Replace the target secret instead of merging")
+	cmd.Flags().BoolVar(&opts.Yes, "yes", false, "Skip confirmation prompt and proceed with promotion")
 	return cmd
 }
