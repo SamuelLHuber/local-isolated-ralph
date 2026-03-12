@@ -325,9 +325,9 @@ export function verifierCommands(item: TodoItem, workdir: string): string[] {
     return [
       ...base,
       `cd ${workdir}`,
-      "rg -n \"## Verification Ladder|## Definition Of Done Template|## Priority Order\" todo.md",
-      "rg -n \"Workflow Validation In Clusters\" src/fabrik-cli/docs/getting-started.md",
-      "rg -n \"same-cluster verifier Jobs\" workflows/README.md",
+      "grep -n \"## Verification Ladder\" todo.md || grep -n \"## Definition Of Done Template\" todo.md || grep -n \"## Priority Order\" todo.md",
+      "grep -n \"Workflow Validation In Clusters\" src/fabrik-cli/docs/getting-started.md",
+      "grep -n \"same-cluster verifier Jobs\" workflows/README.md",
     ];
   }
 
