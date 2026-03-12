@@ -14,12 +14,7 @@
 - Keep versions pinned (no `latest`, `^`, `~`, `*`).
 
 ## Version Control
-- Use `jj` for local history management in this repo.
-- When upstreaming work, keep the corresponding git branch and jj bookmark aligned.
-- Every commit message must be expansive and explain the intent clearly:
-  - why the change was needed,
-  - what goal the change is trying to achieve,
-  - and what behavior or workflow is being improved or protected.
+- Follow [`versioncontrol.md`](/Users/samuel/git/local-isolated-ralph/versioncontrol.md) for all version control behavior in this repo, including local `jj` usage, bookmark/branch alignment, workspace flow, publication, and commit message structure.
 
 ## Verification and Testing Policy
 - Every new feature and every code change must be fully verified and tested before commit.
