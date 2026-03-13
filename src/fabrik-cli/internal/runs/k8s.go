@@ -61,10 +61,10 @@ type runJobJSON struct {
 		} `json:"template"`
 	} `json:"spec"`
 	Status struct {
-		Active    int `json:"active"`
-		Succeeded int `json:"succeeded"`
-		Failed    int `json:"failed"`
-		StartTime string `json:"startTime"`
+		Active         int    `json:"active"`
+		Succeeded      int    `json:"succeeded"`
+		Failed         int    `json:"failed"`
+		StartTime      string `json:"startTime"`
 		CompletionTime string `json:"completionTime"`
 	} `json:"status"`
 }
@@ -91,7 +91,7 @@ type runPodJSON struct {
 		Annotations map[string]string `json:"annotations"`
 	} `json:"metadata"`
 	Status struct {
-		Phase string `json:"phase"`
+		Phase             string `json:"phase"`
 		ContainerStatuses []struct {
 			ImageID string `json:"imageID"`
 		} `json:"containerStatuses"`
@@ -482,7 +482,40 @@ func (c *K8sClient) jobToRunInfo(job *runJobJSON) RunInfo {
 		}
 	}
 
+	reconcileJobTerminalState(&run, job)
+
 	return run
+}
+
+func reconcileJobTerminalState(run *RunInfo, job *runJobJSON) {
+	switch {
+	case job.Status.Succeeded > 0:
+		run.Status = "succeeded"
+		run.Outcome = "succeeded"
+	case job.Status.Failed > 0:
+		run.Status = "failed"
+		run.Outcome = "failed"
+	default:
+		return
+	}
+
+	if run.Phase == "" || run.Phase == "run" {
+		run.Phase = "complete"
+	}
+	if run.Task == "" || run.Task == "dispatch" {
+		run.Task = "done"
+	}
+	if run.Progress.Total == 0 {
+		run.Progress.Total = 1
+	}
+	if run.Progress.Finished < run.Progress.Total {
+		run.Progress.Finished = run.Progress.Total
+	}
+	if run.FinishedAt == nil && job.Status.CompletionTime != "" {
+		if t, err := time.Parse(time.RFC3339, job.Status.CompletionTime); err == nil {
+			run.FinishedAt = &t
+		}
+	}
 }
 
 func (c *K8sClient) cronJobToRunInfo(cj *runCronJobJSON) RunInfo {

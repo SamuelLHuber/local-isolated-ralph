@@ -21,7 +21,7 @@ func setupMockKubectl(t *testing.T, responses map[string]string) string {
 	script += "case \"$1\" in\n"
 	script += "  get|list)\n"
 	script += "    case \"$*\" in\n"
-	
+
 	for pattern, response := range responses {
 		escapedPattern := strings.ReplaceAll(pattern, "\"", "\\\"")
 		script += "      *\"" + escapedPattern + "\"*)\n"
@@ -29,7 +29,7 @@ func setupMockKubectl(t *testing.T, responses map[string]string) string {
 		script += "        exit 0\n"
 		script += "        ;;\n"
 	}
-	
+
 	script += "    esac\n"
 	script += "    ;;\n"
 	script += "esac\n"
@@ -361,11 +361,11 @@ exit 1
 
 func TestJobStatusFromConditions(t *testing.T) {
 	tests := []struct {
-		name       string
-		active     int
-		succeeded  int
-		failed     int
-		wantStatus string
+		name        string
+		active      int
+		succeeded   int
+		failed      int
+		wantStatus  string
 		wantOutcome string
 	}{
 		{"active", 1, 0, 0, "active", ""},
@@ -388,10 +388,10 @@ func TestJobStatusFromConditions(t *testing.T) {
 					Labels:    map[string]string{"fabrik.sh/run-id": "test"},
 				},
 				Status: struct {
-					Active    int `json:"active"`
-					Succeeded int `json:"succeeded"`
-					Failed    int `json:"failed"`
-					StartTime string `json:"startTime"`
+					Active         int    `json:"active"`
+					Succeeded      int    `json:"succeeded"`
+					Failed         int    `json:"failed"`
+					StartTime      string `json:"startTime"`
 					CompletionTime string `json:"completionTime"`
 				}{
 					Active:    tt.active,
@@ -443,10 +443,10 @@ func TestParseStatusAnnotation(t *testing.T) {
 			} `json:"template"`
 		}{},
 		Status: struct {
-			Active    int `json:"active"`
-			Succeeded int `json:"succeeded"`
-			Failed    int `json:"failed"`
-			StartTime string `json:"startTime"`
+			Active         int    `json:"active"`
+			Succeeded      int    `json:"succeeded"`
+			Failed         int    `json:"failed"`
+			StartTime      string `json:"startTime"`
 			CompletionTime string `json:"completionTime"`
 		}{
 			Active: 1,
@@ -466,6 +466,64 @@ func TestParseStatusAnnotation(t *testing.T) {
 	// Progress from status annotation
 	if run.Progress.Finished != 8 || run.Progress.Total != 10 {
 		t.Errorf("expected progress 8/10 from status annotation, got %d/%d", run.Progress.Finished, run.Progress.Total)
+	}
+}
+
+func TestJobToRunInfoReconcilesCompletedJobWhenAnnotationsAreStale(t *testing.T) {
+	job := &runJobJSON{
+		Metadata: struct {
+			Name        string            `json:"name"`
+			Namespace   string            `json:"namespace"`
+			Labels      map[string]string `json:"labels"`
+			Annotations map[string]string `json:"annotations"`
+		}{
+			Name:      "test-job",
+			Namespace: "fabrik-runs",
+			Labels: map[string]string{
+				"fabrik.sh/run-id":  "test",
+				"fabrik.sh/project": "myproj",
+				"fabrik.sh/spec":    "spec-1",
+				"fabrik.sh/phase":   "run",
+				"fabrik.sh/status":  "running",
+				"fabrik.sh/task":    "dispatch",
+			},
+			Annotations: map[string]string{
+				"fabrik.sh/status":   `{"phase":"run","current_task":"dispatch","attempt":1,"progress":{"finished":0,"total":1}}`,
+				"fabrik.sh/progress": `{"finished":0,"total":1}`,
+			},
+		},
+		Status: struct {
+			Active         int    `json:"active"`
+			Succeeded      int    `json:"succeeded"`
+			Failed         int    `json:"failed"`
+			StartTime      string `json:"startTime"`
+			CompletionTime string `json:"completionTime"`
+		}{
+			Succeeded:      1,
+			CompletionTime: "2026-03-10T14:45:00Z",
+		},
+	}
+
+	client := &K8sClient{}
+	run := client.jobToRunInfo(job)
+
+	if run.Status != "succeeded" {
+		t.Fatalf("expected reconciled status succeeded, got %s", run.Status)
+	}
+	if run.Outcome != "succeeded" {
+		t.Fatalf("expected reconciled outcome succeeded, got %s", run.Outcome)
+	}
+	if run.Phase != "complete" {
+		t.Fatalf("expected reconciled phase complete, got %s", run.Phase)
+	}
+	if run.Task != "done" {
+		t.Fatalf("expected reconciled task done, got %s", run.Task)
+	}
+	if run.Progress.Finished != 1 || run.Progress.Total != 1 {
+		t.Fatalf("expected reconciled progress 1/1, got %d/%d", run.Progress.Finished, run.Progress.Total)
+	}
+	if run.FinishedAt == nil || run.FinishedAt.Format(time.RFC3339) != "2026-03-10T14:45:00Z" {
+		t.Fatalf("expected finishedAt from job completion time, got %+v", run.FinishedAt)
 	}
 }
 
@@ -863,7 +921,7 @@ exit 1
 func TestRunInfoJSONSerialization(t *testing.T) {
 	started := timeMustParse("2026-03-10T10:00:00Z")
 	finished := timeMustParse("2026-03-10T11:00:00Z")
-	
+
 	run := RunInfo{
 		RunID:      "01JK7V8XTEST1234567890123",
 		Project:    "myproj",

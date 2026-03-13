@@ -10,18 +10,18 @@ import (
 )
 
 type Manifests struct {
-	Kind           string
-	JobName        string
-	CronJobName    string
-	PVCName        string
-	ServiceAccount string
-	RoleYAML       string
+	Kind            string
+	JobName         string
+	CronJobName     string
+	PVCName         string
+	ServiceAccount  string
+	RoleYAML        string
 	RoleBindingYAML string
-	WorkflowSecret string
-	SyncSecret     string
-	PVCYAML        string
-	JobYAML        string
-	CronJobYAML    string
+	WorkflowSecret  string
+	SyncSecret      string
+	PVCYAML         string
+	JobYAML         string
+	CronJobYAML     string
 }
 
 func (m Manifests) AllYAML() string {
@@ -133,15 +133,15 @@ func BuildManifests(opts Options) (Manifests, error) {
 	if opts.IsCron() {
 		cronJobYAML := buildCronJobYAML(opts, cronJobName, workflowSecretName, syncSecretName, labels, annotations)
 		return Manifests{
-			Kind:           "CronJob",
-			CronJobName:    cronJobName,
-			PVCName:        opts.CronSchedule,
-			ServiceAccount: serviceAccountYAML,
-			RoleYAML:       roleYAML,
+			Kind:            "CronJob",
+			CronJobName:     cronJobName,
+			PVCName:         opts.CronSchedule,
+			ServiceAccount:  serviceAccountYAML,
+			RoleYAML:        roleYAML,
 			RoleBindingYAML: roleBindingYAML,
-			WorkflowSecret: workflowSecret,
-			SyncSecret:     syncSecret,
-			CronJobYAML:    cronJobYAML,
+			WorkflowSecret:  workflowSecret,
+			SyncSecret:      syncSecret,
+			CronJobYAML:     cronJobYAML,
 		}, nil
 	}
 
@@ -149,16 +149,16 @@ func BuildManifests(opts Options) (Manifests, error) {
 	jobYAML := buildJobYAML(opts, jobName, pvcName, workflowSecretName, syncSecretName, labels, annotations)
 
 	return Manifests{
-		Kind:           "Job",
-		JobName:        jobName,
-		PVCName:        pvcName,
-		ServiceAccount: serviceAccountYAML,
-		RoleYAML:       roleYAML,
+		Kind:            "Job",
+		JobName:         jobName,
+		PVCName:         pvcName,
+		ServiceAccount:  serviceAccountYAML,
+		RoleYAML:        roleYAML,
 		RoleBindingYAML: roleBindingYAML,
-		WorkflowSecret: workflowSecret,
-		SyncSecret:     syncSecret,
-		PVCYAML:        pvcYAML,
-		JobYAML:        jobYAML,
+		WorkflowSecret:  workflowSecret,
+		SyncSecret:      syncSecret,
+		PVCYAML:         pvcYAML,
+		JobYAML:         jobYAML,
 	}, nil
 }
 
@@ -252,7 +252,12 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 	if strings.TrimSpace(opts.WorkflowPath) == "" {
 		b.WriteString(indent + "        command: [\"sh\", \"-lc\", " + yamlQuote(opts.JobCommand) + "]\n")
 	} else {
-		bootstrap := "mkdir -p /workspace/workdir /workspace/.fabrik /workspace/.smithers"
+		bootstrap := "smithers_exit=0"
+		bootstrap += " && runtime_outcome=succeeded"
+		bootstrap += " && runtime_status=finished"
+		bootstrap += " && fabrik_status='{\"phase\":\"complete\",\"current_task\":\"done\",\"attempt\":1,\"progress\":{\"finished\":1,\"total\":1}}'"
+		bootstrap += " && fabrik_progress='{\"finished\":1,\"total\":1}'"
+		bootstrap += " && if ( mkdir -p /workspace/workdir /workspace/.fabrik /workspace/.smithers"
 		if workflowSecretName != "" {
 			bootstrap += " && if [ -f /opt/fabrik-workflow/bundle.tgz ]; then tar -xzf /opt/fabrik-workflow/bundle.tgz -C /workspace/.fabrik; fi"
 		}
@@ -272,7 +277,11 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 		bootstrap += " && if [ -n \"$VCS_USER_NAME\" ] && [ -n \"$VCS_USER_EMAIL\" ]; then export GIT_AUTHOR_NAME=\"$VCS_USER_NAME\" GIT_COMMITTER_NAME=\"${GIT_COMMITTER_NAME:-$VCS_USER_NAME}\" GIT_AUTHOR_EMAIL=\"$VCS_USER_EMAIL\" GIT_COMMITTER_EMAIL=\"${GIT_COMMITTER_EMAIL:-$VCS_USER_EMAIL}\" && git config --global user.name \"$VCS_USER_NAME\" && git config --global user.email \"$VCS_USER_EMAIL\" && jj config set --user user.name \"$VCS_USER_NAME\" >/dev/null && jj config set --user user.email \"$VCS_USER_EMAIL\" >/dev/null; fi"
 		bootstrap += " && GITHUB_AUTH_TOKEN=${GITHUB_TOKEN:-${GH_TOKEN:-}}"
 		bootstrap += " && if [ -n \"$GITHUB_AUTH_TOKEN\" ]; then cat > /tmp/fabrik-git-askpass.sh <<'EOF'\n#!/bin/sh\ncase \"$1\" in\n  *Username*) printf '%s\\n' \"x-access-token\" ;;\n  *Password*) printf '%s\\n' \"${GITHUB_AUTH_TOKEN:?}\" ;;\n  *) printf '\\n' ;;\nesac\nEOF\nchmod 700 /tmp/fabrik-git-askpass.sh && export GITHUB_AUTH_TOKEN GIT_ASKPASS=/tmp/fabrik-git-askpass.sh GIT_TERMINAL_PROMPT=0; fi"
-		bootstrap += " && exec /opt/smithers-runtime/node_modules/.bin/smithers run \"$WORKFLOW_PATH\" --run-id \"$SMITHERS_RUN_ID\" --input \"$SMITHERS_INPUT_JSON\" --root /workspace/workdir"
+		bootstrap += " && /opt/smithers-runtime/node_modules/.bin/smithers run \"$WORKFLOW_PATH\" --run-id \"$SMITHERS_RUN_ID\" --input \"$SMITHERS_INPUT_JSON\" --root /workspace/workdir ); then :; else smithers_exit=$?; fi"
+		bootstrap += " && if [ \"$smithers_exit\" -ne 0 ]; then runtime_outcome=failed; fi"
+		bootstrap += " && finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+		bootstrap += " && if [ -n \"${KUBERNETES_NAMESPACE:-}\" ] && [ -n \"${KUBERNETES_POD_NAME:-}\" ]; then job_name=$(kubectl -n \"$KUBERNETES_NAMESPACE\" get pod \"$KUBERNETES_POD_NAME\" -o jsonpath='{.metadata.labels.job-name}' 2>/dev/null || true); if [ -n \"$job_name\" ]; then kubectl -n \"$KUBERNETES_NAMESPACE\" label job \"$job_name\" fabrik.sh/phase=complete fabrik.sh/status=\"$runtime_status\" fabrik.sh/task=done --overwrite >/dev/null 2>&1 || true; kubectl -n \"$KUBERNETES_NAMESPACE\" annotate job \"$job_name\" fabrik.sh/status=\"$fabrik_status\" fabrik.sh/finished-at=\"$finished_at\" fabrik.sh/outcome=\"$runtime_outcome\" fabrik.sh/progress=\"$fabrik_progress\" --overwrite >/dev/null 2>&1 || true; fi; kubectl -n \"$KUBERNETES_NAMESPACE\" label pod \"$KUBERNETES_POD_NAME\" fabrik.sh/phase=complete fabrik.sh/status=\"$runtime_status\" fabrik.sh/task=done --overwrite >/dev/null 2>&1 || true; kubectl -n \"$KUBERNETES_NAMESPACE\" annotate pod \"$KUBERNETES_POD_NAME\" fabrik.sh/status=\"$fabrik_status\" fabrik.sh/finished-at=\"$finished_at\" fabrik.sh/outcome=\"$runtime_outcome\" fabrik.sh/progress=\"$fabrik_progress\" --overwrite >/dev/null 2>&1 || true; fi"
+		bootstrap += " && exit \"$smithers_exit\""
 		b.WriteString(indent + "        command: [\"sh\", \"-lc\", " + yamlQuote(bootstrap) + "]\n")
 	}
 	b.WriteString(indent + "        env:\n")
@@ -440,13 +449,13 @@ func buildWorkflowRunnerRoleYAML(namespace, roleName string) string {
 	b.WriteString("rules:\n")
 	b.WriteString("  - apiGroups: [\"batch\"]\n")
 	b.WriteString("    resources: [\"jobs\", \"cronjobs\"]\n")
-	b.WriteString("    verbs: [\"create\", \"delete\", \"get\", \"list\", \"watch\"]\n")
+	b.WriteString("    verbs: [\"create\", \"delete\", \"get\", \"list\", \"patch\", \"update\", \"watch\"]\n")
 	b.WriteString("  - apiGroups: [\"\"]\n")
 	b.WriteString("    resources: [\"persistentvolumeclaims\"]\n")
 	b.WriteString("    verbs: [\"create\", \"delete\", \"get\", \"list\", \"patch\", \"update\", \"watch\"]\n")
 	b.WriteString("  - apiGroups: [\"\"]\n")
 	b.WriteString("    resources: [\"pods\"]\n")
-	b.WriteString("    verbs: [\"get\", \"list\", \"watch\"]\n")
+	b.WriteString("    verbs: [\"get\", \"list\", \"patch\", \"update\", \"watch\"]\n")
 	b.WriteString("  - apiGroups: [\"\"]\n")
 	b.WriteString("    resources: [\"pods/log\"]\n")
 	b.WriteString("    verbs: [\"get\"]\n")

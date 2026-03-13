@@ -135,8 +135,20 @@ func TestExecuteRenderOnlyWithFabrikSyncRendersSecretAndBootstrap(t *testing.T) 
 	if strings.Contains(rendered, "exec /opt/smithers-runtime/run.sh") {
 		t.Fatalf("expected workflow bootstrap to invoke smithers directly, not the runtime fallback script")
 	}
-	if !strings.Contains(rendered, "exec /opt/smithers-runtime/node_modules/.bin/smithers run") {
+	if !strings.Contains(rendered, "/opt/smithers-runtime/node_modules/.bin/smithers run") {
 		t.Fatalf("expected workflow bootstrap to invoke smithers directly")
+	}
+	if !strings.Contains(rendered, "metadata.labels.job-name") {
+		t.Fatalf("expected workflow bootstrap to resolve the owning job for metadata reconciliation")
+	}
+	if !strings.Contains(rendered, "annotate job \\\"$job_name\\\"") && !strings.Contains(rendered, "annotate job \"$job_name\"") {
+		t.Fatalf("expected workflow bootstrap to reconcile job metadata on exit")
+	}
+	if !strings.Contains(rendered, "annotate pod \\\"$KUBERNETES_POD_NAME\\\"") && !strings.Contains(rendered, "annotate pod \"$KUBERNETES_POD_NAME\"") {
+		t.Fatalf("expected workflow bootstrap to reconcile pod metadata on exit")
+	}
+	if !strings.Contains(rendered, "smithers_exit") {
+		t.Fatalf("expected workflow bootstrap to preserve smithers exit status")
 	}
 	if !strings.Contains(rendered, "WORKFLOW_PATH=${SMITHERS_WORKFLOW_PATH:-/workspace/.fabrik/") {
 		t.Fatalf("expected workflow bootstrap to resolve workflow path from the mounted bundle")
@@ -158,6 +170,9 @@ func TestExecuteRenderOnlyWithFabrikSyncRendersSecretAndBootstrap(t *testing.T) 
 	}
 	if !strings.Contains(rendered, "resources: [\"jobs\", \"cronjobs\"]") {
 		t.Fatalf("expected rendered manifest to grant jobs and cronjobs access to workflow runner role")
+	}
+	if !strings.Contains(rendered, "verbs: [\"create\", \"delete\", \"get\", \"list\", \"patch\", \"update\", \"watch\"]") {
+		t.Fatalf("expected rendered manifest to grant patch/update verbs needed for workflow metadata reconciliation")
 	}
 	if !strings.Contains(rendered, "serviceAccountName: fabrik-runner-run-2") {
 		t.Fatalf("expected workflow pod to use per-run service account")
