@@ -8,13 +8,18 @@ RUN_ID="${SMITHERS_RUN_ID:-local-run}"
 WORKFLOW_PATH="${SMITHERS_WORKFLOW_PATH:-${RUNTIME_DIR}/workflow.tsx}"
 SMITHERS_BIN="${SMITHERS_BIN:-${RUNTIME_DIR}/node_modules/.bin/smithers}"
 PI_AGENT_DIR="${PI_CODING_AGENT_DIR:-/tmp/pi-agent}"
+RUNTIME_HOME="${SMITHERS_HOME:-/workspace}"
 if [ "${SMITHERS_INPUT_JSON+x}" = "x" ]; then
   INPUT_JSON="$SMITHERS_INPUT_JSON"
 else
   INPUT_JSON='{"goal":"hello"}'
 fi
 
-mkdir -p "$WORKDIR" "$(dirname "$DB_PATH")" "$PI_AGENT_DIR"
+export HOME="$RUNTIME_HOME"
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+export GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL:-$HOME/.gitconfig}"
+
+mkdir -p "$WORKDIR" "$(dirname "$DB_PATH")" "$PI_AGENT_DIR" "$HOME" "$XDG_CONFIG_HOME"
 
 ensure_js_runtime() {
   target_dir="$1"

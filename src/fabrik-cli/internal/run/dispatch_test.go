@@ -153,6 +153,12 @@ func TestExecuteRenderOnlyWithFabrikSyncRendersSecretAndBootstrap(t *testing.T) 
 	if !strings.Contains(rendered, "WORKFLOW_PATH=${SMITHERS_WORKFLOW_PATH:-/workspace/.fabrik/") {
 		t.Fatalf("expected workflow bootstrap to resolve workflow path from the mounted bundle")
 	}
+	if !strings.Contains(rendered, "RUNTIME_HOME=${SMITHERS_HOME:-/workspace}") {
+		t.Fatalf("expected workflow bootstrap to set a writable runtime home")
+	}
+	if !strings.Contains(rendered, "GIT_CONFIG_GLOBAL") || !strings.Contains(rendered, ".gitconfig") {
+		t.Fatalf("expected workflow bootstrap to redirect global git config into writable storage")
+	}
 	if !strings.Contains(rendered, "cat > /tmp/pi-agent/models.json <<'EOF'") {
 		t.Fatalf("expected workflow bootstrap to materialize Fireworks PI runtime config")
 	}
