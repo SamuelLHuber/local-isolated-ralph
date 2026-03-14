@@ -229,6 +229,64 @@ Rules enforced by the CLI:
 
 When present, `.fabrik-sync` is bundled locally, mounted into the Job as a Secret, and extracted into `/workspace/workdir` before the workflow starts. Workflow source code is staged separately under `/workspace/.fabrik/workflows` so repo-backed workflows can clone directly into `/workspace/workdir` and let Smithers see the JJ/Git repository at its execution root. You can override the sync manifest location with `--fabrik-sync-file`.
 
+For workflow-backed runs, Fabrik owns the Smithers runtime layout and exports a stable runtime contract into the pod:
+
+- `SMITHERS_WORKFLOW_PATH=/workspace/.fabrik/...`
+- `SMITHERS_WORKDIR=/workspace/workdir`
+- `SMITHERS_DB_PATH=/workspace/.smithers/state.db`
+- `SMITHERS_LOG_DIR=/workspace/.smithers/executions/<run-id>/logs`
+- `SMITHERS_HOME=/workspace`
+
+Workflow authors should treat `SMITHERS_DB_PATH` as the only stable hook for Smithers state. Do not derive the database or `.smithers` directory from `process.cwd()` when the workflow is intended to run under Fabrik.
+
+Fabrik does not own agent-specific cache layout. For long-running cluster workflows, avoid putting large writable caches under `/tmp`, because the pod mounts `/tmp` as a bounded `emptyDir`. Large caches for Codex, Claude Code, Playwright, npm, browser downloads, or similar tooling should live on the workspace PVC under `/workspace/<tool-runtime>/...`, while small transient scratch files can still use `/tmp`.
+
+Recommended workflow pattern:
+
+```ts
+import { mkdirSync } from "node:fs"
+import { dirname } from "node:path"
+
+const smithersDbPath =
+  process.env.SMITHERS_DB_PATH ?? "./workflows/my-workflow.db"
+
+mkdirSync(dirname(smithersDbPath), { recursive: true })
+```
+
+This keeps plain local runs working while allowing Fabrik-dispatched runs to use the runtime-managed state path automatically.
+
+For repo-backed workflows, the intended layout is:
+
+- `process.cwd()` and `SMITHERS_WORKDIR` are the workspace root, not the repo root
+- clone the repo into a child directory under that root such as `join(process.cwd(), "repo")`
+- do not clone directly into `SMITHERS_WORKDIR` itself
+- keep Smithers state in `SMITHERS_DB_PATH` / `SMITHERS_LOG_DIR`, not under the repo checkout
+
+The current contract for Fabrik-provided repo env is:
+
+- `SMITHERS_JJ_REPO` and `SMITHERS_JJ_BOOKMARK` are raw workflow inputs
+- Fabrik configures auth and identity for `git` / `jj`
+- the workflow is responsible for deciding whether and where to clone
+
+Recommended repo-backed pattern:
+
+```ts
+const workdir = process.cwd()
+const repoDir = join(workdir, "repo")
+const jjRepo = process.env.SMITHERS_JJ_REPO
+const jjBookmark = process.env.SMITHERS_JJ_BOOKMARK
+
+if (jjRepo) {
+  if (jjBookmark) {
+    await $`jj git clone --branch ${jjBookmark} ${jjRepo} ${repoDir}`.cwd(workdir)
+  } else {
+    await $`jj git clone ${jjRepo} ${repoDir}`.cwd(workdir)
+  }
+}
+```
+
+The canonical example today is [`examples/counter-local/workflow.tsx`](/Users/samuel/git/local-isolated-ralph/examples/counter-local/workflow.tsx). Follow that shape: workspace root at `process.cwd()`, checkout in a child directory, then run later `jj` commands from inside that checkout.
+
 Verification path used for this implementation:
 
 - unit tests cover allowed files, comments, blocked `.git` / `.jj` / `node_modules` / `.next` / `dist` / `build`, absolute paths, parent traversal, directory rejection, symlinks, per-file size overflow, and total-size overflow

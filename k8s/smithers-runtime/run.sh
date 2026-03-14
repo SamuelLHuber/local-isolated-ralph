@@ -5,6 +5,7 @@ RUNTIME_DIR="${SMITHERS_RUNTIME_DIR:-/opt/smithers-runtime}"
 WORKDIR="${SMITHERS_WORKDIR:-/workspace/workdir}"
 DB_PATH="${SMITHERS_DB_PATH:-/workspace/.smithers/state.db}"
 RUN_ID="${SMITHERS_RUN_ID:-local-run}"
+LOG_DIR="${SMITHERS_LOG_DIR:-/workspace/.smithers/executions/${RUN_ID}/logs}"
 WORKFLOW_PATH="${SMITHERS_WORKFLOW_PATH:-${RUNTIME_DIR}/workflow.tsx}"
 SMITHERS_BIN="${SMITHERS_BIN:-${RUNTIME_DIR}/node_modules/.bin/smithers}"
 PI_AGENT_DIR="${PI_CODING_AGENT_DIR:-/tmp/pi-agent}"
@@ -19,7 +20,7 @@ export HOME="$RUNTIME_HOME"
 export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 export GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL:-$HOME/.gitconfig}"
 
-mkdir -p "$WORKDIR" "$(dirname "$DB_PATH")" "$PI_AGENT_DIR" "$HOME" "$XDG_CONFIG_HOME"
+mkdir -p "$WORKDIR" "$(dirname "$DB_PATH")" "$LOG_DIR" "$PI_AGENT_DIR" "$HOME" "$XDG_CONFIG_HOME"
 
 ensure_js_runtime() {
   target_dir="$1"
@@ -116,4 +117,5 @@ fi
 exec "$SMITHERS_BIN" run "${WORKFLOW_PATH}" \
   --run-id "$RUN_ID" \
   --input "$INPUT_JSON" \
-  --root "$WORKDIR"
+  --root "$WORKDIR" \
+  --log-dir "$LOG_DIR"

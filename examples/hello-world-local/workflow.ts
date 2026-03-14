@@ -1,5 +1,10 @@
 import { createSmithers, CodexAgent, Task, Workflow } from "smithers-orchestrator";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { z } from "zod";
+
+const smithersDbPath = process.env.SMITHERS_DB_PATH ?? "workflows/hello-world-agent.db";
+mkdirSync(dirname(smithersDbPath), { recursive: true });
 
 const { smithers, outputs } = createSmithers(
   {
@@ -9,7 +14,7 @@ const { smithers, outputs } = createSmithers(
       summary: z.string(),
     }),
   },
-  { dbPath: "workflows/hello-world-agent.db" },
+  { dbPath: smithersDbPath },
 );
 
 const agent = new CodexAgent({

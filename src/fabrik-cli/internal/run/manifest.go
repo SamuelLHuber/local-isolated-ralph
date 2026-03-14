@@ -257,12 +257,15 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 		bootstrap += " && runtime_status=finished"
 		bootstrap += " && fabrik_status='{\"phase\":\"complete\",\"current_task\":\"done\",\"attempt\":1,\"progress\":{\"finished\":1,\"total\":1}}'"
 		bootstrap += " && fabrik_progress='{\"finished\":1,\"total\":1}'"
-		bootstrap += " && if ( mkdir -p /workspace/workdir /workspace/.fabrik /workspace/.smithers"
+		bootstrap += " && if ( WORKDIR=${SMITHERS_WORKDIR:-/workspace/workdir}"
+		bootstrap += " && DB_PATH=${SMITHERS_DB_PATH:-/workspace/.smithers/state.db}"
+		bootstrap += " && LOG_DIR=${SMITHERS_LOG_DIR:-/workspace/.smithers/executions/$SMITHERS_RUN_ID/logs}"
+		bootstrap += " && mkdir -p \"$WORKDIR\" /workspace/.fabrik \"$(dirname \"$DB_PATH\")\" \"$LOG_DIR\""
 		if workflowSecretName != "" {
 			bootstrap += " && if [ -f /opt/fabrik-workflow/bundle.tgz ]; then tar -xzf /opt/fabrik-workflow/bundle.tgz -C /workspace/.fabrik; fi"
 		}
 		if syncSecretName != "" {
-			bootstrap += " && if [ -f /opt/fabrik-sync/bundle.tgz ]; then tar -xzf /opt/fabrik-sync/bundle.tgz -C /workspace/workdir; fi"
+			bootstrap += " && if [ -f /opt/fabrik-sync/bundle.tgz ]; then tar -xzf /opt/fabrik-sync/bundle.tgz -C \"$WORKDIR\"; fi"
 		}
 		bootstrap += " && RUNTIME_DIR=${SMITHERS_RUNTIME_DIR:-/opt/smithers-runtime}"
 		bootstrap += " && WORKFLOW_PATH=${SMITHERS_WORKFLOW_PATH:-/workspace/.fabrik/" + opts.WorkflowBundle.WorkdirPath + "}"
@@ -279,7 +282,7 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 		bootstrap += " && if [ -n \"$VCS_USER_NAME\" ] && [ -n \"$VCS_USER_EMAIL\" ]; then export GIT_AUTHOR_NAME=\"$VCS_USER_NAME\" GIT_COMMITTER_NAME=\"${GIT_COMMITTER_NAME:-$VCS_USER_NAME}\" GIT_AUTHOR_EMAIL=\"$VCS_USER_EMAIL\" GIT_COMMITTER_EMAIL=\"${GIT_COMMITTER_EMAIL:-$VCS_USER_EMAIL}\" && git config --global user.name \"$VCS_USER_NAME\" && git config --global user.email \"$VCS_USER_EMAIL\" && jj config set --user user.name \"$VCS_USER_NAME\" >/dev/null && jj config set --user user.email \"$VCS_USER_EMAIL\" >/dev/null; fi"
 		bootstrap += " && GITHUB_AUTH_TOKEN=${GITHUB_TOKEN:-${GH_TOKEN:-}}"
 		bootstrap += " && if [ -n \"$GITHUB_AUTH_TOKEN\" ]; then cat > /tmp/fabrik-git-askpass.sh <<'EOF'\n#!/bin/sh\ncase \"$1\" in\n  *Username*) printf '%s\\n' \"x-access-token\" ;;\n  *Password*) printf '%s\\n' \"${GITHUB_AUTH_TOKEN:?}\" ;;\n  *) printf '\\n' ;;\nesac\nEOF\nchmod 700 /tmp/fabrik-git-askpass.sh && export GITHUB_AUTH_TOKEN GIT_ASKPASS=/tmp/fabrik-git-askpass.sh GIT_TERMINAL_PROMPT=0; fi"
-		bootstrap += " && /opt/smithers-runtime/node_modules/.bin/smithers run \"$WORKFLOW_PATH\" --run-id \"$SMITHERS_RUN_ID\" --input \"$SMITHERS_INPUT_JSON\" --root /workspace/workdir ); then :; else smithers_exit=$?; fi"
+		bootstrap += " && /opt/smithers-runtime/node_modules/.bin/smithers run \"$WORKFLOW_PATH\" --run-id \"$SMITHERS_RUN_ID\" --input \"$SMITHERS_INPUT_JSON\" --root \"$WORKDIR\" --log-dir \"$LOG_DIR\" ); then :; else smithers_exit=$?; fi"
 		bootstrap += " && if [ \"$smithers_exit\" -ne 0 ]; then runtime_outcome=failed; fi"
 		bootstrap += " && finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 		bootstrap += " && if [ -n \"${KUBERNETES_NAMESPACE:-}\" ] && [ -n \"${KUBERNETES_POD_NAME:-}\" ]; then job_name=$(kubectl -n \"$KUBERNETES_NAMESPACE\" get pod \"$KUBERNETES_POD_NAME\" -o jsonpath='{.metadata.labels.job-name}' 2>/dev/null || true); if [ -n \"$job_name\" ]; then kubectl -n \"$KUBERNETES_NAMESPACE\" label job \"$job_name\" fabrik.sh/phase=complete fabrik.sh/status=\"$runtime_status\" fabrik.sh/task=done --overwrite >/dev/null 2>&1 || true; kubectl -n \"$KUBERNETES_NAMESPACE\" annotate job \"$job_name\" fabrik.sh/status=\"$fabrik_status\" fabrik.sh/finished-at=\"$finished_at\" fabrik.sh/outcome=\"$runtime_outcome\" fabrik.sh/progress=\"$fabrik_progress\" --overwrite >/dev/null 2>&1 || true; fi; kubectl -n \"$KUBERNETES_NAMESPACE\" label pod \"$KUBERNETES_POD_NAME\" fabrik.sh/phase=complete fabrik.sh/status=\"$runtime_status\" fabrik.sh/task=done --overwrite >/dev/null 2>&1 || true; kubectl -n \"$KUBERNETES_NAMESPACE\" annotate pod \"$KUBERNETES_POD_NAME\" fabrik.sh/status=\"$fabrik_status\" fabrik.sh/finished-at=\"$finished_at\" fabrik.sh/outcome=\"$runtime_outcome\" fabrik.sh/progress=\"$fabrik_progress\" --overwrite >/dev/null 2>&1 || true; fi"
@@ -320,6 +323,14 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 	if strings.TrimSpace(opts.WorkflowPath) != "" {
 		b.WriteString(indent + "          - name: SMITHERS_WORKFLOW_PATH\n")
 		b.WriteString(indent + "            value: " + yamlQuote("/workspace/.fabrik/"+opts.WorkflowBundle.WorkdirPath) + "\n")
+		b.WriteString(indent + "          - name: SMITHERS_WORKDIR\n")
+		b.WriteString(indent + "            value: " + yamlQuote("/workspace/workdir") + "\n")
+		b.WriteString(indent + "          - name: SMITHERS_DB_PATH\n")
+		b.WriteString(indent + "            value: " + yamlQuote("/workspace/.smithers/state.db") + "\n")
+		b.WriteString(indent + "          - name: SMITHERS_LOG_DIR\n")
+		b.WriteString(indent + "            value: " + yamlQuote("/workspace/.smithers/executions/"+opts.RunID+"/logs") + "\n")
+		b.WriteString(indent + "          - name: SMITHERS_HOME\n")
+		b.WriteString(indent + "            value: " + yamlQuote("/workspace") + "\n")
 		b.WriteString(indent + "          - name: SMITHERS_INPUT_JSON\n")
 		b.WriteString(indent + "            value: " + yamlQuote(opts.InputJSON) + "\n")
 		if strings.TrimSpace(opts.JJRepo) != "" {

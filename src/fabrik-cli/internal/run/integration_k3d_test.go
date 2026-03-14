@@ -567,9 +567,11 @@ func writeRepoEnvWorkflow(t *testing.T) string {
 	workflow := "/** @jsxImportSource smithers-orchestrator */\n" +
 		"import { $ } from \"bun\";\n" +
 		"import { existsSync, mkdirSync, writeFileSync } from \"node:fs\";\n" +
-		"import { join } from \"node:path\";\n" +
+		"import { dirname, join } from \"node:path\";\n" +
 		"import { createSmithers, Workflow, Task } from \"smithers-orchestrator\";\n" +
 		"import { z } from \"zod\";\n\n" +
+		"const smithersDbPath = process.env.SMITHERS_DB_PATH ?? \"workflows/repo-env-check.db\";\n" +
+		"mkdirSync(dirname(smithersDbPath), { recursive: true });\n\n" +
 		"const { smithers, outputs } = createSmithers(\n" +
 		"  {\n" +
 		"    report: z.object({\n" +
@@ -578,7 +580,7 @@ func writeRepoEnvWorkflow(t *testing.T) string {
 		"      clusterName: z.string(),\n" +
 		"    }),\n" +
 		"  },\n" +
-		"  { dbPath: \"workflows/repo-env-check.db\" },\n" +
+		"  { dbPath: smithersDbPath },\n" +
 		");\n\n" +
 		"export default smithers((ctx) => {\n" +
 		"  const workdir = process.cwd();\n" +

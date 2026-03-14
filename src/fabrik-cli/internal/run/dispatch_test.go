@@ -126,7 +126,7 @@ func TestExecuteRenderOnlyWithFabrikSyncRendersSecretAndBootstrap(t *testing.T) 
 	if !strings.Contains(rendered, "/opt/fabrik-sync/bundle.tgz") {
 		t.Fatalf("expected rendered manifest to mount fabrik sync bundle")
 	}
-	if !strings.Contains(rendered, "tar -xzf /opt/fabrik-sync/bundle.tgz -C /workspace/workdir") {
+	if !strings.Contains(rendered, "tar -xzf /opt/fabrik-sync/bundle.tgz -C") || !strings.Contains(rendered, "$WORKDIR") {
 		t.Fatalf("expected bootstrap extraction command in rendered manifest")
 	}
 	if !strings.Contains(rendered, "tar -xzf /opt/fabrik-workflow/bundle.tgz -C /workspace/.fabrik") {
@@ -137,6 +137,9 @@ func TestExecuteRenderOnlyWithFabrikSyncRendersSecretAndBootstrap(t *testing.T) 
 	}
 	if !strings.Contains(rendered, "/opt/smithers-runtime/node_modules/.bin/smithers run") {
 		t.Fatalf("expected workflow bootstrap to invoke smithers directly")
+	}
+	if !strings.Contains(rendered, "--log-dir \\\"$LOG_DIR\\\"") && !strings.Contains(rendered, "--log-dir \"$LOG_DIR\"") {
+		t.Fatalf("expected workflow bootstrap to pass explicit smithers log dir")
 	}
 	if !strings.Contains(rendered, "metadata.labels.job-name") {
 		t.Fatalf("expected workflow bootstrap to resolve the owning job for metadata reconciliation")
@@ -153,8 +156,29 @@ func TestExecuteRenderOnlyWithFabrikSyncRendersSecretAndBootstrap(t *testing.T) 
 	if !strings.Contains(rendered, "WORKFLOW_PATH=${SMITHERS_WORKFLOW_PATH:-/workspace/.fabrik/") {
 		t.Fatalf("expected workflow bootstrap to resolve workflow path from the mounted bundle")
 	}
+	if !strings.Contains(rendered, "WORKDIR=${SMITHERS_WORKDIR:-/workspace/workdir}") {
+		t.Fatalf("expected workflow bootstrap to resolve workdir from the shared runtime contract")
+	}
+	if !strings.Contains(rendered, "DB_PATH=${SMITHERS_DB_PATH:-/workspace/.smithers/state.db}") {
+		t.Fatalf("expected workflow bootstrap to resolve db path from the shared runtime contract")
+	}
+	if !strings.Contains(rendered, "LOG_DIR=${SMITHERS_LOG_DIR:-/workspace/.smithers/executions/$SMITHERS_RUN_ID/logs}") {
+		t.Fatalf("expected workflow bootstrap to resolve log dir from the shared runtime contract")
+	}
 	if !strings.Contains(rendered, "RUNTIME_HOME=${SMITHERS_HOME:-/workspace}") {
 		t.Fatalf("expected workflow bootstrap to set a writable runtime home")
+	}
+	if !strings.Contains(rendered, "name: SMITHERS_WORKDIR") {
+		t.Fatalf("expected workflow pod to receive explicit smithers workdir env")
+	}
+	if !strings.Contains(rendered, "name: SMITHERS_DB_PATH") {
+		t.Fatalf("expected workflow pod to receive explicit smithers db path env")
+	}
+	if !strings.Contains(rendered, "name: SMITHERS_LOG_DIR") {
+		t.Fatalf("expected workflow pod to receive explicit smithers log dir env")
+	}
+	if !strings.Contains(rendered, "name: SMITHERS_HOME") {
+		t.Fatalf("expected workflow pod to receive explicit smithers home env")
 	}
 	if !strings.Contains(rendered, "GIT_CONFIG_GLOBAL") || !strings.Contains(rendered, ".gitconfig") {
 		t.Fatalf("expected workflow bootstrap to redirect global git config into writable storage")

@@ -1,7 +1,7 @@
 /** @jsxImportSource smithers-orchestrator */
 import { $ } from "bun";
 import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { CodexAgent, createSmithers, Workflow, Task } from "smithers-orchestrator";
 import { z } from "zod";
 
@@ -14,6 +14,9 @@ const coder = new CodexAgent({
 const jjRepo = process.env.SMITHERS_JJ_REPO;
 const jjBookmark = process.env.SMITHERS_JJ_BOOKMARK;
 const jjBookmarkCommand = jjBookmark ?? "<bookmark>";
+const smithersDbPath = process.env.SMITHERS_DB_PATH ?? "workflows/counter-app-agent.db";
+
+mkdirSync(dirname(smithersDbPath), { recursive: true });
 
 const { smithers, outputs } = createSmithers(
   {
@@ -31,7 +34,7 @@ const { smithers, outputs } = createSmithers(
       detail: z.string().optional(),
     }),
   },
-  { dbPath: "workflows/counter-app-agent.db" },
+  { dbPath: smithersDbPath },
 );
 
 export default smithers((ctx) => {
