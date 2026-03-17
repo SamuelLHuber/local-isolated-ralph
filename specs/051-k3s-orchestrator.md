@@ -209,7 +209,7 @@ metadata:
 spec:
   ttlSecondsAfterFinished: 604800  # 7 days
   activeDeadlineSeconds: 86400     # 24 hour max
-  backoffLimit: 0                   # Don't retry (Smithers handles)
+  backoffLimit: 1                   # Allow one controller recreation so resume can delete the active pod
   template:
     metadata:
       labels:
@@ -510,39 +510,124 @@ This means Fabrik is not trying to copy Vercel exactly. Vercel is deployment-pla
 
 Two distinct secret classes are required:
 
-1. `fabrik-credentials`
-   - Shared machine/runtime credentials
-   - Examples: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`
+1. Shared credential bundles
+   - Canonical cluster-wide runtime credentials stored as Kubernetes Secrets in `fabrik-system`
+   - Examples: Codex auth bundle, Claude auth bundle, Pi auth bundle, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`
    - Managed by operators, not normal project workflows
+   - This is a secret class, not a requirement that all shared credentials live in one giant Secret object
 
 2. `fabrik-env-<project>-<env>`
    - Project-scoped runtime configuration
    - Examples: `DATABASE_URL`, `API_BASE_URL`, `LAOS_*`, app-level secrets
    - Selected by `fabrik run --project <p> --env <e>`
 
+#### Shared credential bundle model
+
+Shared credentials should be modeled as named Secrets rather than a single polymorphic payload.
+
+Recommended naming:
+
+- `fabrik-credential-codex-default`
+- `fabrik-credential-claude-default`
+- `fabrik-credential-pi-default`
+- `fabrik-credential-openai-default`
+- `fabrik-credential-anthropic-default`
+
+Each named Secret represents one bundle for one harness, provider, or runtime use case.
+
+This keeps Fabrik standalone and workflow-implementation-independent because Fabrik only needs to know:
+
+- which bundle is selected for a run
+- where that bundle should be mounted
+- whether a run-scoped override suppresses the cluster default
+
+Fabrik should not need to understand the internal auth schema of Codex, Claude Code, Pi, or other tools.
+
 #### Runtime injection rules
 
-At runtime, jobs consume both secret classes:
+At runtime, jobs may consume:
 
-- `fabrik-credentials` mounted read-only at `/etc/fabrik/credentials/`
+- zero or more shared credential bundles mounted read-only under `/var/run/fabrik/credentials/<bundle>/`
 - `fabrik-env-<project>-<env>` mounted read-only at `/etc/fabrik/env/`
-- `fabrik-env-<project>-<env>` may also be projected into environment variables for compatibility
+- selected env-style shared credentials projected into the environment where ecosystem compatibility requires it
 
 Security preference:
 
 - secrets should be mounted as files where practical
 - env var projection exists for ecosystem compatibility and simple tools
 - sensitive values should not be echoed in logs or surfaced in command output
+- credential bundles that need refresh visibility must be mounted as directories, not via `subPath`
+
+#### Shared credential bundle selection and overrides
+
+The selection model must be explicit:
+
+1. A run may select a cluster-shared default bundle by logical name.
+2. A run may instead provide an explicit run-scoped override bundle.
+3. If a run-scoped override bundle is present, Fabrik mounts only that override for the selected target and must not also mount the cluster default for that same target.
+4. Adjacent runtime configuration that is not itself credential material, such as Pi `models.json`, is not part of the shared credential bundle core and should be modeled separately.
+
+Run-scoped overrides may come from:
+
+- a local file or directory imported into a run-only Secret
+- an explicit existing cluster Secret reference
+
+In both cases, override semantics remain the same: explicit run selection suppresses the default for that target.
+
+#### Refreshable mount contract
+
+Credential refresh must remain Kubernetes-native.
+
+The contract is:
+
+- Kubernetes Secrets in `fabrik-system` are the canonical source of truth for cluster-shared credentials.
+- Fabrik mirrors the selected shared bundle into the run namespace before dispatch.
+- Cluster-backed bundles are mounted as read-only directories.
+- Running jobs using cluster-backed bundles must be able to observe updated credential contents when the underlying Secret is replaced and the helper re-reads the mounted directory.
+- Fabrik does not guarantee live refresh for fixed local imports unless those imports are represented as refreshable cluster Secrets.
+
+This distinction matters:
+
+- new jobs using cluster-shared bundles must always see the latest cluster state
+- running jobs using cluster-shared bundles must also be able to observe updates
+- run-scoped local imports are intentionally fixed for the life of that run unless explicitly modeled otherwise
+
+`subPath` mounts are therefore not acceptable for credential bundles that are expected to refresh during a run.
+
+#### Separation of responsibilities
+
+Fabrik core owns:
+
+- secret selection
+- namespace mirroring
+- read-only mount layout
+- precedence
+- non-secret Kubernetes-native event emission
+
+Harness-specific helper code owns:
+
+- parsing provider-native auth payloads
+- choosing between multiple credentials in a pool
+- classifying provider-specific auth failures
+- retry and fallback behavior
+- copying mounted credentials into the tool-native writable runtime location when required
+
+Examples:
+
+- Codex helper logic may rotate through multiple `*.auth.json` files
+- Claude helper logic may rotate through provider-native auth files
+- Pi helper logic may consume `~/.pi/agent/auth.json` while treating `models.json` as adjacent config
+
+Fabrik should not implement provider-specific token refresh logic.
 
 #### Precedence rules
 
 The precedence model must be deterministic:
 
 1. platform runtime metadata injected by Fabrik (`SMITHERS_*`)
-2. project env secret (`fabrik-env-<project>-<env>`)
-3. shared credentials (`fabrik-credentials`) only for keys not already provided by project env
-
-Project env wins over shared credentials for conflicting keys because project-specific overrides are easier to reason about than hidden global defaults.
+2. explicit run-scoped credential overrides for the selected target
+3. selected cluster-shared credential bundles for the selected target
+4. project env secret (`fabrik-env-<project>-<env>`) for project runtime configuration
 
 #### CLI semantics
 
@@ -611,6 +696,18 @@ This mirrors the best parts of Vercel, GitHub Environments, and Doppler:
 - Vercel-style `env pull` / named environments / local developer flow
 - GitHub-style protected production environments
 - Doppler-style separation between human write access and runtime read access
+
+#### Kubernetes-native notification model
+
+Fabrik core should keep notification behavior minimal and Kubernetes-native.
+
+Default behavior:
+
+- Jobs and Pods emit Kubernetes Events when credential wiring is missing, exhausted, or explicitly reported as invalid by a helper
+- structured stderr/log output remains available for operators and log pipelines
+- external webhook forwarding, chat integrations, or paging integrations remain helper- or platform-level concerns rather than Fabrik core concerns
+
+This keeps the default behavior aligned with normal cluster tooling while still allowing higher-level automation to react.
 
 #### Audit and validation
 

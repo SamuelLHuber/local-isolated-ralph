@@ -10,4 +10,4 @@ verify-cli-unit:
 	cd src/fabrik-cli && go test ./...
 
 verify-cli-k3d:
-	cd src/fabrik-cli && FABRIK_K3D_E2E=1 FABRIK_K3D_CLUSTER=$(FABRIK_K3D_CLUSTER) go test ./internal/run -run 'TestK3d' -v
+	cd src/fabrik-cli && FABRIK_K3D_E2E=1 FABRIK_K3D_CLUSTER=$(FABRIK_K3D_CLUSTER) go test ./internal/run -run 'TestK3d' -timeout 20m -v

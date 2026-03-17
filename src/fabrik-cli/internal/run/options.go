@@ -14,35 +14,40 @@ import (
 var projectIDPattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
 type Options struct {
-	RunID              string
-	SpecPath           string
-	Project            string
-	Environment        string
-	EnvFile            string
-	Image              string
-	WorkflowPath       string
-	WorkflowBundle     *WorkflowBundle
-	CronSchedule       string
-	InputJSON          string
-	FabrikSyncFile     string
-	SyncBundle         *SyncBundle
-	JJRepo             string
-	JJBookmark         string
-	StorageClass       string
-	JobCommand         string
-	Namespace          string
-	KubeContext        string
-	PVCSize            string
-	OutputSubdir       string
-	WaitTimeout        string
-	RunMode            string
-	PreClean           bool
-	Wait               bool
-	RenderOnly         bool
-	DryRun             bool
-	AcceptFilteredSync bool
-	Interactive        bool
-	NonInteractive     bool
+	RunID                       string
+	SpecPath                    string
+	Project                     string
+	Environment                 string
+	EnvFile                     string
+	SharedCredentialSecret      string
+	SharedCredentialFile        string
+	SharedCredentialDir         string
+	SharedCredentialHelperImage string
+	Image                       string
+	WorkflowPath                string
+	WorkflowBundle              *WorkflowBundle
+	CronSchedule                string
+	InputJSON                   string
+	FabrikSyncFile              string
+	SyncBundle                  *SyncBundle
+	JJRepo                      string
+	JJBookmark                  string
+	StorageClass                string
+	JobCommand                  string
+	Namespace                   string
+	KubeContext                 string
+	PVCSize                     string
+	OutputSubdir                string
+	WaitTimeout                 string
+	RunMode                     string
+	PreClean                    bool
+	Wait                        bool
+	RenderOnly                  bool
+	DryRun                      bool
+	DisableSharedCredentials    bool
+	AcceptFilteredSync          bool
+	Interactive                 bool
+	NonInteractive              bool
 }
 
 const envSecretNamespace = "fabrik-system"
@@ -72,6 +77,32 @@ func validateOptions(opts Options) error {
 		if _, err := os.Stat(opts.EnvFile); err != nil {
 			return fmt.Errorf("failed to read env file %q: %w", opts.EnvFile, err)
 		}
+	}
+	sharedCredentialSources := 0
+	if strings.TrimSpace(opts.SharedCredentialSecret) != "" {
+		sharedCredentialSources += 1
+	}
+	if strings.TrimSpace(opts.SharedCredentialFile) != "" {
+		sharedCredentialSources += 1
+		if info, err := os.Stat(opts.SharedCredentialFile); err != nil {
+			return fmt.Errorf("failed to read shared credential file %q: %w", opts.SharedCredentialFile, err)
+		} else if info.IsDir() {
+			return fmt.Errorf("shared credential file %q is a directory; use --shared-credential-dir", opts.SharedCredentialFile)
+		}
+	}
+	if strings.TrimSpace(opts.SharedCredentialDir) != "" {
+		sharedCredentialSources += 1
+		if info, err := os.Stat(opts.SharedCredentialDir); err != nil {
+			return fmt.Errorf("failed to read shared credential dir %q: %w", opts.SharedCredentialDir, err)
+		} else if !info.IsDir() {
+			return fmt.Errorf("shared credential dir %q is not a directory", opts.SharedCredentialDir)
+		}
+	}
+	if sharedCredentialSources > 1 {
+		return errors.New("shared credential selection is mutually exclusive: choose only one of --shared-credential-secret, --shared-credential-file, or --shared-credential-dir")
+	}
+	if opts.DisableSharedCredentials && sharedCredentialSources > 0 {
+		return errors.New("--disable-shared-credentials cannot be combined with explicit shared credential selection")
 	}
 	if strings.TrimSpace(opts.Image) == "" {
 		return errors.New("missing required flag: --image")

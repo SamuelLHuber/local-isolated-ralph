@@ -287,6 +287,28 @@ if (jjRepo) {
 
 The canonical example today is [`examples/counter-local/workflow.tsx`](/Users/samuel/git/local-isolated-ralph/examples/counter-local/workflow.tsx). Follow that shape: workspace root at `process.cwd()`, checkout in a child directory, then run later `jj` commands from inside that checkout.
 
+For JJ-backed workflows, version control safety is part of the workflow contract too:
+
+- the workflow owns JJ state transitions inside the checkout
+- `jj` commands should run from the repo checkout directory, not from the workspace root
+- before `jj describe`, `jj bookmark set`, `jj git push`, or `jj new`, the workflow should verify it is inside a valid JJ repo and fail clearly if `.jj` is missing
+- workflows should handle recoverable JJ state instead of assuming a pristine checkout every time
+
+At minimum, repo-backed workflows should defend against:
+
+- empty or undescribed working revisions left behind by interrupted earlier runs
+- no-op changes where there is nothing meaningful to commit or push
+- missing bookmarks or missing repo metadata in the target checkout
+- failed `jj describe`, `jj new`, `jj bookmark set`, or `jj git push` calls that should stop the run with a clear error instead of silently corrupting the workflow state
+
+The practical standard is:
+
+- detect invalid or incomplete JJ state before mutating history
+- recover when the state is obviously safe to repair, for example by abandoning an empty undescribed revision
+- otherwise fail explicitly with a message that explains which JJ invariant was violated
+
+If your workflow creates commits, it should encode these checks directly in the workflow logic rather than assuming Fabrik will repair JJ state for you.
+
 Verification path used for this implementation:
 
 - unit tests cover allowed files, comments, blocked `.git` / `.jj` / `node_modules` / `.next` / `dist` / `build`, absolute paths, parent traversal, directory rejection, symlinks, per-file size overflow, and total-size overflow
@@ -563,7 +585,7 @@ For local cluster verification with `k3d`:
 3. run env-gated `k3d` integration test layer:
    - `FABRIK_K3D_E2E=1 go test ./internal/run -run 'TestK3d' -v`
    - this covers both manual command flows and the sample Smithers workflow at `examples/counter-local/workflow.tsx`
-   - for workflow-backed k3d verification, set `FABRIK_SMITHERS_IMAGE` to a cluster-pullable immutable image and ensure `~/.codex/auth.json` plus `~/.codex/config.toml` exist
+   - for workflow-backed k3d verification, set `FABRIK_SMITHERS_IMAGE` to a cluster-pullable immutable image and ensure `fabrik-credentials` exists in `fabrik-system`
    - when testing against local k3d registries, push the image into the cluster-local registry and use that registry digest, not a bare local tag:
      - `docker tag fabrik-smithers:dev localhost:5111/fabrik-smithers:dev`
      - `docker push localhost:5111/fabrik-smithers:dev`
@@ -760,6 +782,8 @@ For in-cluster workflows (verification jobs, CI runners), ensure the pod's servi
 - Resume does NOT reset the Smithers state; it continues from the last completed task
 - Resume does NOT work on CronJobs (resume their child Jobs instead)
 - If the Job spec itself needs changes, cancel and create a new run
+- Resume relies on the Job controller retry budget. Fabrik Jobs use `backoffLimit: 1` so deleting the active pod leaves one controller recreation attempt available.
+- If you supply your own Job spec outside Fabrik, ensure its retry policy still allows controller recreation after a resume-triggered pod delete.
 
 ### kubectl Parity
 

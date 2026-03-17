@@ -47,6 +47,7 @@ type Progress struct {
 type runJobJSON struct {
 	Metadata struct {
 		Name        string            `json:"name"`
+		UID         string            `json:"uid"`
 		Namespace   string            `json:"namespace"`
 		Labels      map[string]string `json:"labels"`
 		Annotations map[string]string `json:"annotations"`
@@ -86,10 +87,22 @@ type runCronJobJSON struct {
 type runPodJSON struct {
 	Metadata struct {
 		Name        string            `json:"name"`
+		UID         string            `json:"uid"`
 		Namespace   string            `json:"namespace"`
 		Labels      map[string]string `json:"labels"`
 		Annotations map[string]string `json:"annotations"`
 	} `json:"metadata"`
+	Spec struct {
+		Containers []struct {
+			Image string `json:"image"`
+		} `json:"containers"`
+		Volumes []struct {
+			Name                  string `json:"name"`
+			PersistentVolumeClaim *struct {
+				ClaimName string `json:"claimName"`
+			} `json:"persistentVolumeClaim,omitempty"`
+		} `json:"volumes"`
+	} `json:"spec"`
 	Status struct {
 		Phase             string `json:"phase"`
 		ContainerStatuses []struct {
@@ -128,6 +141,9 @@ func (c *K8sClient) List(ctx context.Context) ([]RunInfo, error) {
 }
 
 // Show returns detailed information for a specific run by ID.
+
+const resumeReplacementPodTimeout = 90 * time.Second
+
 func (c *K8sClient) Show(ctx context.Context, runID string) (*RunInfo, error) {
 	// First try to find a Job with the run-id label
 	job, err := c.getJobByRunID(ctx, runID)
@@ -792,8 +808,7 @@ func (c *K8sClient) Resume(ctx context.Context, runID string) error {
 		return fmt.Errorf("cannot resume: no active pod for run %q", runID)
 	}
 
-	// Delete the pod - the Job controller will recreate it with the same spec
-	// including the same immutable image and PVC mount
+	// Delete the active pod and let the Job controller recreate it.
 	_, err = c.runKubectl(ctx, "-n", c.Namespace, "delete", "pod", podName, "--ignore-not-found")
 	if err != nil {
 		// Check for RBAC permission errors and provide helpful guidance
@@ -803,6 +818,20 @@ func (c *K8sClient) Resume(ctx context.Context, runID string) error {
 				"See k8s/rbac.yaml for the required Role and RoleBinding: %w", podName, c.Namespace, err)
 		}
 		return fmt.Errorf("failed to delete pod %s for resume: %w", podName, err)
+	}
+
+	newPod, err := c.waitForJobReplacementPod(ctx, job.Metadata.Name, podName, resumeReplacementPodTimeout)
+	if err != nil {
+		return fmt.Errorf("cannot resume: %w", err)
+	}
+	if len(newPod.Spec.Containers) == 0 {
+		return fmt.Errorf("cannot resume: replacement pod %s has no containers", newPod.Metadata.Name)
+	}
+	if newPod.Spec.Containers[0].Image != image {
+		return fmt.Errorf("cannot resume: replacement pod %s image %q did not match job image %q", newPod.Metadata.Name, newPod.Spec.Containers[0].Image, image)
+	}
+	if !podUsesPVC(newPod, pvcName) {
+		return fmt.Errorf("cannot resume: replacement pod %s did not mount expected pvc %s", newPod.Metadata.Name, pvcName)
 	}
 
 	return nil
@@ -822,6 +851,60 @@ func isRBACPermissionError(err error) bool {
 	return strings.Contains(errStr, "forbidden") ||
 		strings.Contains(errStr, "cannot delete resource") ||
 		strings.Contains(errStr, "user \"system:serviceaccount")
+}
+
+func (c *K8sClient) waitForJobReplacementPod(ctx context.Context, jobName, oldPodName string, timeout time.Duration) (*runPodJSON, error) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		pod, err := c.getReplacementPodForJob(ctx, jobName, oldPodName)
+		if err == nil && pod != nil {
+			return pod, nil
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	jobStatus, statusErr := c.runKubectl(ctx, "-n", c.Namespace, "get", "job", jobName, "-o", "jsonpath={.status.active}{\"/\"}{.status.succeeded}{\"/\"}{.status.failed}")
+	if statusErr != nil {
+		jobStatus = "<unavailable>"
+	}
+	podList, podErr := c.runKubectl(ctx, "-n", c.Namespace, "get", "pods", "-l", "job-name="+jobName, "-o", "jsonpath={range .items[*]}{.metadata.name}{\":\"}{.status.phase}{\"\\n\"}{end}")
+	if podErr != nil {
+		podList = "<unavailable>"
+	}
+	return nil, fmt.Errorf("pod deleted but Job controller did not recreate within %s (job status: %s, pods: %s)", timeout, strings.TrimSpace(jobStatus), strings.TrimSpace(podList))
+}
+
+func (c *K8sClient) getReplacementPodForJob(ctx context.Context, jobName, oldPodName string) (*runPodJSON, error) {
+	output, err := c.runKubectl(ctx, "-n", c.Namespace, "get", "pods", "-l", "job-name="+jobName, "-o", "json")
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Items []runPodJSON `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		return nil, err
+	}
+
+	for _, pod := range result.Items {
+		if pod.Metadata.Name != "" && pod.Metadata.Name != oldPodName {
+			return &pod, nil
+		}
+	}
+	return nil, fmt.Errorf("replacement pod not found")
+}
+
+func podUsesPVC(pod *runPodJSON, pvcName string) bool {
+	if pod == nil {
+		return false
+	}
+	for _, volume := range pod.Spec.Volumes {
+		if volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == pvcName {
+			return true
+		}
+	}
+	return false
 }
 
 // verifyPVCExists checks that the PVC exists and is bound

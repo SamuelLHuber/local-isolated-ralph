@@ -3,8 +3,8 @@
 > Explicit spec-to-verification mapping for all Fabrik CLI lifecycle features
 
 **Status**: active  
-**Version**: 1.0.0  
-**Last Updated**: 2026-03-12  
+**Version**: 1.1.0  
+**Last Updated**: 2026-03-17  
 **Supersedes**: Ad-hoc verification tracking
 
 ---
@@ -12,6 +12,7 @@
 ## Changelog
 
 - **v1.0.0** (2026-03-12): Initial verification map covering all active CLI features
+- **v1.1.0** (2026-03-17): Added verification map for shared credential bundles, overrides, and refresh visibility
 
 ---
 
@@ -316,6 +317,51 @@
 
 ---
 
+### 8. Shared Credential Bundles And Rotation
+
+**Spec tie-in**: [`051-k3s-orchestrator.md`](./051-k3s-orchestrator.md) - Shared credential bundles, refreshable mount contract, separation of responsibilities, Kubernetes-native notification model
+
+**Feature description**: Distribute cluster-shared credential bundles and run-scoped overrides into Fabrik jobs while preserving generic bundle semantics, helper-layer rotation, and live refresh visibility for cluster-backed directory mounts.
+
+| Verification | Target | File/Command |
+|-------------|--------|--------------|
+| L1 Unit | Select cluster default bundle | `internal/run/credentials_test.go:TestResolveSharedCredentialBundleSelectsClusterDefault` |
+| L1 Unit | Run override suppresses cluster default | `internal/run/credentials_test.go:TestResolveSharedCredentialBundleOverrideSuppressesDefault` |
+| L1 Unit | Existing cluster Secret reference override | `internal/run/credentials_test.go:TestResolveSharedCredentialBundleSupportsExistingSecretReference` |
+| L1 Unit | Precedence resolution | `internal/run/credentials_test.go:TestResolveSharedCredentialPrecedence` |
+| L1 Unit | Render directory mount, not subPath | `internal/run/manifest_credentials_test.go:TestSharedCredentialBundleRendersDirectoryMount` |
+| L1 Unit | Env-style shared credential projection | `internal/run/manifest_credentials_test.go:TestSharedCredentialEnvProjectionRendersDeterministically` |
+| L1 Unit | Kubernetes Event reason mapping | `internal/run/credentials_test.go:TestSharedCredentialEventReasonMapping` |
+| L2 Integration | Mirror shared bundle into run namespace | `internal/run/dispatch_credentials_test.go:TestExecuteLiveDispatchMirrorsSharedCredentialBundle` |
+| L2 Integration | Run override uses run-only Secret | `internal/run/dispatch_credentials_test.go:TestExecuteLiveDispatchUsesRunScopedCredentialOverride` |
+| L2 Integration | Override skips cluster default mount | `internal/run/dispatch_credentials_test.go:TestExecuteLiveDispatchOverrideSuppressesDefaultMount` |
+| L2 Integration | Cluster-backed bundles avoid subPath | `internal/run/dispatch_credentials_test.go:TestExecuteRenderSharedCredentialBundleAvoidsSubPath` |
+| L2 Integration | Missing bundle emits Kubernetes-native event metadata | `internal/run/dispatch_credentials_test.go:TestSharedCredentialFailureProducesEventMetadata` |
+| L3 k3d | Env-style shared credential replacement affects next job | `internal/run/integration_k3d_test.go:TestK3dSharedEnvCredentialReplacementAffectsNextJob` |
+| L3 k3d | Run-scoped env override suppresses default | `internal/run/integration_k3d_test.go:TestK3dRunScopedEnvCredentialOverrideSuppressesDefault` |
+| L3 k3d | Cluster-backed file bundle visible to next job after replacement | `internal/run/integration_k3d_test.go:TestK3dSharedFileBundleReplacementAffectsNextJob` |
+| L3 k3d | Running job sees updated cluster-backed directory bundle | `internal/run/integration_k3d_test.go:TestK3dRunningJobSeesUpdatedSharedDirectoryBundle` |
+| L3 k3d | Codex helper rotation against shared pool | `internal/run/integration_k3d_test.go:TestK3dCodexHelperRotatesAcrossSharedPool` |
+| L3 k3d | Claude helper rotation against shared pool | `internal/run/integration_k3d_test.go:TestK3dClaudeHelperRotatesAcrossSharedPool` |
+| L3 k3d | Pi auth bundle mount and adjacent models config | `internal/run/integration_k3d_test.go:TestK3dPiAuthBundleWithAdjacentModelsConfig` |
+| L4 Multi | Shared env credential replacement on multi-node | Same tests with `FABRIK_K3D_CLUSTER=dev-multi` |
+| L4 Multi | Shared file bundle replacement on multi-node | Same tests with `FABRIK_K3D_CLUSTER=dev-multi` |
+| L5 Verifier Jobs | Child verifier jobs validate in-cluster secret replacement and helper rotation | Workflow-dispatched verifier jobs in same cluster |
+| L6 Rootserver | Rootserver parity for shared bundle replacement and override suppression | [`059-k3s-rootserver-parity.md`](./059-k3s-rootserver-parity.md) |
+
+**Acceptance criteria coverage**:
+- [ ] Cluster-shared credential bundles are modeled as named Secrets, not one monolithic secret payload requirement
+- [ ] Explicit run-scoped overrides suppress the cluster default for the same target
+- [ ] Cluster-backed credential bundles mount as directories, not `subPath`
+- [ ] New jobs always see updated cluster-backed credentials
+- [ ] Running jobs can observe updated cluster-backed credentials when helpers re-read the mounted directory
+- [ ] Fabrik remains generic while helper-layer logic owns provider-specific rotation and auth parsing
+- [ ] Kubernetes-native event emission exists for missing, exhausted, or helper-reported invalid credentials
+
+**Completion status**: [planned]
+
+---
+
 ### 10. PVC and Storage Management
 
 **Spec tie-in**: [`051-k3s-orchestrator.md`](./051-k3s-orchestrator.md) - Acceptance Criteria 9, 28
@@ -372,7 +418,7 @@
 | L1 Unit | Interactive token write | `internal/run/preflight_test.go:TestSatisfyPreflightRequirementsInteractiveWritesGitHubToken` |
 
 **Acceptance criteria coverage**:
-- [x] Codex auth file validation
+- [x] Shared credential secret mirroring
 - [x] GitHub token requirement detection
 
 **Completion status**: [done]
@@ -445,6 +491,41 @@ Required for execution-semantic changes:
 
 5. **k3d multi-node**: Feature verified against `dev-multi` cluster
 6. **Production parity**: Manual verification against real k3s rootserver using [`059-k3s-rootserver-parity.md`](./059-k3s-rootserver-parity.md)
+
+---
+
+### 14. Shared Credentials (`fabrik credentials`)
+
+**Spec tie-in**: [`051-k3s-orchestrator.md`](./051-k3s-orchestrator.md) - Secret classes, Runtime injection rules
+
+**Feature description**: Manage the cluster-wide `fabrik-credentials` shared secret, mirror it to run namespaces, and mount it as a directory in workflow pods.
+
+| Verification | Target | File/Command |
+|-------------|--------|--------------|
+| L1 Unit | Reserved key rejection | `internal/credentials/credentials_test.go:TestIsReservedKeyRejectsSmithersPrefix` |
+| L1 Unit | Provider key acceptance | `internal/credentials/credentials_test.go:TestIsReservedKeyAcceptsProviderKeys` |
+| L1 Unit | Dotenv parsing | `internal/credentials/credentials_test.go:TestParseDotenvFileRaw` |
+| L1 Unit | Duplicate key rejection | `internal/credentials/credentials_test.go:TestParseDotenvFileRawRejectsDuplicates` |
+| L1 Unit | Directory mount rendering | `internal/run/manifest_credentials_test.go:TestBuildManifestsWorkflowUsesSharedCredentialsDirectoryMount` |
+| L1 Unit | No codex-auth references | `internal/run/manifest_credentials_test.go:TestBuildManifestsWorkflowDoesNotUseCodexAuthSubPathMounts` |
+| L1 Unit | Command jobs no creds | `internal/run/manifest_credentials_test.go:TestBuildManifestsCommandJobDoesNotMountCredentials` |
+| L1 Unit | Precedence: both present | `internal/run/manifest_credentials_test.go:TestBuildManifestsCredentialPrecedenceProjectEnvAndCredentials` |
+| L2 Integration | Dry-run no cred apply | `internal/run/dispatch_test.go:TestExecuteDryRunWorkflowDoesNotApplySharedCredentialSecret` |
+| L2 Integration | No local file required | `internal/run/dispatch_test.go:TestExecuteDryRunWorkflowDoesNotRequireLocalCredentialFiles` |
+| L2 Integration | Render uses cred mount | `internal/run/dispatch_test.go:TestExecuteRenderOnlyWorkflowUsesSharedCredentialsMount` |
+| L3 k3d | Credential set/ls | Manual: `fabrik credentials set/ls --context k3d-dev-single` |
+| L3 k3d | Mirror to run namespace | Manual: dispatch workflow and verify secret in fabrik-runs |
+| L3 k3d | Directory mount visible | Manual: describe pod and check /etc/fabrik/credentials mount |
+| L4 Multi | Same on multi-node | Manual: `fabrik credentials set/ls --context k3d-dev-multi` |
+
+**Acceptance criteria coverage**:
+- [x] `fabrik-credentials` is the canonical cluster-wide source of truth for shared runtime credentials
+- [x] Shared credentials mounted as directory (not subPath) at `/etc/fabrik/credentials`
+- [x] Project env overrides shared credentials for conflicting keys (envFrom vs file mount)
+- [x] Reserved `SMITHERS_*`/`FABRIK_*`/`KUBERNETES_*` keys rejected from shared credentials
+- [x] Old `codex-auth` subPath mount pattern replaced
+
+**Completion status**: [partial] — Core model, CLI commands, manifest rendering, k3d verification done. Credential bundle/pool rotation, per-agent adapters, and notification path remain in todo #1.
 
 ---
 

@@ -3,8 +3,8 @@
 > Local + CI Kubernetes testing for fabrik using k3d (k3s-in-Docker)
 
 **Status**: draft  
-**Version**: 1.0.0  
-**Last Updated**: 2026-02-25  
+**Version**: 1.1.0  
+**Last Updated**: 2026-03-17  
 **Provides**: Repeatable local/CI test environments for single-node and multi-node Kubernetes setups
 
 ---
@@ -12,6 +12,7 @@
 ## Changelog
 
 - **v1.0.0** (2026-02-25): Initial spec for k3d-based local and CI testing
+- **v1.1.0** (2026-03-17): Added shared-credential bundle and rotation verification requirements
 
 ---
 
@@ -114,7 +115,35 @@ docker push localhost:5111/fabrik-app:${GIT_SHA}
 4. **Optional E2E**
    - Full system tests, only on merge or nightly
 
-### 5. CI Pipeline Shape (GitHub Actions)
+### 5. Shared Credential Verification Requirements
+
+Credential behavior is part of the local cluster contract and must be verified explicitly.
+
+At minimum, k3d verification must cover:
+
+1. **Cluster-shared env-style credentials**
+   - a job consumes a cluster-default shared key
+   - a replaced cluster Secret changes the effective key for the next job
+   - an explicit run-scoped override suppresses the cluster default for that target
+
+2. **Cluster-shared file bundles**
+   - a job consumes a mounted directory bundle for a harness such as Codex, Claude Code, or Pi
+   - the bundle is mounted as a directory, not `subPath`
+   - replacing the underlying cluster Secret changes the visible bundle contents
+
+3. **Running-job refresh visibility**
+   - a long-running job that re-reads the mounted directory can observe updated cluster-backed credentials without pod recreation
+   - this proof applies only to cluster-backed bundles, not fixed local imports
+
+4. **Harness/helper separation**
+   - Fabrik verifies mount layout, mirroring, override suppression, and update visibility
+   - helper-level tests verify provider-specific pool rotation and failure classification
+
+5. **Adjacent config**
+   - non-credential adjacent config such as Pi `models.json` is tested separately from shared credential bundles
+   - tests must prove that adjacent config can coexist with the mounted auth bundle without collapsing the separation of concerns
+
+### 6. CI Pipeline Shape (GitHub Actions)
 
 ```
 1. Spin cluster (k3d)
@@ -125,7 +154,7 @@ docker push localhost:5111/fabrik-app:${GIT_SHA}
 6. Tear down cluster
 ```
 
-### 6. Local Developer Workflow
+### 7. Local Developer Workflow
 
 ```
 # Single-node, fast
@@ -148,7 +177,7 @@ helm upgrade --install fabrik ./charts/fabrik -f values/dev.yaml
 
 If the name is omitted, `single` uses `dev-single` with registry port `5111`, and `multi` uses `dev-multi` with registry port `5112`.
 
-### 7. Linux + macOS Compatibility
+### 8. Linux + macOS Compatibility
 
 - **Linux**: Docker-based k3d
 - **macOS**: Docker Desktop + k3d
@@ -164,6 +193,9 @@ If the name is omitted, `single` uses `dev-single` with registry port `5111`, an
 4. `ct install` works against the ephemeral cluster.
 5. Integration tests can reach the service endpoints.
 6. Both macOS and Linux paths are documented and tested.
+7. k3d verification proves cluster-shared credential replacement for both new jobs and running jobs using directory-mounted bundles.
+8. k3d verification proves explicit run-scoped credential overrides suppress cluster defaults for the same target.
+9. k3d verification covers both env-style shared credentials and file-bundle shared credentials.
 
 ---
 

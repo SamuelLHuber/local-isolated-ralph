@@ -250,7 +250,7 @@ func TestExecuteRenderOnlyWithProjectEnvRendersSecretMountAndEnvFrom(t *testing.
 	}
 }
 
-func TestExecuteDryRunWorkflowDoesNotApplyCodexSecret(t *testing.T) {
+func TestExecuteDryRunWorkflowDoesNotApplySharedCredentialSecret(t *testing.T) {
 	dir := t.TempDir()
 	workflowPath := filepath.Join(dir, "workflow.tsx")
 	if err := os.WriteFile(workflowPath, []byte("export default {};"), 0o644); err != nil {
@@ -275,18 +275,6 @@ func TestExecuteDryRunWorkflowDoesNotApplyCodexSecret(t *testing.T) {
 	}
 
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	homeDir := filepath.Join(dir, "home-with-codex-auth")
-	codexDir := filepath.Join(homeDir, ".codex")
-	if err := os.MkdirAll(codexDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(codexDir, "auth.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(codexDir, "config.toml"), []byte("model = \"test\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HOME", homeDir)
 
 	opts := Options{
 		RunID:        "run-dry-workflow",
@@ -315,8 +303,12 @@ func TestExecuteDryRunWorkflowDoesNotApplyCodexSecret(t *testing.T) {
 		t.Fatalf("read kubectl log: %v", err)
 	}
 	logText := string(logData)
+	// Dry-run must not create or mirror shared credential secrets.
+	if strings.Contains(logText, "create secret generic fabrik-credentials") {
+		t.Fatalf("dry-run should not create fabrik-credentials secret, got kubectl calls: %s", logText)
+	}
 	if strings.Contains(logText, "create secret generic codex-auth") {
-		t.Fatalf("dry-run should not create codex-auth secret, got kubectl calls: %s", logText)
+		t.Fatalf("dry-run should not create codex-auth secret (deprecated), got kubectl calls: %s", logText)
 	}
 	if !strings.Contains(logText, "apply --dry-run=client -o yaml -f -") {
 		t.Fatalf("expected dry-run kubectl apply call, got %s", logText)
@@ -341,6 +333,9 @@ func TestExecuteDryRunWithEnvFileValidatesLocallyWithoutClusterSecretLookup(t *t
 		"    exit 0\n" +
 		"    ;;\n" +
 		"  -n)\n" +
+		"    if [ \"$4\" = \"secret\" ] && echo \"$*\" | grep -q fabrik-credentials; then\n" +
+		"      exit 0\n" +
+		"    fi\n" +
 		"    printf 'unexpected secret lookup\\n' >&2\n" +
 		"    exit 99\n" +
 		"    ;;\n" +
@@ -385,6 +380,9 @@ func TestExecuteDryRunWithMissingProjectEnvFailsBeforeKubectlApply(t *testing.T)
 		"printf '%s\\n' \"$*\" >> " + shellQuote(kubectlLog) + "\n" +
 		"case \"$1\" in\n" +
 		"  -n)\n" +
+		"    if [ \"$4\" = \"secret\" ] && echo \"$*\" | grep -q fabrik-credentials; then\n" +
+		"      exit 0\n" +
+		"    fi\n" +
 		"    if [ \"$3\" = \"get\" ] && [ \"$4\" = \"secret\" ]; then\n" +
 		"      printf 'Error from server (NotFound): secrets \"fabrik-env-demo-dev\" not found\\n' >&2\n" +
 		"      exit 1\n" +
@@ -449,6 +447,9 @@ func TestExecuteLiveDispatchWithoutWaitVerifiesPodStartAndDoesNotSync(t *testing
 		"    exit 0\n" +
 		"    ;;\n" +
 		"  -n)\n" +
+		"    if [ \"$4\" = \"secret\" ] && echo \"$*\" | grep -q fabrik-credentials; then\n" +
+		"      exit 0\n" +
+		"    fi\n" +
 		"    if [ \"$3\" = \"patch\" ] && [ \"$4\" = \"pvc\" ]; then\n" +
 		"      printf 'patched\\n'\n" +
 		"      exit 0\n" +
@@ -538,6 +539,9 @@ func TestExecuteLiveDispatchWithEnvFileAppliesEnvSecretsInSourceAndRunNamespaces
 		"    exit 0\n" +
 		"    ;;\n" +
 		"  -n)\n" +
+		"    if [ \"$4\" = \"secret\" ] && echo \"$*\" | grep -q fabrik-credentials; then\n" +
+		"      exit 0\n" +
+		"    fi\n" +
 		"    if [ \"$2\" = \"fabrik-system\" ] && [ \"$3\" = \"get\" ] && [ \"$4\" = \"secret\" ]; then\n" +
 		"      printf '{\"data\":{\"DATABASE_URL\":\"cG9zdGdyZXM6Ly9saXZlLXJ1bg==\",\"API_BASE_URL\":\"aHR0cHM6Ly9lbnYudGVzdA==\"}}\\n'\n" +
 		"      exit 0\n" +
@@ -620,6 +624,9 @@ func TestExecuteLiveCronCreateVerifiesCronJobAndSkipsJobFlow(t *testing.T) {
 		"    exit 0\n" +
 		"    ;;\n" +
 		"  -n)\n" +
+		"    if [ \"$4\" = \"secret\" ] && echo \"$*\" | grep -q fabrik-credentials; then\n" +
+		"      exit 0\n" +
+		"    fi\n" +
 		"    if [ \"$3\" = \"get\" ] && [ \"$4\" = \"cronjob\" ]; then\n" +
 		"      printf '*/15 * * * *\\n'\n" +
 		"      exit 0\n" +
@@ -678,6 +685,9 @@ func TestExecuteLiveCronWithMissingProjectEnvFailsBeforeApply(t *testing.T) {
 		"printf '%s\\n' \"$*\" >> " + shellQuote(kubectlLog) + "\n" +
 		"case \"$1\" in\n" +
 		"  -n)\n" +
+		"    if [ \"$4\" = \"secret\" ] && echo \"$*\" | grep -q fabrik-credentials; then\n" +
+		"      exit 0\n" +
+		"    fi\n" +
 		"    if [ \"$3\" = \"get\" ] && [ \"$4\" = \"secret\" ]; then\n" +
 		"      printf 'Error from server (NotFound): secrets \"fabrik-env-demo-dev\" not found\\n' >&2\n" +
 		"      exit 1\n" +
@@ -742,6 +752,9 @@ func TestExecuteWaitSuccessIgnoresMetadataPatchFailure(t *testing.T) {
 		"    exit 0\n" +
 		"    ;;\n" +
 		"  -n)\n" +
+		"    if [ \"$4\" = \"secret\" ] && echo \"$*\" | grep -q fabrik-credentials; then\n" +
+		"      exit 0\n" +
+		"    fi\n" +
 		"    if [ \"$3\" = \"wait\" ]; then\n" +
 		"      printf 'condition met\\n'\n" +
 		"      exit 0\n" +
@@ -833,6 +846,9 @@ func TestExecuteWaitFailureReturnsWaitErrorEvenIfMetadataPatchFails(t *testing.T
 		"    exit 0\n" +
 		"    ;;\n" +
 		"  -n)\n" +
+		"    if [ \"$4\" = \"secret\" ] && echo \"$*\" | grep -q fabrik-credentials; then\n" +
+		"      exit 0\n" +
+		"    fi\n" +
 		"    if [ \"$3\" = \"wait\" ]; then\n" +
 		"      printf 'deadline exceeded\\n' >&2\n" +
 		"      exit 1\n" +
@@ -897,27 +913,33 @@ func TestExecuteWaitFailureReturnsWaitErrorEvenIfMetadataPatchFails(t *testing.T
 	}
 }
 
-func TestExecuteDryRunWorkflowRequiresCodexAuthFiles(t *testing.T) {
+func TestExecuteDryRunWorkflowDoesNotRequireLocalCredentialFiles(t *testing.T) {
+	// Under the shared credential model, dry-run does not check for local
+	// credential files. Shared credentials are managed in-cluster via
+	// fabrik credentials set.
 	dir := t.TempDir()
 	workflowPath := filepath.Join(dir, "workflow.tsx")
 	if err := os.WriteFile(workflowPath, []byte("export default {};"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	kubectlLog := filepath.Join(dir, "kubectl.log")
 	kubectlPath := filepath.Join(dir, "kubectl")
 	kubectlScript := "#!/bin/sh\n" +
-		"printf '%s\\n' \"$*\" >> " + shellQuote(kubectlLog) + "\n" +
-		"exit 97\n"
+		"case \"$*\" in\n" +
+		"  *apply*)\n" +
+		"    cat >/dev/null\n" +
+		"    printf 'kind: Job\\n'\n" +
+		"    ;;\n" +
+		"esac\n"
 	if err := os.WriteFile(kubectlPath, []byte(kubectlScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("HOME", filepath.Join(dir, "home-without-codex-auth"))
+	t.Setenv("HOME", filepath.Join(dir, "home-without-credentials"))
 
 	opts := Options{
-		RunID:        "run-dry-workflow-missing-auth",
+		RunID:        "run-dry-workflow-no-local-creds",
 		SpecPath:     "specs/demo.yaml",
 		Project:      "demo",
 		Image:        "repo/image@sha256:abcdef",
@@ -932,15 +954,8 @@ func TestExecuteDryRunWorkflowRequiresCodexAuthFiles(t *testing.T) {
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	err := Execute(context.Background(), strings.NewReader(""), &out, &errOut, opts)
-	if err == nil {
-		t.Fatalf("expected dry-run to fail when codex auth files are missing")
-	}
-	if !strings.Contains(err.Error(), "missing codex auth file") {
-		t.Fatalf("expected missing auth error, got %v", err)
-	}
-
-	if _, statErr := os.Stat(kubectlLog); !os.IsNotExist(statErr) {
-		t.Fatalf("expected kubectl not to be invoked before auth preflight, stat err=%v", statErr)
+	if err != nil {
+		t.Fatalf("dry-run should succeed without local credential files, got %v", err)
 	}
 }
 
@@ -1053,7 +1068,7 @@ func TestExecuteRenderOnlyIncludesTmpVolumeAndMount(t *testing.T) {
 	}
 }
 
-func TestExecuteRenderOnlyWorkflowUsesNonRootCodexPath(t *testing.T) {
+func TestExecuteRenderOnlyWorkflowUsesSharedCredentialsMount(t *testing.T) {
 	dir := t.TempDir()
 	workflowPath := filepath.Join(dir, "workflow.tsx")
 	if err := os.WriteFile(workflowPath, []byte("export default {};"), 0o644); err != nil {
@@ -1061,7 +1076,7 @@ func TestExecuteRenderOnlyWorkflowUsesNonRootCodexPath(t *testing.T) {
 	}
 
 	opts := Options{
-		RunID:        "run-codex-path-test",
+		RunID:        "run-cred-mount-test",
 		SpecPath:     "specs/demo.yaml",
 		Project:      "demo",
 		Image:        "repo/image@sha256:abcdef",
@@ -1087,17 +1102,20 @@ func TestExecuteRenderOnlyWorkflowUsesNonRootCodexPath(t *testing.T) {
 
 	rendered := out.String()
 
-	// Codex auth should be mounted at /workspace/.codex/ for non-root user access
-	if !strings.Contains(rendered, "mountPath: /workspace/.codex/auth.json") {
-		t.Fatalf("expected rendered manifest to mount codex auth at /workspace/.codex/ for non-root user")
+	// Shared credentials should be mounted at the generic shared directory.
+	if !strings.Contains(rendered, "mountPath: "+sharedCredentialMountPath) {
+		t.Fatalf("expected rendered manifest to mount shared credentials at %s", sharedCredentialMountPath)
 	}
-	if !strings.Contains(rendered, "mountPath: /workspace/.codex/config.toml") {
-		t.Fatalf("expected rendered manifest to mount codex config at /workspace/.codex/ for non-root user")
+	if !strings.Contains(rendered, "secretName: fabrik-credentials") {
+		t.Fatalf("expected rendered manifest to reference fabrik-credentials secret")
 	}
 
-	// Should NOT mount at /root/.codex/ anymore
-	if strings.Contains(rendered, "mountPath: /root/.codex/") {
-		t.Fatalf("expected rendered manifest NOT to mount codex at /root/.codex/ when running as non-root")
+	// Should NOT reference the old codex-auth pattern
+	if strings.Contains(rendered, "codex-auth") {
+		t.Fatalf("expected rendered manifest NOT to reference codex-auth (deprecated)")
+	}
+	if strings.Contains(rendered, ".codex/") {
+		t.Fatalf("expected rendered manifest NOT to mount .codex/ paths (deprecated)")
 	}
 }
 

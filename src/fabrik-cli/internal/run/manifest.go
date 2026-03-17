@@ -61,6 +61,11 @@ func (m Manifests) Summary() string {
 }
 
 func BuildManifests(opts Options) (Manifests, error) {
+	sharedBundle, err := resolveSharedCredentialBundle(opts)
+	if err != nil {
+		return Manifests{}, err
+	}
+
 	safeRunID := sanitizeName(opts.RunID)
 	specID := sanitizeName(strings.TrimSuffix(filepath.Base(opts.SpecPath), filepath.Ext(opts.SpecPath)))
 	jobName := trimK8sName("fabrik-" + safeRunID)
@@ -113,25 +118,47 @@ func BuildManifests(opts Options) (Manifests, error) {
 	roleYAML := ""
 	roleBindingName := ""
 	roleBindingYAML := ""
+	needsSharedCredentialSync := requiresSharedCredentialSync(opts, sharedBundle)
+	needsServiceAccount := strings.TrimSpace(opts.WorkflowPath) != "" || needsSharedCredentialSync
 	if strings.TrimSpace(opts.WorkflowPath) != "" {
 		workflowSecretName = trimK8sName("fabrik-workflow-" + safeRunID)
 		workflowSecret = buildWorkflowSecret(opts.Namespace, workflowSecretName, opts.WorkflowBundle)
 		annotations["fabrik.sh/workflow-path"] = opts.WorkflowPath
-		serviceAccountName = trimK8sName("fabrik-runner-" + safeRunID)
-		roleName = trimK8sName("fabrik-runner-" + safeRunID)
-		roleBindingName = trimK8sName("fabrik-runner-" + safeRunID)
-		serviceAccountYAML = buildServiceAccountYAML(opts.Namespace, serviceAccountName)
-		roleYAML = buildWorkflowRunnerRoleYAML(opts.Namespace, roleName)
-		roleBindingYAML = buildWorkflowRunnerRoleBindingYAML(opts.Namespace, roleBindingName, roleName, serviceAccountName)
 		if opts.SyncBundle != nil {
 			syncSecretName = trimK8sName("fabrik-sync-" + safeRunID)
 			syncSecret = buildSyncSecret(opts.Namespace, syncSecretName, opts.SyncBundle)
 			annotations["fabrik.sh/fabrik-sync-path"] = opts.SyncBundle.ManifestPath
 		}
 	}
+	if needsServiceAccount {
+		serviceAccountName = trimK8sName("fabrik-runner-" + safeRunID)
+		roleName = trimK8sName("fabrik-runner-" + safeRunID)
+		roleBindingName = trimK8sName("fabrik-runner-" + safeRunID)
+		serviceAccountYAML = buildServiceAccountYAML(opts.Namespace, serviceAccountName)
+		roleYAML = buildRunnerRoleYAML(opts.Namespace, roleName, strings.TrimSpace(opts.WorkflowPath) != "", needsSharedCredentialSync, sharedBundle.SecretName)
+		roleBindingYAML = buildWorkflowRunnerRoleBindingYAML(opts.Namespace, roleBindingName, roleName, serviceAccountName)
+		if needsSharedCredentialSync {
+			sourceRoleName := trimK8sName("fabrik-credential-source-" + safeRunID)
+			sourceRoleBindingName := trimK8sName("fabrik-credential-source-" + safeRunID)
+			if roleYAML != "" {
+				roleYAML += "---\n"
+			}
+			roleYAML += buildSharedCredentialSourceRoleYAML(envSecretNamespace, sourceRoleName, sharedBundle.SecretName)
+			if roleBindingYAML != "" {
+				roleBindingYAML += "---\n"
+			}
+			roleBindingYAML += buildSharedCredentialSourceRoleBindingYAML(
+				envSecretNamespace,
+				sourceRoleBindingName,
+				sourceRoleName,
+				serviceAccountName,
+				opts.Namespace,
+			)
+		}
+	}
 
 	if opts.IsCron() {
-		cronJobYAML := buildCronJobYAML(opts, cronJobName, workflowSecretName, syncSecretName, labels, annotations)
+		cronJobYAML := buildCronJobYAML(opts, sharedBundle, cronJobName, workflowSecretName, syncSecretName, labels, annotations)
 		return Manifests{
 			Kind:            "CronJob",
 			CronJobName:     cronJobName,
@@ -146,7 +173,7 @@ func BuildManifests(opts Options) (Manifests, error) {
 	}
 
 	pvcYAML := buildPVCYAML(opts, pvcName, labels)
-	jobYAML := buildJobYAML(opts, jobName, pvcName, workflowSecretName, syncSecretName, labels, annotations)
+	jobYAML := buildJobYAML(opts, sharedBundle, jobName, pvcName, workflowSecretName, syncSecretName, labels, annotations)
 
 	return Manifests{
 		Kind:            "Job",
@@ -182,7 +209,7 @@ func buildPVCYAML(opts Options, pvcName string, labels map[string]string) string
 	return b.String()
 }
 
-func buildJobYAML(opts Options, jobName, pvcName, workflowSecretName, syncSecretName string, labels, annotations map[string]string) string {
+func buildJobYAML(opts Options, sharedBundle sharedCredentialBundle, jobName, pvcName, workflowSecretName, syncSecretName string, labels, annotations map[string]string) string {
 	var b strings.Builder
 	b.WriteString("apiVersion: batch/v1\n")
 	b.WriteString("kind: Job\n")
@@ -193,12 +220,12 @@ func buildJobYAML(opts Options, jobName, pvcName, workflowSecretName, syncSecret
 	writeMap(&b, "  ", "annotations", annotations)
 	b.WriteString("spec:\n")
 	b.WriteString("  ttlSecondsAfterFinished: 604800\n")
-	b.WriteString("  backoffLimit: 0\n")
-	writePodTemplate(&b, "  ", opts, labels, annotations, workflowSecretName, syncSecretName, pvcName)
+	b.WriteString("  backoffLimit: 1\n")
+	writePodTemplate(&b, "  ", opts, sharedBundle, labels, annotations, workflowSecretName, syncSecretName, pvcName)
 	return b.String()
 }
 
-func buildCronJobYAML(opts Options, cronJobName, workflowSecretName, syncSecretName string, labels, annotations map[string]string) string {
+func buildCronJobYAML(opts Options, sharedBundle sharedCredentialBundle, cronJobName, workflowSecretName, syncSecretName string, labels, annotations map[string]string) string {
 	var b strings.Builder
 	b.WriteString("apiVersion: batch/v1\n")
 	b.WriteString("kind: CronJob\n")
@@ -214,12 +241,12 @@ func buildCronJobYAML(opts Options, cronJobName, workflowSecretName, syncSecretN
 	b.WriteString("  failedJobsHistoryLimit: 1\n")
 	b.WriteString("  jobTemplate:\n")
 	b.WriteString("    spec:\n")
-	b.WriteString("      backoffLimit: 0\n")
-	writePodTemplate(&b, "      ", opts, labels, annotations, workflowSecretName, syncSecretName, "")
+	b.WriteString("      backoffLimit: 1\n")
+	writePodTemplate(&b, "      ", opts, sharedBundle, labels, annotations, workflowSecretName, syncSecretName, "")
 	return b.String()
 }
 
-func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, annotations map[string]string, workflowSecretName, syncSecretName, pvcName string) {
+func writePodTemplate(b *strings.Builder, indent string, opts Options, sharedBundle sharedCredentialBundle, labels, annotations map[string]string, workflowSecretName, syncSecretName, pvcName string) {
 	envSecretName := opts.EnvSecretName()
 	b.WriteString(indent + "template:\n")
 	b.WriteString(indent + "  metadata:\n")
@@ -235,7 +262,7 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 	b.WriteString(indent + "        type: RuntimeDefault\n")
 	b.WriteString(indent + "    nodeSelector:\n")
 	b.WriteString(indent + "      node-role.kubernetes.io/control-plane: \"true\"\n")
-	if strings.TrimSpace(opts.WorkflowPath) != "" {
+	if strings.TrimSpace(opts.WorkflowPath) != "" || requiresSharedCredentialSync(opts, sharedBundle) {
 		b.WriteString(indent + "    serviceAccountName: " + trimK8sName("fabrik-runner-"+sanitizeName(opts.RunID)) + "\n")
 	}
 	b.WriteString(indent + "    restartPolicy: Never\n")
@@ -250,7 +277,8 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 	b.WriteString(indent + "            drop:\n")
 	b.WriteString(indent + "              - ALL\n")
 	if strings.TrimSpace(opts.WorkflowPath) == "" {
-		b.WriteString(indent + "        command: [\"sh\", \"-lc\", " + yamlQuote(opts.JobCommand) + "]\n")
+		command := buildSharedCredentialBootstrap(sharedBundle) + " && " + opts.JobCommand
+		b.WriteString(indent + "        command: [\"sh\", \"-lc\", " + yamlQuote(command) + "]\n")
 	} else {
 		bootstrap := "smithers_exit=0"
 		bootstrap += " && runtime_outcome=succeeded"
@@ -273,6 +301,7 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 		bootstrap += " && WORKFLOW_RUNTIME_DIR=$(dirname \"$WORKFLOW_DIR\")"
 		bootstrap += " && RUNTIME_HOME=${SMITHERS_HOME:-/workspace}"
 		bootstrap += " && export HOME=\"$RUNTIME_HOME\" XDG_CONFIG_HOME=\"$RUNTIME_HOME/.config\" GIT_CONFIG_GLOBAL=\"$RUNTIME_HOME/.gitconfig\""
+		bootstrap += " && " + buildSharedCredentialBootstrap(sharedBundle)
 		bootstrap += " && mkdir -p \"$WORKFLOW_RUNTIME_DIR\" /tmp/pi-agent \"$HOME\" \"$XDG_CONFIG_HOME\""
 		bootstrap += " && if [ ! -e \"$WORKFLOW_RUNTIME_DIR/node_modules\" ]; then ln -s \"$RUNTIME_DIR/node_modules\" \"$WORKFLOW_RUNTIME_DIR/node_modules\"; fi"
 		bootstrap += " && if [ ! -e \"$WORKFLOW_RUNTIME_DIR/package.json\" ]; then cp \"$RUNTIME_DIR/package.json\" \"$WORKFLOW_RUNTIME_DIR/package.json\"; fi"
@@ -296,6 +325,10 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 	b.WriteString(indent + "            value: " + yamlQuote(opts.SpecPath) + "\n")
 	b.WriteString(indent + "          - name: SMITHERS_PROJECT\n")
 	b.WriteString(indent + "            value: " + yamlQuote(opts.Project) + "\n")
+	if sharedBundle.SecretName != "" {
+		b.WriteString(indent + "          - name: FABRIK_SHARED_CREDENTIALS_DIR\n")
+		b.WriteString(indent + "            value: " + yamlQuote(sharedBundle.MountPath) + "\n")
+	}
 	if strings.TrimSpace(opts.WorkflowPath) != "" {
 		b.WriteString(indent + "          - name: FABRIK_RUN_IMAGE\n")
 		b.WriteString(indent + "            value: " + yamlQuote(opts.Image) + "\n")
@@ -357,18 +390,18 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 		b.WriteString(indent + "            mountPath: /etc/fabrik/env\n")
 		b.WriteString(indent + "            readOnly: true\n")
 	}
+	// Shared credentials: directory mount (no subPath) so running jobs
+	// can observe file replacements during credential rotation.
+	// Mounted for ALL job types per spec 051 § Secret classes.
+	if sharedBundle.SecretName != "" {
+		b.WriteString(indent + "          - name: " + sharedCredentialVolume + "\n")
+		b.WriteString(indent + "            mountPath: " + sharedBundle.MountPath + "\n")
+		b.WriteString(indent + "            readOnly: true\n")
+	}
 	if strings.TrimSpace(opts.WorkflowPath) != "" {
 		b.WriteString(indent + "          - name: workflow\n")
 		b.WriteString(indent + "            mountPath: /opt/fabrik-workflow/bundle.tgz\n")
 		b.WriteString(indent + "            subPath: bundle.tgz\n")
-		b.WriteString(indent + "            readOnly: true\n")
-		b.WriteString(indent + "          - name: codex-auth\n")
-		b.WriteString(indent + "            mountPath: /workspace/.codex/auth.json\n")
-		b.WriteString(indent + "            subPath: auth.json\n")
-		b.WriteString(indent + "            readOnly: true\n")
-		b.WriteString(indent + "          - name: codex-auth\n")
-		b.WriteString(indent + "            mountPath: /workspace/.codex/config.toml\n")
-		b.WriteString(indent + "            subPath: config.toml\n")
 		b.WriteString(indent + "            readOnly: true\n")
 		if syncSecretName != "" {
 			b.WriteString(indent + "          - name: fabrik-sync\n")
@@ -376,6 +409,38 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 			b.WriteString(indent + "            subPath: bundle.tgz\n")
 			b.WriteString(indent + "            readOnly: true\n")
 		}
+	}
+	if requiresSharedCredentialSync(opts, sharedBundle) {
+		b.WriteString(indent + "      - name: shared-credential-sync\n")
+		b.WriteString(indent + "        image: " + sharedCredentialHelperImage(opts) + "\n")
+		b.WriteString(indent + "        imagePullPolicy: IfNotPresent\n")
+		b.WriteString(indent + "        command: [\"sh\", \"-lc\", " + yamlQuote(buildSharedCredentialSyncCommand(sharedBundle)) + "]\n")
+		b.WriteString(indent + "        env:\n")
+		b.WriteString(indent + "          - name: FABRIK_SHARED_CREDENTIAL_SOURCE_NAMESPACE\n")
+		b.WriteString(indent + "            value: " + yamlQuote(envSecretNamespace) + "\n")
+		b.WriteString(indent + "          - name: FABRIK_SHARED_CREDENTIAL_SOURCE_SECRET\n")
+		b.WriteString(indent + "            value: " + yamlQuote(sharedBundle.SecretName) + "\n")
+		b.WriteString(indent + "          - name: FABRIK_SHARED_CREDENTIAL_TARGET_NAMESPACE\n")
+		b.WriteString(indent + "            valueFrom:\n")
+		b.WriteString(indent + "              fieldRef:\n")
+		b.WriteString(indent + "                fieldPath: metadata.namespace\n")
+		b.WriteString(indent + "          - name: FABRIK_SHARED_CREDENTIAL_TARGET_SECRET\n")
+		b.WriteString(indent + "            value: " + yamlQuote(sharedBundle.SecretName) + "\n")
+		b.WriteString(indent + "          - name: FABRIK_SHARED_CREDENTIAL_OPTIONAL\n")
+		b.WriteString(indent + "            value: " + yamlQuote(strconv.FormatBool(sharedBundle.Optional)) + "\n")
+		b.WriteString(indent + "          - name: FABRIK_SHARED_CREDENTIAL_POD_NAME\n")
+		b.WriteString(indent + "            valueFrom:\n")
+		b.WriteString(indent + "              fieldRef:\n")
+		b.WriteString(indent + "                fieldPath: metadata.name\n")
+		b.WriteString(indent + "        securityContext:\n")
+		b.WriteString(indent + "          allowPrivilegeEscalation: false\n")
+		b.WriteString(indent + "          readOnlyRootFilesystem: true\n")
+		b.WriteString(indent + "          capabilities:\n")
+		b.WriteString(indent + "            drop:\n")
+		b.WriteString(indent + "              - ALL\n")
+		b.WriteString(indent + "        volumeMounts:\n")
+		b.WriteString(indent + "          - name: tmp\n")
+		b.WriteString(indent + "            mountPath: /tmp\n")
 	}
 	b.WriteString(indent + "    volumes:\n")
 	writeWorkspaceVolume(b, indent+"      ", opts, labels, pvcName)
@@ -388,14 +453,19 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, labels, a
 		b.WriteString(indent + "          secretName: " + envSecretName + "\n")
 		b.WriteString(indent + "          defaultMode: 0400\n")
 	}
+	// Shared credentials volume: available to all job types.
+	// Secret is optional — Kubernetes handles missing secrets by keeping pod Pending.
+	if sharedBundle.SecretName != "" {
+		b.WriteString(indent + "      - name: " + sharedCredentialVolume + "\n")
+		b.WriteString(indent + "        secret:\n")
+		b.WriteString(indent + "          secretName: " + sharedBundle.SecretName + "\n")
+		b.WriteString(indent + "          defaultMode: 0400\n")
+		b.WriteString(indent + "          optional: " + strconv.FormatBool(sharedBundle.Optional) + "\n")
+	}
 	if strings.TrimSpace(opts.WorkflowPath) != "" {
 		b.WriteString(indent + "      - name: workflow\n")
 		b.WriteString(indent + "        secret:\n")
 		b.WriteString(indent + "          secretName: " + workflowSecretName + "\n")
-		b.WriteString(indent + "          defaultMode: 0400\n")
-		b.WriteString(indent + "      - name: codex-auth\n")
-		b.WriteString(indent + "        secret:\n")
-		b.WriteString(indent + "          secretName: codex-auth\n")
 		b.WriteString(indent + "          defaultMode: 0400\n")
 		if syncSecretName != "" {
 			b.WriteString(indent + "      - name: fabrik-sync\n")
@@ -452,7 +522,7 @@ func buildServiceAccountYAML(namespace, serviceAccountName string) string {
 	return b.String()
 }
 
-func buildWorkflowRunnerRoleYAML(namespace, roleName string) string {
+func buildRunnerRoleYAML(namespace, roleName string, includeWorkflowAccess, includeSecretSync bool, sharedSecretName string) string {
 	var b strings.Builder
 	b.WriteString("apiVersion: rbac.authorization.k8s.io/v1\n")
 	b.WriteString("kind: Role\n")
@@ -460,18 +530,29 @@ func buildWorkflowRunnerRoleYAML(namespace, roleName string) string {
 	b.WriteString("  name: " + roleName + "\n")
 	b.WriteString("  namespace: " + namespace + "\n")
 	b.WriteString("rules:\n")
-	b.WriteString("  - apiGroups: [\"batch\"]\n")
-	b.WriteString("    resources: [\"jobs\", \"cronjobs\"]\n")
-	b.WriteString("    verbs: [\"create\", \"delete\", \"get\", \"list\", \"patch\", \"update\", \"watch\"]\n")
-	b.WriteString("  - apiGroups: [\"\"]\n")
-	b.WriteString("    resources: [\"persistentvolumeclaims\"]\n")
-	b.WriteString("    verbs: [\"create\", \"delete\", \"get\", \"list\", \"patch\", \"update\", \"watch\"]\n")
-	b.WriteString("  - apiGroups: [\"\"]\n")
-	b.WriteString("    resources: [\"pods\"]\n")
-	b.WriteString("    verbs: [\"get\", \"list\", \"patch\", \"update\", \"watch\"]\n")
-	b.WriteString("  - apiGroups: [\"\"]\n")
-	b.WriteString("    resources: [\"pods/log\"]\n")
-	b.WriteString("    verbs: [\"get\"]\n")
+	if includeWorkflowAccess {
+		b.WriteString("  - apiGroups: [\"batch\"]\n")
+		b.WriteString("    resources: [\"jobs\", \"cronjobs\"]\n")
+		b.WriteString("    verbs: [\"create\", \"delete\", \"get\", \"list\", \"patch\", \"update\", \"watch\"]\n")
+		b.WriteString("  - apiGroups: [\"\"]\n")
+		b.WriteString("    resources: [\"persistentvolumeclaims\"]\n")
+		b.WriteString("    verbs: [\"create\", \"delete\", \"get\", \"list\", \"patch\", \"update\", \"watch\"]\n")
+		b.WriteString("  - apiGroups: [\"\"]\n")
+		b.WriteString("    resources: [\"pods\"]\n")
+		b.WriteString("    verbs: [\"get\", \"list\", \"patch\", \"update\", \"watch\"]\n")
+		b.WriteString("  - apiGroups: [\"\"]\n")
+		b.WriteString("    resources: [\"pods/log\"]\n")
+		b.WriteString("    verbs: [\"get\"]\n")
+	}
+	if includeSecretSync {
+		b.WriteString("  - apiGroups: [\"\"]\n")
+		b.WriteString("    resources: [\"secrets\"]\n")
+		b.WriteString("    resourceNames: [" + yamlQuote(sharedSecretName) + "]\n")
+		b.WriteString("    verbs: [\"get\", \"patch\", \"update\"]\n")
+		b.WriteString("  - apiGroups: [\"\"]\n")
+		b.WriteString("    resources: [\"pods\"]\n")
+		b.WriteString("    verbs: [\"get\"]\n")
+	}
 	return b.String()
 }
 
@@ -486,6 +567,39 @@ func buildWorkflowRunnerRoleBindingYAML(namespace, roleBindingName, roleName, se
 	b.WriteString("  - kind: ServiceAccount\n")
 	b.WriteString("    name: " + serviceAccountName + "\n")
 	b.WriteString("    namespace: " + namespace + "\n")
+	b.WriteString("roleRef:\n")
+	b.WriteString("  apiGroup: rbac.authorization.k8s.io\n")
+	b.WriteString("  kind: Role\n")
+	b.WriteString("  name: " + roleName + "\n")
+	return b.String()
+}
+
+func buildSharedCredentialSourceRoleYAML(namespace, roleName, secretName string) string {
+	var b strings.Builder
+	b.WriteString("apiVersion: rbac.authorization.k8s.io/v1\n")
+	b.WriteString("kind: Role\n")
+	b.WriteString("metadata:\n")
+	b.WriteString("  name: " + roleName + "\n")
+	b.WriteString("  namespace: " + namespace + "\n")
+	b.WriteString("rules:\n")
+	b.WriteString("  - apiGroups: [\"\"]\n")
+	b.WriteString("    resources: [\"secrets\"]\n")
+	b.WriteString("    resourceNames: [" + yamlQuote(secretName) + "]\n")
+	b.WriteString("    verbs: [\"get\"]\n")
+	return b.String()
+}
+
+func buildSharedCredentialSourceRoleBindingYAML(namespace, roleBindingName, roleName, serviceAccountName, serviceAccountNamespace string) string {
+	var b strings.Builder
+	b.WriteString("apiVersion: rbac.authorization.k8s.io/v1\n")
+	b.WriteString("kind: RoleBinding\n")
+	b.WriteString("metadata:\n")
+	b.WriteString("  name: " + roleBindingName + "\n")
+	b.WriteString("  namespace: " + namespace + "\n")
+	b.WriteString("subjects:\n")
+	b.WriteString("  - kind: ServiceAccount\n")
+	b.WriteString("    name: " + serviceAccountName + "\n")
+	b.WriteString("    namespace: " + serviceAccountNamespace + "\n")
 	b.WriteString("roleRef:\n")
 	b.WriteString("  apiGroup: rbac.authorization.k8s.io\n")
 	b.WriteString("  kind: Role\n")

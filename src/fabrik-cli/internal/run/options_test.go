@@ -227,6 +227,48 @@ func TestValidateOptionsRejectsWaitWithCron(t *testing.T) {
 	}
 }
 
+func TestValidateOptionsRejectsMultipleSharedCredentialSources(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "auth.json")
+	if err := os.WriteFile(filePath, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := Options{
+		RunID:                  "r1",
+		SpecPath:               "specs/a.yaml",
+		Project:                "demo",
+		Image:                  "repo/image@sha256:abcdef",
+		Namespace:              "fabrik-runs",
+		PVCSize:                "1Gi",
+		JobCommand:             "echo hi",
+		WaitTimeout:            "5m",
+		SharedCredentialSecret: "fabrik-credential-openai-default",
+		SharedCredentialFile:   filePath,
+	}
+	if err := validateOptions(opts); err == nil {
+		t.Fatalf("expected validation error for multiple shared credential sources")
+	}
+}
+
+func TestValidateOptionsRejectsDisableSharedCredentialsWithOverride(t *testing.T) {
+	opts := Options{
+		RunID:                    "r1",
+		SpecPath:                 "specs/a.yaml",
+		Project:                  "demo",
+		Image:                    "repo/image@sha256:abcdef",
+		Namespace:                "fabrik-runs",
+		PVCSize:                  "1Gi",
+		JobCommand:               "echo hi",
+		WaitTimeout:              "5m",
+		DisableSharedCredentials: true,
+		SharedCredentialSecret:   "fabrik-credential-openai-default",
+	}
+	if err := validateOptions(opts); err == nil {
+		t.Fatalf("expected validation error when disable-shared-credentials is combined with an override")
+	}
+}
+
 func TestValidateOptionsRejectsInvalidEnvironmentName(t *testing.T) {
 	opts := Options{
 		RunID:       "r1",

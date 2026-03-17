@@ -95,9 +95,8 @@ func TestK3dCronSchedulesCommandAndWorkflowJobs(t *testing.T) {
 		t.Fatalf("expected workflow fixture for test fixture: %v", err)
 	}
 
-	if _, _, err := ensureCodexAuthFilesExist(); err != nil {
-		t.Skipf("workflow cron integration needs local Codex auth files: %v", err)
-	}
+	// Shared credentials are managed in-cluster via fabrik credentials set.
+	// No local file check needed.
 
 	opts := Options{
 		Namespace:   "fabrik-runs",
@@ -203,9 +202,8 @@ func TestK3dRunInjectsProjectEnvForCommandAndWorkflow(t *testing.T) {
 		t.Fatalf("expected workflow fixture for test fixture: %v", err)
 	}
 
-	if _, _, err := ensureCodexAuthFilesExist(); err != nil {
-		t.Skipf("workflow integration needs local Codex auth files: %v", err)
-	}
+	// Shared credentials are managed in-cluster via fabrik credentials set.
+	// No local file check needed.
 
 	opts := Options{
 		Namespace:   "fabrik-runs",
@@ -261,6 +259,239 @@ func TestK3dRunInjectsProjectEnvForCommandAndWorkflow(t *testing.T) {
 	assertProjectEnvInjectionOnJob(t, opts, workflowJobName, project, environment)
 }
 
+func TestK3dSharedEnvCredentialReplacementAffectsNextJob(t *testing.T) {
+	if os.Getenv("FABRIK_K3D_E2E") != "1" {
+		t.Skip("set FABRIK_K3D_E2E=1 to run k3d integration tests")
+	}
+	if _, err := exec.LookPath("kubectl"); err != nil {
+		t.Skip("kubectl not available")
+	}
+
+	contextName := configureDefaultK3dCluster(t)
+	opts := Options{
+		Namespace:   "fabrik-runs",
+		KubeContext: contextName,
+		PVCSize:     "1Gi",
+		WaitTimeout: "120s",
+		Interactive: false,
+	}
+	ensureNamespaces(t, opts)
+	ensureSharedCredentialSecret(t, opts, sharedCredentialDefaultSecretName, map[string]string{
+		"OPENAI_API_KEY": "old-key",
+	})
+
+	runOne := fmt.Sprintf("it-k3d-shared-env-old-%d", time.Now().Unix())
+	runTwo := fmt.Sprintf("it-k3d-shared-env-new-%d", time.Now().Unix())
+	cleanupJobRun(t, opts, runOne)
+	cleanupJobRun(t, opts, runTwo)
+	t.Cleanup(func() {
+		cleanupJobRun(t, opts, runOne)
+		cleanupJobRun(t, opts, runTwo)
+	})
+
+	base := opts
+	base.SpecPath = filepath.Join(mustRepoRoot(t), "specs", "051-k3s-orchestrator.md")
+	base.Project = "demo"
+	base.Image = "alpine:3.20"
+	base.JobCommand = "printf '%s\\n' \"${OPENAI_API_KEY:-missing}\""
+
+	runOld := base
+	runOld.RunID = runOne
+	if err := Execute(context.Background(), strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}, runOld); err != nil {
+		t.Fatalf("execute old credential job failed: %v", err)
+	}
+	waitForJobCompletion(t, opts, trimK8sName("fabrik-"+sanitizeName(runOne)), 120*time.Second)
+	oldLogs := strings.TrimSpace(jobLogs(t, opts, trimK8sName("fabrik-"+sanitizeName(runOne))))
+	if oldLogs != "old-key" {
+		t.Fatalf("expected old credential value in logs, got %q", oldLogs)
+	}
+
+	ensureSharedCredentialSecret(t, opts, sharedCredentialDefaultSecretName, map[string]string{
+		"OPENAI_API_KEY": "new-key",
+	})
+
+	runNew := base
+	runNew.RunID = runTwo
+	if err := Execute(context.Background(), strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}, runNew); err != nil {
+		t.Fatalf("execute new credential job failed: %v", err)
+	}
+	waitForJobCompletion(t, opts, trimK8sName("fabrik-"+sanitizeName(runTwo)), 120*time.Second)
+	newLogs := strings.TrimSpace(jobLogs(t, opts, trimK8sName("fabrik-"+sanitizeName(runTwo))))
+	if newLogs != "new-key" {
+		t.Fatalf("expected new credential value in logs, got %q", newLogs)
+	}
+}
+
+func TestK3dRunningJobSeesUpdatedSharedDirectoryBundle(t *testing.T) {
+	if os.Getenv("FABRIK_K3D_E2E") != "1" {
+		t.Skip("set FABRIK_K3D_E2E=1 to run k3d integration tests")
+	}
+	if _, err := exec.LookPath("kubectl"); err != nil {
+		t.Skip("kubectl not available")
+	}
+
+	contextName := configureDefaultK3dCluster(t)
+	opts := Options{
+		Namespace:   "fabrik-runs",
+		KubeContext: contextName,
+		PVCSize:     "1Gi",
+		WaitTimeout: "240s",
+		Interactive: false,
+	}
+	ensureNamespaces(t, opts)
+	ensureSharedCredentialSecret(t, opts, sharedCredentialDefaultSecretName, map[string]string{
+		"auth.json": "old-auth",
+	})
+
+	runID := fmt.Sprintf("it-k3d-shared-dir-refresh-%d", time.Now().Unix())
+	cleanupJobRun(t, opts, runID)
+	t.Cleanup(func() {
+		cleanupJobRun(t, opts, runID)
+	})
+
+	runOpts := opts
+	runOpts.RunID = runID
+	runOpts.SpecPath = filepath.Join(mustRepoRoot(t), "specs", "051-k3s-orchestrator.md")
+	runOpts.Project = "demo"
+	runOpts.Image = "alpine:3.20"
+	runOpts.JobCommand = "i=0; while [ \"$i\" -lt 24 ]; do cat " + sharedCredentialMountPath + "/auth.json; echo; sleep 5; i=$((i+1)); done"
+	if err := Execute(context.Background(), strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}, runOpts); err != nil {
+		t.Fatalf("execute shared directory refresh job failed: %v", err)
+	}
+
+	jobName := trimK8sName("fabrik-" + sanitizeName(runID))
+	waitForJobPresence(t, opts, jobName, 30*time.Second)
+	time.Sleep(15 * time.Second)
+
+	ensureSharedCredentialSecret(t, opts, sharedCredentialDefaultSecretName, map[string]string{
+		"auth.json": "new-auth",
+	})
+
+	waitForJobCompletion(t, opts, jobName, 180*time.Second)
+	logs := jobLogs(t, opts, jobName)
+	if !strings.Contains(logs, "old-auth") {
+		t.Fatalf("expected logs to contain old credential value, got %q", logs)
+	}
+	if !strings.Contains(logs, "new-auth") {
+		t.Fatalf("expected logs to contain refreshed credential value, got %q", logs)
+	}
+}
+
+func TestK3dRunningJobSeesSharedCredentialRevocation(t *testing.T) {
+	if os.Getenv("FABRIK_K3D_E2E") != "1" {
+		t.Skip("set FABRIK_K3D_E2E=1 to run k3d integration tests")
+	}
+	if _, err := exec.LookPath("kubectl"); err != nil {
+		t.Skip("kubectl not available")
+	}
+
+	contextName := configureDefaultK3dCluster(t)
+	opts := Options{
+		Namespace:   "fabrik-runs",
+		KubeContext: contextName,
+		PVCSize:     "1Gi",
+		WaitTimeout: "180s",
+		Interactive: false,
+	}
+	ensureNamespaces(t, opts)
+	ensureSharedCredentialSecret(t, opts, sharedCredentialDefaultSecretName, map[string]string{
+		"auth.json": "revokable-auth",
+	})
+
+	runID := fmt.Sprintf("it-k3d-shared-dir-revoke-%d", time.Now().Unix())
+	cleanupJobRun(t, opts, runID)
+	t.Cleanup(func() {
+		cleanupJobRun(t, opts, runID)
+	})
+
+	runOpts := opts
+	runOpts.RunID = runID
+	runOpts.SpecPath = filepath.Join(mustRepoRoot(t), "specs", "051-k3s-orchestrator.md")
+	runOpts.Project = "demo"
+	runOpts.Image = "alpine:3.20"
+	runOpts.JobCommand = "i=0; while [ \"$i\" -lt 30 ]; do if [ -f " + sharedCredentialMountPath + "/auth.json ]; then cat " + sharedCredentialMountPath + "/auth.json; else printf 'missing'; fi; echo; sleep 4; i=$((i+1)); done"
+	if err := Execute(context.Background(), strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}, runOpts); err != nil {
+		t.Fatalf("execute shared directory revocation job failed: %v", err)
+	}
+
+	jobName := trimK8sName("fabrik-" + sanitizeName(runID))
+	waitForJobPresence(t, opts, jobName, 30*time.Second)
+	time.Sleep(12 * time.Second)
+
+	ensureSharedCredentialSecret(t, opts, sharedCredentialDefaultSecretName, map[string]string{})
+
+	waitForJobCompletion(t, opts, jobName, 240*time.Second)
+	logs := jobLogs(t, opts, jobName)
+	if !strings.Contains(logs, "revokable-auth") {
+		t.Fatalf("expected logs to contain original credential value, got %q", logs)
+	}
+	if !strings.Contains(logs, "missing") {
+		t.Fatalf("expected logs to contain missing after revocation, got %q", logs)
+	}
+}
+
+func TestK3dWorkflowRunScopedSharedCredentialOverrideWins(t *testing.T) {
+	if os.Getenv("FABRIK_K3D_E2E") != "1" {
+		t.Skip("set FABRIK_K3D_E2E=1 to run k3d integration tests")
+	}
+	if _, err := exec.LookPath("kubectl"); err != nil {
+		t.Skip("kubectl not available")
+	}
+	if _, err := exec.LookPath("k3d"); err != nil {
+		t.Skip("k3d not available")
+	}
+
+	clusterContext := configureDefaultK3dCluster(t)
+	clusterName := strings.TrimPrefix(clusterContext, "k3d-")
+	workflowImage := ensureK3dRegistryWorkflowImage(t, clusterName)
+	opts := Options{
+		Namespace:   "fabrik-runs",
+		KubeContext: clusterContext,
+		PVCSize:     "1Gi",
+		WaitTimeout: "180s",
+		Interactive: false,
+		Wait:        true,
+		OutputSubdir: filepath.Join(
+			"k8s", "job-sync", "k3d-e2e", clusterName, "shared-credentials",
+		),
+	}
+	ensureNamespaces(t, opts)
+	ensureSharedCredentialSecret(t, opts, sharedCredentialDefaultSecretName, map[string]string{
+		"auth.json": "cluster-auth",
+	})
+
+	overrideDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(overrideDir, "auth.json"), []byte("override-auth"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runID := fmt.Sprintf("it-k3d-shared-workflow-override-%d", time.Now().Unix())
+	cleanupJobRun(t, opts, runID)
+	t.Cleanup(func() {
+		cleanupJobRun(t, opts, runID)
+	})
+
+	runOpts := opts
+	runOpts.RunID = runID
+	runOpts.SpecPath = filepath.Join(mustRepoRoot(t), "specs", "051-k3s-orchestrator.md")
+	runOpts.Project = "demo"
+	runOpts.Image = workflowImage
+	runOpts.WorkflowPath = writeSharedCredentialWorkflow(t)
+	runOpts.InputJSON = "{}"
+	runOpts.AcceptFilteredSync = true
+	runOpts.SharedCredentialDir = overrideDir
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := Execute(context.Background(), strings.NewReader(""), &out, &errOut, runOpts); err != nil {
+		t.Fatalf("workflow execute failed: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errOut.String())
+	}
+	logs := jobLogs(t, opts, trimK8sName("fabrik-"+sanitizeName(runID)))
+	if !strings.Contains(logs, "shared-credential:override-auth") {
+		t.Fatalf("expected workflow logs to show override credential, got %q", logs)
+	}
+}
+
 func TestK3dWorkflowDispatchWithEnvFileAndGitHubRepoAcrossNamedClusters(t *testing.T) {
 	if os.Getenv("FABRIK_K3D_E2E") != "1" {
 		t.Skip("set FABRIK_K3D_E2E=1 to run k3d integration tests")
@@ -272,9 +503,8 @@ func TestK3dWorkflowDispatchWithEnvFileAndGitHubRepoAcrossNamedClusters(t *testi
 	if _, err := exec.LookPath("k3d"); err != nil {
 		t.Skip("k3d not available")
 	}
-	if _, _, err := ensureCodexAuthFilesExist(); err != nil {
-		t.Skipf("workflow integration needs local Codex auth files: %v", err)
-	}
+	// Shared credentials are managed in-cluster via fabrik credentials set.
+	// No local file check needed.
 
 	repoRoot, err := findRepoRoot()
 	if err != nil {
@@ -290,6 +520,7 @@ func TestK3dWorkflowDispatchWithEnvFileAndGitHubRepoAcrossNamedClusters(t *testi
 			kubeconfigPath := writeK3dKubeconfig(t, clusterName)
 			t.Setenv("KUBECONFIG", kubeconfigPath)
 			workflowImage := ensureK3dRegistryWorkflowImage(t, clusterName)
+			t.Setenv(sharedCredentialHelperImageEnv, workflowImage)
 
 			opts := Options{
 				Namespace:   "fabrik-runs",
@@ -343,7 +574,7 @@ func TestK3dWorkflowDispatchWithEnvFileAndGitHubRepoAcrossNamedClusters(t *testi
 			jobName := trimK8sName("fabrik-" + sanitizeName(runID))
 			assertProjectEnvInjectionOnJob(t, opts, jobName, runOpts.Project, runOpts.Environment)
 			assertMirroredProjectEnvSecret(t, opts, runOpts.Project, runOpts.Environment, clusterName)
-			assertWorkflowRepoEnvArtifacts(t, opts.OutputSubdir, runID, clusterName)
+			assertWorkflowRepoEnvReport(t, opts, runID, clusterName)
 		})
 	}
 }
@@ -372,6 +603,9 @@ func configureDefaultK3dCluster(t *testing.T) string {
 		t.Fatalf("kubectl current-context was empty")
 	}
 
+	helperClusterName := strings.TrimPrefix(contextName, "k3d-")
+	t.Setenv(sharedCredentialHelperImageEnv, ensureK3dRegistryWorkflowImage(t, helperClusterName))
+
 	return contextName
 }
 
@@ -380,6 +614,9 @@ func cleanupCronRun(t *testing.T, opts Options, runID string) {
 
 	cronJobName := trimK8sName("fabrik-cron-" + sanitizeName(runID))
 	workflowSecretName := trimK8sName("fabrik-workflow-" + sanitizeName(runID))
+	serviceAccountName := trimK8sName("fabrik-runner-" + sanitizeName(runID))
+	roleName := trimK8sName("fabrik-runner-" + sanitizeName(runID))
+	sourceRoleName := trimK8sName("fabrik-credential-source-" + sanitizeName(runID))
 	if _, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "cronjob", cronJobName, "--ignore-not-found"); err != nil {
 		t.Fatalf("delete cronjob %s: %v", cronJobName, err)
 	}
@@ -389,6 +626,21 @@ func cleanupCronRun(t *testing.T, opts Options, runID string) {
 	if _, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "secret", workflowSecretName, "--ignore-not-found"); err != nil {
 		t.Fatalf("delete workflow secret %s: %v", workflowSecretName, err)
 	}
+	if _, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "serviceaccount", serviceAccountName, "--ignore-not-found"); err != nil {
+		t.Fatalf("delete serviceaccount %s: %v", serviceAccountName, err)
+	}
+	if _, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "role", roleName, "--ignore-not-found"); err != nil {
+		t.Fatalf("delete role %s: %v", roleName, err)
+	}
+	if _, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "rolebinding", roleName, "--ignore-not-found"); err != nil {
+		t.Fatalf("delete rolebinding %s: %v", roleName, err)
+	}
+	if _, err := runKubectl(context.Background(), opts, "", "-n", envSecretNamespace, "delete", "role", sourceRoleName, "--ignore-not-found"); err != nil {
+		t.Fatalf("delete source role %s: %v", sourceRoleName, err)
+	}
+	if _, err := runKubectl(context.Background(), opts, "", "-n", envSecretNamespace, "delete", "rolebinding", sourceRoleName, "--ignore-not-found"); err != nil {
+		t.Fatalf("delete source rolebinding %s: %v", sourceRoleName, err)
+	}
 }
 
 func cleanupJobRun(t *testing.T, opts Options, runID string) {
@@ -397,6 +649,9 @@ func cleanupJobRun(t *testing.T, opts Options, runID string) {
 	jobName := trimK8sName("fabrik-" + sanitizeName(runID))
 	pvcName := trimK8sName("data-fabrik-" + sanitizeName(runID))
 	workflowSecretName := trimK8sName("fabrik-workflow-" + sanitizeName(runID))
+	serviceAccountName := trimK8sName("fabrik-runner-" + sanitizeName(runID))
+	roleName := trimK8sName("fabrik-runner-" + sanitizeName(runID))
+	sourceRoleName := trimK8sName("fabrik-credential-source-" + sanitizeName(runID))
 	if _, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "job", jobName, "--ignore-not-found"); err != nil {
 		t.Fatalf("delete job %s: %v", jobName, err)
 	}
@@ -405,6 +660,21 @@ func cleanupJobRun(t *testing.T, opts Options, runID string) {
 	}
 	if _, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "secret", workflowSecretName, "--ignore-not-found"); err != nil {
 		t.Fatalf("delete workflow secret %s: %v", workflowSecretName, err)
+	}
+	if _, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "serviceaccount", serviceAccountName, "--ignore-not-found"); err != nil {
+		t.Fatalf("delete serviceaccount %s: %v", serviceAccountName, err)
+	}
+	if _, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "role", roleName, "--ignore-not-found"); err != nil {
+		t.Fatalf("delete role %s: %v", roleName, err)
+	}
+	if _, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "delete", "rolebinding", roleName, "--ignore-not-found"); err != nil {
+		t.Fatalf("delete rolebinding %s: %v", roleName, err)
+	}
+	if _, err := runKubectl(context.Background(), opts, "", "-n", envSecretNamespace, "delete", "role", sourceRoleName, "--ignore-not-found"); err != nil {
+		t.Fatalf("delete source role %s: %v", sourceRoleName, err)
+	}
+	if _, err := runKubectl(context.Background(), opts, "", "-n", envSecretNamespace, "delete", "rolebinding", sourceRoleName, "--ignore-not-found"); err != nil {
+		t.Fatalf("delete source rolebinding %s: %v", sourceRoleName, err)
 	}
 }
 
@@ -443,6 +713,26 @@ func waitForJobPod(t *testing.T, opts Options, jobName string, timeout time.Dura
 			name := strings.TrimSpace(out)
 			if name != "" {
 				return name
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	return ""
+}
+
+func waitForReplacementJobPod(t *testing.T, opts Options, jobName, previousPod string, timeout time.Duration) string {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		out, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "get", "pods", "-l", "job-name="+jobName, "-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}")
+		if err == nil {
+			for _, name := range strings.Split(strings.TrimSpace(out), "\n") {
+				name = strings.TrimSpace(name)
+				if name != "" && name != previousPod {
+					return name
+				}
 			}
 		}
 		time.Sleep(2 * time.Second)
@@ -511,11 +801,57 @@ func ensureProjectEnvSecret(t *testing.T, contextName, project, environment stri
 	}
 }
 
+func ensureSharedCredentialSecret(t *testing.T, opts Options, secretName string, data map[string]string) {
+	t.Helper()
+
+	var b strings.Builder
+	b.WriteString("apiVersion: v1\nkind: Secret\nmetadata:\n")
+	b.WriteString("  name: " + secretName + "\n")
+	b.WriteString("  namespace: " + envSecretNamespace + "\n")
+	b.WriteString("type: Opaque\n")
+	if len(data) == 0 {
+		b.WriteString("data: {}\n")
+	} else {
+		b.WriteString("stringData:\n")
+	}
+	for key, value := range data {
+		b.WriteString(fmt.Sprintf("  %s: %q\n", key, value))
+	}
+	if len(data) == 0 {
+		if _, err := runKubectl(context.Background(), opts, "", "-n", envSecretNamespace, "delete", "secret", secretName, "--ignore-not-found"); err != nil {
+			t.Fatalf("clear shared credential secret %s before empty apply: %v", secretName, err)
+		}
+	}
+	if _, err := runKubectl(context.Background(), opts, b.String(), "apply", "-f", "-"); err != nil {
+		t.Fatalf("apply shared credential secret %s: %v", secretName, err)
+	}
+}
+
+func waitForJobCompletion(t *testing.T, opts Options, jobName string, timeout time.Duration) {
+	t.Helper()
+	timeoutString := fmt.Sprintf("%ds", int(timeout.Seconds()))
+	if _, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "wait", "--for=condition=complete", "--timeout="+timeoutString, "job/"+jobName); err != nil {
+		t.Fatalf("wait for job %s completion: %v", jobName, err)
+	}
+}
+
+func jobLogs(t *testing.T, opts Options, jobName string) string {
+	t.Helper()
+
+	podName := waitForJobPod(t, opts, jobName, 30*time.Second)
+	out, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "logs", podName, "-c", "fabrik")
+	if err != nil {
+		t.Fatalf("resolve logs for job %s: %v", jobName, err)
+	}
+	return out
+}
+
 func assertProjectEnvInjectionOnJob(t *testing.T, opts Options, jobName, project, environment string) {
 	t.Helper()
 
 	secretName := runenv.SecretName(project, environment)
-	out, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "get", "job", jobName, "-o", "jsonpath={.spec.template.spec.containers[0].envFrom[0].secretRef.name}{\"\\n\"}{.spec.template.spec.containers[0].volumeMounts[1].mountPath}{\"\\n\"}{.spec.template.spec.volumes[1].secret.secretName}")
+	query := "{.spec.template.spec.containers[0].envFrom[?(@.secretRef.name==\"" + secretName + "\")].secretRef.name}{\"\\n\"}{.spec.template.spec.containers[0].volumeMounts[?(@.name==\"project-env\")].mountPath}{\"\\n\"}{.spec.template.spec.volumes[?(@.name==\"project-env\")].secret.secretName}"
+	out, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "get", "job", jobName, "-o", "jsonpath="+query)
 	if err != nil {
 		t.Fatalf("resolve project env injection on job %s: %v", jobName, err)
 	}
@@ -566,7 +902,7 @@ func writeRepoEnvWorkflow(t *testing.T) string {
 
 	workflow := "/** @jsxImportSource smithers-orchestrator */\n" +
 		"import { $ } from \"bun\";\n" +
-		"import { existsSync, mkdirSync, writeFileSync } from \"node:fs\";\n" +
+		"import { existsSync, mkdirSync } from \"node:fs\";\n" +
 		"import { dirname, join } from \"node:path\";\n" +
 		"import { createSmithers, Workflow, Task } from \"smithers-orchestrator\";\n" +
 		"import { z } from \"zod\";\n\n" +
@@ -583,29 +919,28 @@ func writeRepoEnvWorkflow(t *testing.T) string {
 		"  { dbPath: smithersDbPath },\n" +
 		");\n\n" +
 		"export default smithers((ctx) => {\n" +
-		"  const workdir = process.cwd();\n" +
 		"  const clusterName = String(ctx.input.clusterName ?? \"unknown\");\n" +
 		"  const repoURL = process.env.SMITHERS_JJ_REPO ?? \"\";\n" +
-		"  const repoDir = join(workdir, \"repo-check\");\n\n" +
+		"  const repoDir = join(\"/tmp\", `repo-check-${clusterName}`);\n\n" +
 		"  return (\n" +
 		"    <Workflow name=\"repo-env-check\">\n" +
 		"      <Task id=\"verify-repo-and-env\" output={outputs.report}>\n" +
 		"        {async () => {\n" +
-		"          mkdirSync(join(workdir, \"artifacts\"), { recursive: true });\n" +
 		"          const databaseURL = process.env.DATABASE_URL ?? \"\";\n" +
 		"          if (!databaseURL) {\n" +
 		"            throw new Error(\"DATABASE_URL missing from workflow env\");\n" +
 		"          }\n\n" +
 		"          let repoCloned = false;\n" +
 		"          if (repoURL) {\n" +
-		"            await $`git clone --depth=1 ${repoURL} ${repoDir}`.cwd(workdir);\n" +
+		"            await $`rm -rf ${repoDir}`;\n" +
+		"            await $`git clone --depth=1 ${repoURL} ${repoDir}`;\n" +
 		"            repoCloned = existsSync(join(repoDir, \".git\")) || existsSync(join(repoDir, \".jj\"));\n" +
 		"            if (!repoCloned) {\n" +
 		"              throw new Error(\"repo clone missing .git/.jj metadata\");\n" +
 		"            }\n" +
 		"          }\n\n" +
 		"          const report = { repoCloned, databaseURL, clusterName };\n" +
-		"          writeFileSync(join(workdir, \"artifacts\", \"report.json\"), JSON.stringify(report, null, 2));\n" +
+		"          console.log(JSON.stringify(report, null, 2));\n" +
 		"          return report;\n" +
 		"        }}\n" +
 		"      </Task>\n" +
@@ -618,6 +953,47 @@ func writeRepoEnvWorkflow(t *testing.T) string {
 		t.Fatalf("write workflow fixture: %v", err)
 	}
 	return path
+}
+
+func writeSharedCredentialWorkflow(t *testing.T) string {
+	t.Helper()
+
+	workflow := "/** @jsxImportSource smithers-orchestrator */\n" +
+		"import { mkdirSync, readFileSync } from \"node:fs\";\n" +
+		"import { dirname, join } from \"node:path\";\n" +
+		"import { createSmithers, Workflow, Task } from \"smithers-orchestrator\";\n" +
+		"import { z } from \"zod\";\n\n" +
+		"const smithersDbPath = process.env.SMITHERS_DB_PATH ?? \"workflows/shared-credentials.db\";\n" +
+		"mkdirSync(dirname(smithersDbPath), { recursive: true });\n\n" +
+		"const { smithers, outputs } = createSmithers({ report: z.object({ value: z.string() }) }, { dbPath: smithersDbPath });\n\n" +
+		"export default smithers(() => (\n" +
+		"  <Workflow name=\"shared-credential-check\">\n" +
+		"    <Task id=\"read-shared-credential\" output={outputs.report}>\n" +
+		"      {async () => {\n" +
+		"        const dir = process.env.FABRIK_SHARED_CREDENTIALS_DIR ?? \"\";\n" +
+		"        const value = readFileSync(join(dir, \"auth.json\"), \"utf8\").trim();\n" +
+		"        console.log(`shared-credential:${value}`);\n" +
+		"        return { value };\n" +
+		"      }}\n" +
+		"    </Task>\n" +
+		"  </Workflow>\n" +
+		"));\n"
+
+	path := filepath.Join(t.TempDir(), "shared-credential-check.tsx")
+	if err := os.WriteFile(path, []byte(workflow), 0o644); err != nil {
+		t.Fatalf("write shared credential workflow fixture: %v", err)
+	}
+	return path
+}
+
+func mustRepoRoot(t *testing.T) string {
+	t.Helper()
+
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+	return repoRoot
 }
 
 func assertMirroredProjectEnvSecret(t *testing.T, opts Options, project, environment, clusterName string) {
@@ -638,28 +1014,19 @@ func assertMirroredProjectEnvSecret(t *testing.T, opts Options, project, environ
 	}
 }
 
-func assertWorkflowRepoEnvArtifacts(t *testing.T, outputSubdir, runID, clusterName string) {
+func assertWorkflowRepoEnvReport(t *testing.T, opts Options, runID, clusterName string) {
 	t.Helper()
 
-	repoRoot, err := findRepoRoot()
-	if err != nil {
-		t.Fatalf("resolve repo root: %v", err)
-	}
-
-	reportPath := filepath.Join(repoRoot, outputSubdir, sanitizeName(runID), "workdir", "artifacts", "report.json")
-	data, err := os.ReadFile(reportPath)
-	if err != nil {
-		t.Fatalf("read workflow artifact report %s: %v", reportPath, err)
-	}
-	text := string(data)
+	jobName := trimK8sName("fabrik-" + sanitizeName(runID))
+	text := jobLogs(t, opts, jobName)
 	if !strings.Contains(text, `"repoCloned": true`) {
-		t.Fatalf("expected cloned repo in report, got %s", text)
+		t.Fatalf("expected cloned repo in workflow logs, got %s", text)
 	}
 	if !strings.Contains(text, `"databaseURL": "postgres://`+clusterName+`"`) {
-		t.Fatalf("expected cluster-specific DATABASE_URL in report, got %s", text)
+		t.Fatalf("expected cluster-specific DATABASE_URL in workflow logs, got %s", text)
 	}
 	if !strings.Contains(text, `"clusterName": "`+clusterName+`"`) {
-		t.Fatalf("expected cluster name in report, got %s", text)
+		t.Fatalf("expected cluster name in workflow logs, got %s", text)
 	}
 }
 
@@ -728,6 +1095,7 @@ func TestK3dResumePreservesPVCAndImageDigest(t *testing.T) {
 		t.Run(clusterName, func(t *testing.T) {
 			kubeconfigPath := writeK3dKubeconfig(t, clusterName)
 			t.Setenv("KUBECONFIG", kubeconfigPath)
+			t.Setenv(sharedCredentialHelperImageEnv, ensureK3dRegistryWorkflowImage(t, clusterName))
 
 			repoRoot, err := findRepoRoot()
 			if err != nil {
@@ -745,10 +1113,11 @@ func TestK3dResumePreservesPVCAndImageDigest(t *testing.T) {
 			}
 
 			opts := Options{
-				Namespace:   "fabrik-runs",
-				PVCSize:     "1Gi",
-				WaitTimeout: "90s",
-				Interactive: false,
+				Namespace:                "fabrik-runs",
+				PVCSize:                  "1Gi",
+				WaitTimeout:              "90s",
+				Interactive:              false,
+				DisableSharedCredentials: true,
 			}
 
 			runID := fmt.Sprintf("it-k3d-resume-%s-%d", strings.TrimPrefix(clusterName, "dev-"), time.Now().Unix())
@@ -798,7 +1167,7 @@ func TestK3dResumePreservesPVCAndImageDigest(t *testing.T) {
 			assertPVCBound(t, opts, pvcName)
 
 			// Record original pod creation timestamp
-			originalPodStart, err := getPodStartTime(t, opts, podName)
+			originalPodStart, err := waitForPodStartTime(t, opts, podName, 60*time.Second)
 			if err != nil {
 				t.Fatalf("failed to get original pod start time: %v", err)
 			}
@@ -810,14 +1179,9 @@ func TestK3dResumePreservesPVCAndImageDigest(t *testing.T) {
 
 			// Wait for new pod to be created
 			time.Sleep(2 * time.Second)
-			newPodName := waitForJobPod(t, opts, jobName, 30*time.Second)
+			newPodName := waitForReplacementJobPod(t, opts, jobName, podName, 90*time.Second)
 			if newPodName == "" {
 				t.Fatalf("expected new pod after resume for job %s", jobName)
-			}
-
-			// Verify new pod is different from original
-			if newPodName == podName {
-				t.Fatalf("expected new pod after resume, got same pod %s", podName)
 			}
 
 			// Verify PVC still exists and is bound (preserved)
@@ -839,7 +1203,7 @@ func TestK3dResumePreservesPVCAndImageDigest(t *testing.T) {
 			}
 
 			// Verify new pod started after original
-			newPodStart, err := getPodStartTime(t, opts, newPodName)
+			newPodStart, err := waitForPodStartTime(t, opts, newPodName, 60*time.Second)
 			if err != nil {
 				t.Fatalf("failed to get new pod start time: %v", err)
 			}
@@ -883,6 +1247,26 @@ func getPodStartTime(t *testing.T, opts Options, podName string) (time.Time, err
 	}
 
 	return startTime, nil
+}
+
+func waitForPodStartTime(t *testing.T, opts Options, podName string, timeout time.Duration) (time.Time, error) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		startTime, err := getPodStartTime(t, opts, podName)
+		if err == nil {
+			return startTime, nil
+		}
+		lastErr = err
+		time.Sleep(2 * time.Second)
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("pod start time was not available within %s", timeout)
+	}
+	return time.Time{}, lastErr
 }
 
 func getPodImage(t *testing.T, opts Options, podName string) (string, error) {

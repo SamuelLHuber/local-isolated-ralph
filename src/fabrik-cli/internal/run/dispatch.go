@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -58,11 +59,9 @@ func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opt
 				return err
 			}
 		}
-		if strings.TrimSpace(resolved.WorkflowPath) != "" {
-			if _, _, err := ensureCodexAuthFilesExist(); err != nil {
-				return err
-			}
-		}
+		// Dry-run does not require shared credentials to exist locally.
+		// The actual credential secret is managed in-cluster via
+		// fabrik credentials set.
 		out, err := runKubectl(ctx, resolved, manifests.AllYAML(), "apply", "--dry-run=client", "-o", "yaml", "-f", "-")
 		if err != nil {
 			return err
@@ -100,10 +99,8 @@ func Execute(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, opt
 	if err := syncProjectEnvSecret(ctx, resolved); err != nil {
 		return err
 	}
-	if strings.TrimSpace(resolved.WorkflowPath) != "" {
-		if err := applyCodexSecret(ctx, resolved); err != nil {
-			return err
-		}
+	if err := prepareSharedCredentials(ctx, resolved); err != nil {
+		return err
 	}
 
 	if _, err := runKubectl(ctx, resolved, manifests.AllYAML(), "apply", "-f", "-"); err != nil {
@@ -166,6 +163,17 @@ func ResolveOptions(ctx context.Context, in io.Reader, out io.Writer, opts Optio
 		if err != nil {
 			return Options{}, fmt.Errorf("resolve immutable image for dispatch: %w", err)
 		}
+	}
+	sharedBundle, err := resolveSharedCredentialBundle(resolved)
+	if err != nil {
+		return Options{}, err
+	}
+	if requiresSharedCredentialSync(resolved, sharedBundle) && !resolved.RenderOnly {
+		helperImage := strings.TrimSpace(os.Getenv(sharedCredentialHelperImageEnv))
+		if helperImage == "" {
+			helperImage = defaultSharedCredentialHelperImage
+		}
+		resolved.SharedCredentialHelperImage = helperImage
 	}
 	if err := validateOptions(resolved); err != nil {
 		return Options{}, err
@@ -254,47 +262,102 @@ func runKubectl(ctx context.Context, opts Options, stdin string, args ...string)
 	return string(out), nil
 }
 
-func applyCodexSecret(ctx context.Context, opts Options) error {
-	authFile, configFile, err := ensureCodexAuthFilesExist()
+func prepareSharedCredentials(ctx context.Context, opts Options) error {
+	bundle, err := resolveSharedCredentialBundle(opts)
 	if err != nil {
 		return err
 	}
-
-	cmdArgs := []string{}
-	if strings.TrimSpace(opts.KubeContext) != "" {
-		cmdArgs = append(cmdArgs, "--context", opts.KubeContext)
+	if bundle.SecretName == "" {
+		return nil
 	}
-	cmdArgs = append(cmdArgs,
-		"-n", opts.Namespace,
-		"create", "secret", "generic", "codex-auth",
-		"--from-file=auth.json="+authFile,
-		"--from-file=config.toml="+configFile,
-		"--dry-run=client",
-		"-o", "yaml",
-	)
-
-	cmd := exec.CommandContext(ctx, "kubectl", cmdArgs...)
-	out, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("kubectl %s failed: %w", strings.Join(cmdArgs, " "), err)
+	switch bundle.SourceKind {
+	case "file":
+		return applyRunScopedSharedCredentialSecret(ctx, opts, bundle.SecretName, opts.SharedCredentialFile)
+	case "dir":
+		return applyRunScopedSharedCredentialSecret(ctx, opts, bundle.SecretName, opts.SharedCredentialDir)
+	default:
+		return mirrorSharedCredentialSecret(ctx, opts, bundle.SecretName, bundle.Optional)
 	}
-
-	_, err = runKubectl(ctx, opts, string(out), "apply", "-f", "-")
-	return err
 }
 
-func ensureCodexAuthFilesExist() (string, string, error) {
-	authFile := filepath.Join(os.Getenv("HOME"), ".codex", "auth.json")
-	configFile := filepath.Join(os.Getenv("HOME"), ".codex", "config.toml")
-
-	if _, err := os.Stat(authFile); err != nil {
-		return "", "", fmt.Errorf("missing codex auth file %s: %w", authFile, err)
+func mirrorSharedCredentialSecret(ctx context.Context, opts Options, secretName string, optional bool) error {
+	if opts.Namespace == envSecretNamespace {
+		if !optional {
+			if _, err := runKubectl(ctx, opts, "", "-n", envSecretNamespace, "get", "secret", secretName); err != nil {
+				return fmt.Errorf("resolve shared credential secret %s: %w", secretName, err)
+			}
+		}
+		return nil
 	}
-	if _, err := os.Stat(configFile); err != nil {
-		return "", "", fmt.Errorf("missing codex config file %s: %w", configFile, err)
-	}
 
-	return authFile, configFile, nil
+	out, err := runKubectl(ctx, opts, "", "-n", envSecretNamespace, "get", "secret", secretName, "-o", "jsonpath={.data}", "--ignore-not-found")
+	if err != nil {
+		return fmt.Errorf("read shared credential secret %s: %w", secretName, err)
+	}
+	raw := strings.TrimSpace(out)
+	if raw == "" {
+		if !optional {
+			return fmt.Errorf("shared credential secret %s not found in namespace %s", secretName, envSecretNamespace)
+		}
+		return applySharedCredentialSecretData(ctx, opts, secretName, nil)
+	}
+	if raw == "{}" {
+		return applySharedCredentialSecretData(ctx, opts, secretName, map[string]string{})
+	}
+	var dataMap map[string]string
+	if err := json.Unmarshal([]byte(raw), &dataMap); err != nil {
+		return fmt.Errorf("parse shared credential secret %s: %w", secretName, err)
+	}
+	return applySharedCredentialSecretData(ctx, opts, secretName, dataMap)
+}
+
+func applySharedCredentialSecretData(ctx context.Context, opts Options, secretName string, dataMap map[string]string) error {
+	manifest := renderOpaqueSecretManifest(opts.Namespace, secretName, dataMap)
+	if _, err := runKubectl(ctx, opts, manifest, "apply", "-f", "-"); err != nil {
+		return fmt.Errorf("mirror shared credential secret %s to %s: %w", secretName, opts.Namespace, err)
+	}
+	return nil
+}
+
+func renderOpaqueSecretManifest(namespace, secretName string, dataMap map[string]string) string {
+	var b strings.Builder
+	b.WriteString("apiVersion: v1\n")
+	b.WriteString("kind: Secret\n")
+	b.WriteString("metadata:\n")
+	b.WriteString("  name: " + secretName + "\n")
+	b.WriteString("  namespace: " + namespace + "\n")
+	b.WriteString("type: Opaque\n")
+	if len(dataMap) == 0 {
+		b.WriteString("data: {}\n")
+		return b.String()
+	}
+	b.WriteString("data:\n")
+	keys := make([]string, 0, len(dataMap))
+	for key := range dataMap {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		b.WriteString("  " + key + ": " + yamlQuote(dataMap[key]) + "\n")
+	}
+	return b.String()
+}
+
+func applyRunScopedSharedCredentialSecret(ctx context.Context, opts Options, secretName, fromPath string) error {
+	args := []string{}
+	if opts.KubeContext != "" {
+		args = append(args, "--context", opts.KubeContext)
+	}
+	args = append(args, "-n", opts.Namespace, "create", "secret", "generic", secretName, "--dry-run=client", "-o", "yaml", "--from-file="+fromPath)
+	cmd := exec.CommandContext(ctx, "kubectl", args...)
+	rendered, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("render run-scoped shared credential secret %s: %w", secretName, err)
+	}
+	if _, err := runKubectl(ctx, opts, string(rendered), "apply", "-f", "-"); err != nil {
+		return fmt.Errorf("apply run-scoped shared credential secret %s: %w", secretName, err)
+	}
+	return nil
 }
 
 func patchPVCOwnerReference(ctx context.Context, opts Options, jobName, pvcName string) error { /* unchanged */

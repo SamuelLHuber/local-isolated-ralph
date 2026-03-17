@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
 // setupMockKubectl creates a mock kubectl binary for testing
 func setupMockKubectl(t *testing.T, responses map[string]string) string {
 	t.Helper()
@@ -379,11 +383,13 @@ func TestJobStatusFromConditions(t *testing.T) {
 			job := &runJobJSON{
 				Metadata: struct {
 					Name        string            `json:"name"`
+					UID         string            `json:"uid"`
 					Namespace   string            `json:"namespace"`
 					Labels      map[string]string `json:"labels"`
 					Annotations map[string]string `json:"annotations"`
 				}{
 					Name:      "test-job",
+					UID:       "job-uid",
 					Namespace: "fabrik-runs",
 					Labels:    map[string]string{"fabrik.sh/run-id": "test"},
 				},
@@ -417,11 +423,13 @@ func TestParseStatusAnnotation(t *testing.T) {
 	job := &runJobJSON{
 		Metadata: struct {
 			Name        string            `json:"name"`
+			UID         string            `json:"uid"`
 			Namespace   string            `json:"namespace"`
 			Labels      map[string]string `json:"labels"`
 			Annotations map[string]string `json:"annotations"`
 		}{
 			Name:      "test-job",
+			UID:       "job-uid",
 			Namespace: "fabrik-runs",
 			Labels: map[string]string{
 				"fabrik.sh/run-id":  "test",
@@ -473,11 +481,13 @@ func TestJobToRunInfoReconcilesCompletedJobWhenAnnotationsAreStale(t *testing.T)
 	job := &runJobJSON{
 		Metadata: struct {
 			Name        string            `json:"name"`
+			UID         string            `json:"uid"`
 			Namespace   string            `json:"namespace"`
 			Labels      map[string]string `json:"labels"`
 			Annotations map[string]string `json:"annotations"`
 		}{
 			Name:      "test-job",
+			UID:       "job-uid",
 			Namespace: "fabrik-runs",
 			Labels: map[string]string{
 				"fabrik.sh/run-id":  "test",
@@ -630,21 +640,36 @@ exit 1
 
 func TestResumeDeletesPod(t *testing.T) {
 	// Resume verifies job exists with immutable image, checks PVC, then deletes pod
+	statePath := filepath.Join(t.TempDir(), "resume-state")
 	script := "#!/bin/sh\n"
+	script += "STATE_FILE=" + shellQuote(statePath) + "\n"
 	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=test-resume"; then
-		echo '{"items":[{"metadata":{"name":"test-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"test-resume","fabrik.sh/managed-by":"fabrik"}},"spec":{"template":{"spec":{"containers":[{"image":"ghcr.io/fabrik/smithers@sha256:abc123def456"}]}}},"status":{"active":1}}]}'
+		echo '{"items":[{"metadata":{"name":"test-job","uid":"job-uid","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"test-resume","fabrik.sh/managed-by":"fabrik"}},"spec":{"template":{"spec":{"containers":[{"image":"ghcr.io/fabrik/smithers@sha256:abc123def456"}]}}},"status":{"active":1}}]}'
 		exit 0
 	fi
 	if echo "$*" | grep -q "get pvc.*data-fabrik-test-resume"; then
 		echo 'Bound'
 		exit 0
 	fi
+	if echo "$*" | grep -q "delete pod test-pod"; then
+		echo deleted > "$STATE_FILE"
+		echo 'pod deleted'
+		exit 0
+	fi
+	if echo "$*" | grep -q "get pods.*job-name=test-job.*-o json"; then
+		if [ -f "$STATE_FILE" ]; then
+			echo '{"items":[{"metadata":{"name":"test-pod-replacement","uid":"pod-uid-2","namespace":"fabrik-runs"},"spec":{"containers":[{"image":"ghcr.io/fabrik/smithers@sha256:abc123def456"}],"volumes":[{"name":"workspace","persistentVolumeClaim":{"claimName":"data-fabrik-test-resume"}}]}}]}'
+		else
+			echo '{"items":[{"metadata":{"name":"test-pod","uid":"pod-uid-1","namespace":"fabrik-runs"},"spec":{"containers":[{"image":"ghcr.io/fabrik/smithers@sha256:abc123def456"}],"volumes":[{"name":"workspace","persistentVolumeClaim":{"claimName":"data-fabrik-test-resume"}}]}}]}'
+		fi
+		exit 0
+	fi
 	if echo "$*" | grep -q "jsonpath={.items\[0\].metadata.name}"; then
 		echo 'test-pod'
 		exit 0
 	fi
-	if echo "$*" | grep -q "delete pod test-pod"; then
-		echo 'pod deleted'
+	if echo "$*" | grep -q "get job test-job -o jsonpath"; then
+		echo '1/0/0'
 		exit 0
 	fi
 	exit 1

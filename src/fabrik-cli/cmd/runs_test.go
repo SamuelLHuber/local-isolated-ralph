@@ -559,17 +559,15 @@ exit 1
 
 func TestRunResume(t *testing.T) {
 	// Mock that handles the resume flow with immutable image and PVC verification
+	statePath := filepath.Join(t.TempDir(), "resume-state")
 	script := "#!/bin/sh\n"
+	script += "STATE_FILE='" + strings.ReplaceAll(statePath, "'", "'\"'\"'") + "'\n"
 	script += `if echo "$*" | grep -q "get jobs.*fabrik.sh/run-id=test-resume-run"; then
-		echo '{"items":[{"metadata":{"name":"test-job","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"test-resume-run","fabrik.sh/managed-by":"fabrik"}},"spec":{"template":{"spec":{"containers":[{"image":"ghcr.io/fabrik/smithers@sha256:abc123def456789"}]}}},"status":{"active":1}}]}'
+		echo '{"items":[{"metadata":{"name":"test-job","uid":"job-uid","namespace":"fabrik-runs","labels":{"fabrik.sh/run-id":"test-resume-run","fabrik.sh/managed-by":"fabrik"}},"spec":{"template":{"spec":{"containers":[{"image":"ghcr.io/fabrik/smithers@sha256:abc123def456789"}]}}},"status":{"active":1}}]}'
 		exit 0
 	fi
 	if echo "$*" | grep -q "get pvc.*data-fabrik-test-resume-run"; then
 		echo 'Bound'
-		exit 0
-	fi
-	if echo "$*" | grep -q "get pods.*job-name=test-job"; then
-		echo '{"items":[]}'
 		exit 0
 	fi
 	if echo "$*" | grep -q "jsonpath={.items\[0\].metadata.name}"; then
@@ -577,7 +575,20 @@ func TestRunResume(t *testing.T) {
 		exit 0
 	fi
 	if echo "$*" | grep -q "delete pod resume-pod"; then
+		echo deleted > "$STATE_FILE"
 		echo 'pod deleted'
+		exit 0
+	fi
+	if echo "$*" | grep -q "get pods.*job-name=test-job.*-o json"; then
+		if [ -f "$STATE_FILE" ]; then
+			echo '{"items":[{"metadata":{"name":"resume-pod-replacement","uid":"pod-uid-2","namespace":"fabrik-runs"},"spec":{"containers":[{"image":"ghcr.io/fabrik/smithers@sha256:abc123def456789"}],"volumes":[{"name":"workspace","persistentVolumeClaim":{"claimName":"data-fabrik-test-resume-run"}}]}}]}'
+		else
+			echo '{"items":[{"metadata":{"name":"resume-pod","uid":"pod-uid-1","namespace":"fabrik-runs"},"spec":{"containers":[{"image":"ghcr.io/fabrik/smithers@sha256:abc123def456789"}],"volumes":[{"name":"workspace","persistentVolumeClaim":{"claimName":"data-fabrik-test-resume-run"}}]}}]}'
+		fi
+		exit 0
+	fi
+	if echo "$*" | grep -q "get job test-job -o jsonpath"; then
+		echo '1/0/0'
 		exit 0
 	fi
 	exit 1
@@ -666,26 +677,26 @@ func TestTruncate(t *testing.T) {
 
 func TestFormatAge(t *testing.T) {
 	now := time.Now()
-	
+
 	// Test with nil time
 	if formatAge(nil, now) != "unknown" {
 		t.Errorf("expected unknown for nil time")
 	}
-	
+
 	// Test recent time (30 seconds ago)
 	recent := now.Add(-30 * time.Second)
 	result := formatAge(&recent, now)
 	if result != "<1m" {
 		t.Errorf("expected <1m for 30 seconds ago, got %s", result)
 	}
-	
+
 	// Test hours ago
 	hoursAgo := now.Add(-3 * time.Hour)
 	result = formatAge(&hoursAgo, now)
 	if result != "3h" {
 		t.Errorf("expected 3h for 3 hours ago, got %s", result)
 	}
-	
+
 	// Test days ago
 	daysAgo := now.Add(-72 * time.Hour)
 	result = formatAge(&daysAgo, now)
