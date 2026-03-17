@@ -24,3 +24,5 @@ specs/**/*.min.json
 smitherssample/
 k8s/job-sync/*
 !k8s/job-sync/.gitkeep
+
+it-k3d-*/

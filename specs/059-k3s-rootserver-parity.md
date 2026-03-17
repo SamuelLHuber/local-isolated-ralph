@@ -60,8 +60,8 @@ Before running this verification, you must have:
    ```
 
 3. **Required secrets configured**:
-   - `~/.codex/auth.json` with valid credentials
-   - `~/.codex/config.toml` with valid configuration
+   - `fabrik-credentials` secret in `fabrik-system` with required API keys
+
 
 4. **Network access**:
    - Outbound HTTPS to GitHub
@@ -235,7 +235,7 @@ RUN_ID=$(./fabrik runs list --project demo-rootserver --format json | jq -r '.[0
 **Purpose**: Verify workflow runs correctly clone and access repository contents.
 
 **Prerequisites**:
-- A GitHub token with repo access configured in `~/.codex/auth.json`
+- `fabrik-credentials` secret with `GITHUB_TOKEN` for private repo access
 - A public test repository (or private with configured access)
 
 **Commands**:

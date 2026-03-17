@@ -1,0 +1,19 @@
+{
+  "name": "fabrik-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./credential-pool": "./src/credential-pool.ts",
+    "./k8s-jobs": "./src/k8s-jobs.ts",
+    "./jj-shell": "./src/jj-shell.ts"
+  },
+  "dependencies": {
+    "smithers-orchestrator": "0.9.1"
+  },
+  "devDependencies": {
+    "bun-types": "1.2.12"
+  }
+}

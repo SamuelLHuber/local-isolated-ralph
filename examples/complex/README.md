@@ -14,7 +14,7 @@ This workflow demonstrates an end-to-end implementation pipeline using Fabrik CL
 - Fabrik CLI built and available in your PATH
 - Kubernetes cluster with Fabrik runtime image available
 - Fireworks API key (for the PI agent)
-- Codex auth files in `~/.codex/` (for agent authentication)
+- `fabrik-credentials` secret in `fabrik-system` with required API keys
 
 ## Usage
 

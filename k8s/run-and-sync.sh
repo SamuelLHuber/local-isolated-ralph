@@ -104,22 +104,17 @@ else
   echo "[2/8] Skipping pre-clean (/workspace/workdir)"
 fi
 
-CODEX_AUTH_FILE="${CODEX_AUTH_FILE:-$HOME/.codex/auth.json}"
-CODEX_CONFIG_FILE="${CODEX_CONFIG_FILE:-$HOME/.codex/config.toml}"
-if [ ! -f "$CODEX_AUTH_FILE" ]; then
-  echo "missing Codex auth file: $CODEX_AUTH_FILE" >&2
-  exit 1
+echo "[3/8] Mirroring fabrik-credentials to run namespace"
+# Shared credentials are managed in fabrik-system via kubectl.
+# Mirror them into the run namespace if they exist.
+CRED_DATA="$(kubectl -n fabrik-system get secret fabrik-credentials -o jsonpath='{.data}' --ignore-not-found 2>/dev/null || true)"
+if [ -n "$CRED_DATA" ] && [ "$CRED_DATA" != "{}" ]; then
+  kubectl -n fabrik-system get secret fabrik-credentials -o yaml \
+    | sed "s/namespace: fabrik-system/namespace: $NAMESPACE/" \
+    | kubectl -n "$NAMESPACE" apply -f -
+else
+  echo "  no fabrik-credentials in fabrik-system; skipping"
 fi
-if [ ! -f "$CODEX_CONFIG_FILE" ]; then
-  echo "missing Codex config file: $CODEX_CONFIG_FILE" >&2
-  exit 1
-fi
-
-echo "[3/8] Applying codex-auth secret"
-kubectl -n "$NAMESPACE" create secret generic codex-auth \
-  --from-file=auth.json="$CODEX_AUTH_FILE" \
-  --from-file=config.toml="$CODEX_CONFIG_FILE" \
-  --dry-run=client -o yaml | kubectl -n "$NAMESPACE" apply -f -
 
 echo "[4/8] Creating Job $JOB_NAME"
 kubectl -n "$NAMESPACE" delete job "$JOB_NAME" --ignore-not-found >/dev/null
@@ -152,22 +147,18 @@ spec:
           volumeMounts:
             - name: workspace
               mountPath: /workspace
-            - name: codex-auth
-              mountPath: /root/.codex/auth.json
-              subPath: auth.json
-              readOnly: true
-            - name: codex-auth
-              mountPath: /root/.codex/config.toml
-              subPath: config.toml
+            - name: fabrik-credentials
+              mountPath: /etc/fabrik/credentials
               readOnly: true
       volumes:
         - name: workspace
           persistentVolumeClaim:
             claimName: $PVC_NAME
-        - name: codex-auth
+        - name: fabrik-credentials
           secret:
-            secretName: codex-auth
+            secretName: fabrik-credentials
             defaultMode: 0400
+            optional: true
 YAML
 
 echo "[5/8] Linking PVC to Job for TTL cleanup"

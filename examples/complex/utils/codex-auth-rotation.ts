@@ -3,8 +3,16 @@ import { tmpdir } from "node:os";
 import { basename, resolve } from "node:path";
 import { CodexAgent } from "smithers-orchestrator";
 
-const CODEX_DIR = resolve(process.env.HOME ?? "", ".codex");
-export const CODEX_AUTH_HOME = resolve(tmpdir(), "codex-auth-pool");
+const DEFAULT_CODEX_DIR = resolve(process.env.HOME ?? "", ".codex");
+const CODEX_AUTH_SOURCE_DIR = resolve(
+  process.env.CODEX_AUTH_SOURCE_DIR ?? DEFAULT_CODEX_DIR,
+);
+export const CODEX_AUTH_HOME = resolve(
+  process.env.CODEX_AUTH_HOME ?? resolve(tmpdir(), "codex-auth-pool"),
+);
+const NOTIFY_WEBHOOK_URL = process.env.CODEX_AUTH_NOTIFY_WEBHOOK_URL?.trim() ?? "";
+const NOTIFY_CLUSTER = process.env.KUBERNETES_NAMESPACE?.trim() ?? "";
+const NOTIFY_RUN_ID = process.env.SMITHERS_RUN_ID?.trim() ?? "";
 
 const AUTH_ROTATE_PATTERN =
   /no last agent message|usage limit|quota|rate limit|insufficient (?:credits|balance|quota)|payment required|billing|exceeded.*(quota|limit)|not signed in|please run 'codex login'|unauthorized|authentication required|authentication failed|forbidden|invalid (?:api key|token|credentials)|expired (?:token|credentials)/i;
@@ -16,11 +24,11 @@ const AUTH_REFRESH_REUSED_PATTERN =
   /refresh_token_reused|refresh token has already been used|could not be refreshed because your refresh token was already used/i;
 
 const listAuthFiles = (): string[] => {
-  if (!existsSync(CODEX_DIR)) return [];
-  const entries = readdirSync(CODEX_DIR);
+  if (!existsSync(CODEX_AUTH_SOURCE_DIR)) return [];
+  const entries = readdirSync(CODEX_AUTH_SOURCE_DIR);
   return entries
     .filter((name) => name.endsWith(".auth.json") || name === "auth.json")
-    .map((name) => resolve(CODEX_DIR, name))
+    .map((name) => resolve(CODEX_AUTH_SOURCE_DIR, name))
     .sort();
 };
 
@@ -51,7 +59,7 @@ const initAuthPool = () => {
   authPool = listAuthFiles();
   if (authPool.length === 0) return;
   if (activeAuth) return;
-  const defaultAuth = resolve(CODEX_DIR, "auth.json");
+  const defaultAuth = resolve(CODEX_AUTH_SOURCE_DIR, "auth.json");
   if (existsSync(defaultAuth)) {
     setActiveAuth(defaultAuth, "initial");
   } else {
@@ -104,21 +112,72 @@ export const withCodexAuthPoolEnv = (env: Record<string, string>) => ({
   CODEX_HOME: CODEX_AUTH_HOME,
 });
 
+export type AuthFailureKind =
+  | "refresh_token_reused"
+  | "usage_limit"
+  | "auth_invalid"
+  | "unknown";
+
+export type AuthFailureEvent = {
+  authPath: string;
+  authName: string;
+  reason: string;
+  kind: AuthFailureKind;
+  message: string;
+  clusterNamespace?: string;
+  runId?: string;
+};
+
+export type RotatingCodexAgentOptions = {
+  onAuthFailure?: (event: AuthFailureEvent) => void | Promise<void>;
+};
+
+const notifyAuthFailure = async (
+  event: AuthFailureEvent,
+  onAuthFailure?: RotatingCodexAgentOptions["onAuthFailure"],
+) => {
+  if (onAuthFailure) {
+    await onAuthFailure(event);
+  }
+  if (!NOTIFY_WEBHOOK_URL) {
+    return;
+  }
+  try {
+    const response = await fetch(NOTIFY_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(event),
+    });
+    if (!response.ok) {
+      console.error(
+        `[smithers] Codex auth notification failed: webhook status ${response.status}`,
+      );
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[smithers] Codex auth notification failed: ${message}`);
+  }
+};
+
 export const createCodexAgentWithPool = (
   opts: ConstructorParameters<typeof CodexAgent>[0],
+  rotationOpts: RotatingCodexAgentOptions = {},
 ) =>
   new RotatingCodexAgent(
     new CodexAgent({
       ...opts,
       env: withCodexAuthPoolEnv(opts.env ?? {}),
     }),
+    rotationOpts,
   );
 
 export class RotatingCodexAgent {
   private readonly inner: CodexAgent;
+  private readonly onAuthFailure?: RotatingCodexAgentOptions["onAuthFailure"];
 
-  constructor(inner: CodexAgent) {
+  constructor(inner: CodexAgent, opts: RotatingCodexAgentOptions = {}) {
     this.inner = inner;
+    this.onAuthFailure = opts.onAuthFailure;
   }
 
   get id() {
@@ -146,7 +205,20 @@ export class RotatingCodexAgent {
           console.error("[smithers] Codex auth refresh token reused; re-auth required");
         }
         if (activeAuth) {
-          authFailures.set(activeAuth, classifyAuthFailure(message));
+          const kind = classifyAuthFailure(message) as AuthFailureKind;
+          authFailures.set(activeAuth, kind);
+          await notifyAuthFailure(
+            {
+              authPath: activeAuth,
+              authName: basename(activeAuth),
+              reason: "codex generate failed and rotation was requested",
+              kind,
+              message,
+              clusterNamespace: NOTIFY_CLUSTER || undefined,
+              runId: NOTIFY_RUN_ID || undefined,
+            },
+            this.onAuthFailure,
+          );
         }
         if (!rotateAuth("no last agent message / auth / usage")) {
           break;
