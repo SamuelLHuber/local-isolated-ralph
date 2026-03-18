@@ -2,6 +2,7 @@ FROM node:20-alpine
 
 ARG JJ_VERSION=0.37.0
 ARG GO_VERSION=1.26.1
+ARG FABRIK_RUNTIME_VERSION=
 
 RUN apk add --no-cache bash curl git kubectl make tar
 
@@ -45,8 +46,12 @@ RUN mkdir -p ${SMITHERS_RUNTIME_DIR} ${SMITHERS_WORKDIR} /workspace/.smithers /r
 COPY k8s/smithers-runtime/package.json ${SMITHERS_RUNTIME_DIR}/package.json
 COPY k8s/smithers-runtime/workflow.tsx ${SMITHERS_RUNTIME_DIR}/workflow.tsx
 COPY k8s/smithers-runtime/run.sh ${SMITHERS_RUNTIME_DIR}/run.sh
+COPY src/fabrik-runtime ${SMITHERS_RUNTIME_DIR}/vendor/fabrik-runtime
 
+RUN rm -rf ${SMITHERS_RUNTIME_DIR}/vendor/fabrik-runtime/node_modules
+RUN node -e 'const fs=require("fs"); const path=process.env.SMITHERS_RUNTIME_DIR + "/package.json"; const pkg=JSON.parse(fs.readFileSync(path,"utf8")); pkg.dependencies ||= {}; pkg.dependencies["@dtechvision/fabrik-runtime"] = process.env.FABRIK_RUNTIME_VERSION ? process.env.FABRIK_RUNTIME_VERSION : "file:./vendor/fabrik-runtime"; fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");'
 RUN cd ${SMITHERS_RUNTIME_DIR} && npm install --no-audit --no-fund
+RUN ln -sfn ${SMITHERS_RUNTIME_DIR}/node_modules ${SMITHERS_RUNTIME_DIR}/vendor/fabrik-runtime/node_modules
 RUN chmod +x ${SMITHERS_RUNTIME_DIR}/run.sh
 
 WORKDIR ${SMITHERS_WORKDIR}

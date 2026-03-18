@@ -133,20 +133,20 @@ func TestComplexSampleBundleContents(t *testing.T) {
 	// Get the actual entries in the bundle
 	gotEntries := untarNames(t, bundle.ArchiveBase64)
 
-	// The complex sample imports from "./utils/jj-shell" so the bundle should
-	// contain exactly these files:
-	// - workflows/pi-spec-implementation.tsx (the main workflow)
-	// - workflows/utils/jj-shell.ts (the direct import)
+	// The complex sample imports from "@dtechvision/fabrik-runtime/jj-shell", so the bundle
+	// should contain only the workflow file itself. Runtime package imports are
+	// resolved from the Smithers runtime image, not copied into the workflow
+	// archive.
 	//
 	// It should NOT contain:
-	// - utils/codex-auth-rotation.ts (not imported by the workflow)
+	// - utils/* (package helpers are not bundled)
 	// - specs/* (repo contents come from --jj-repo, not copied)
 	// - Any other files outside the workflow directory
 	requiredEntries := map[string]bool{
 		"workflows/pi-spec-implementation.tsx": false,
-		"workflows/utils/jj-shell.ts":          false,
 	}
 	forbiddenEntries := []string{
+		"workflows/utils/",
 		"workflows/utils/codex-auth-rotation.ts", // Not imported by workflow
 		"workflows/specs/",                     // Specs come from --jj-repo
 		"specs/",                               // Should never be in bundle
@@ -177,7 +177,7 @@ func TestComplexSampleBundleContents(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The bundle should be small (< 50KB) since it only contains workflow code
-	// and one utility file, not the entire repo specs
+	// and the workflow file itself, not the entire repo specs
 	if len(data) > 50*1024 {
 		t.Fatalf("bundle too large (%d bytes) - may include unwanted files; expected < 50KB for workflow-only bundle", len(data))
 	}

@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "src/fabrik-runtime"
+  ],
   "bin": {
     "fabrik": "dist/fabrik"
   },
@@ -12,6 +15,7 @@
     "hooks:install": "git config core.hooksPath .githooks && chmod +x .githooks/pre-commit"
   },
   "dependencies": {
+    "@dtechvision/fabrik-runtime": "workspace:*",
     "smithers-orchestrator": "0.9.1"
   },
   "devDependencies": {

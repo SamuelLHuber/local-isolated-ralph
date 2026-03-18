@@ -25,6 +25,16 @@ export {
 } from "./credential-pool";
 
 export {
+  CODEX_AUTH_HOME,
+  withCodexAuthPoolEnv,
+  createCodexAgentWithPool,
+  RotatingCodexAgent,
+  type AuthFailureKind,
+  type AuthFailureEvent,
+  type RotatingCodexAgentOptions,
+} from "./codex-auth";
+
+export {
   runVerificationJob,
   buildVerificationJobManifest,
   type VerificationResult,

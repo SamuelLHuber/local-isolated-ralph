@@ -1,6 +1,6 @@
 # Complex Sample: PI Spec Implementation
 
-This workflow demonstrates an end-to-end implementation pipeline using Fabrik CLI with external repo awareness.
+This sample demonstrates an end-to-end implementation pipeline using Fabrik CLI with external repo awareness, plus reusable workflow helpers from `@dtechvision/fabrik-runtime`.
 
 ## What This Sample Demonstrates
 
@@ -61,22 +61,21 @@ The workflow receives these Fabrik-injected variables:
 examples/complex/
 ├── pi-spec-implementation.tsx    # Main workflow entry point
 └── utils/
-    ├── jj-shell.ts               # Deterministic JJ shell operations
-    └── codex-auth-rotation.ts    # Auth rotation helper (not currently used)
+    └── codex-auth-rotation.ts    # Backwards-compatible re-export from @dtechvision/fabrik-runtime/codex-auth
 ```
 
 ## Bundle Contract Guarantees
 
 When you dispatch this workflow:
 
-1. **Only workflow code is bundled**: The bundle contains only `pi-spec-implementation.tsx` and `utils/jj-shell.ts` (the direct import)
+1. **Only workflow code is bundled**: The bundle contains only `pi-spec-implementation.tsx`; package imports such as `@dtechvision/fabrik-runtime/jj-shell` resolve from the runtime image rather than being copied into the workflow archive
 2. **No specs included**: Repo specs come from `--jj-repo`, not from your local specs directory
 3. **Immutable image required**: The runtime image must use a digest reference (`@sha256:`)
 4. **Repo cloned at runtime**: The workflow clones the repo specified by `--jj-repo` into the Job pod
 
 ## Helper Utilities
 
-### jj-shell.ts
+### `@dtechvision/fabrik-runtime/jj-shell`
 
 Deterministic shell operations using Bun's `$` shell:
 
@@ -85,6 +84,10 @@ Deterministic shell operations using Bun's `$` shell:
 - `pushBookmark()`: Moves bookmark to current change and pushes to origin
 
 These operations are performed directly by the workflow (not delegated to LLM agents) for reproducibility.
+
+### `@dtechvision/fabrik-runtime/codex-auth`
+
+Codex workflows should use `createCodexAgentWithPool()` from `@dtechvision/fabrik-runtime/codex-auth` to rotate across cluster-mounted `auth.json` / `*.auth.json` credentials.
 
 ## Verification
 
@@ -100,3 +103,13 @@ K3d integration verification:
 ```bash
 make verify-cli-k3d
 ```
+
+Focused runtime-package workflow verification:
+
+```bash
+cd src/fabrik-cli
+FABRIK_K3D_E2E=1 FABRIK_K3D_CLUSTER=dev-single \
+  go test ./internal/run -run TestK3dWorkflowRuntimePackageImports -timeout 10m -v
+```
+
+That test proves a workflow can import `@dtechvision/fabrik-runtime/...` from the rebuilt Smithers image inside k3d.

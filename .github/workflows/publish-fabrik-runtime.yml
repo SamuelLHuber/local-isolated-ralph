@@ -1,0 +1,85 @@
+name: Publish Fabrik Runtime Package
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  validate-release-target:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.validate.outputs.tag }}
+      version: ${{ steps.validate.outputs.version }}
+      should_publish: ${{ steps.validate.outputs.should_publish }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate release target
+        id: validate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "invalid runtime release tag: $TAG" >&2
+            exit 1
+          fi
+
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          if [[ "$TAG" == *-* ]]; then
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git fetch origin master --depth=1
+
+          TARGET_COMMIT="${GITHUB_SHA}"
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            TARGET_COMMIT="$(git rev-list -n 1 "$TAG")"
+          fi
+
+          if git merge-base --is-ancestor "$TARGET_COMMIT" origin/master; then
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Stable tag $TAG is not reachable from origin/master; skipping runtime publish." >&2
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    needs: validate-release-target
+    if: needs.validate-release-target.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish @dtechvision/fabrik-runtime
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PACKAGE_VERSION: ${{ needs.validate-release-target.outputs.version }}
+        run: |
+          PACKAGE_VERSION="$PACKAGE_VERSION" node scripts/publish.mjs

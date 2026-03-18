@@ -259,6 +259,69 @@ func TestK3dRunInjectsProjectEnvForCommandAndWorkflow(t *testing.T) {
 	assertProjectEnvInjectionOnJob(t, opts, workflowJobName, project, environment)
 }
 
+func TestK3dWorkflowRuntimePackageImports(t *testing.T) {
+	if os.Getenv("FABRIK_K3D_E2E") != "1" {
+		t.Skip("set FABRIK_K3D_E2E=1 to run k3d integration tests")
+	}
+
+	if _, err := exec.LookPath("kubectl"); err != nil {
+		t.Skip("kubectl not available")
+	}
+	contextName := configureDefaultK3dCluster(t)
+	clusterName := strings.TrimPrefix(contextName, "k3d-")
+	workflowImage := ensureK3dRegistryWorkflowImage(t, clusterName)
+
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+
+	specPath := filepath.Join(repoRoot, "specs", "051-k3s-orchestrator.md")
+	workflowPath := writeRuntimePackageWorkflow(t)
+
+	opts := Options{
+		Namespace:          "fabrik-runs",
+		KubeContext:        contextName,
+		PVCSize:            "1Gi",
+		WaitTimeout:        "120s",
+		Interactive:        false,
+		AcceptFilteredSync: true,
+	}
+	ensureNamespaces(t, opts)
+
+	project := "demo"
+	environment := "dev"
+	ensureProjectEnvSecret(t, opts.KubeContext, project, environment)
+
+	runID := fmt.Sprintf("it-k3d-runtime-pkg-%d", time.Now().Unix())
+	cleanupJobRun(t, opts, runID)
+	t.Cleanup(func() {
+		cleanupJobRun(t, opts, runID)
+	})
+
+	runOpts := opts
+	runOpts.RunID = runID
+	runOpts.SpecPath = specPath
+	runOpts.Project = project
+	runOpts.Environment = environment
+	runOpts.Image = workflowImage
+	runOpts.WorkflowPath = workflowPath
+	runOpts.InputJSON = `{}`
+	if err := Execute(context.Background(), strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}, runOpts); err != nil {
+		t.Fatalf("runtime package workflow execute failed: %v", err)
+	}
+
+	jobName := trimK8sName("fabrik-" + sanitizeName(runID))
+	waitForJobCompletion(t, runOpts, jobName, 120*time.Second)
+	logs := jobLogs(t, runOpts, jobName)
+	if !strings.Contains(logs, `"codexHomeSet": true`) {
+		t.Fatalf("expected runtime package workflow to confirm codex helper import, got logs: %s", logs)
+	}
+	if !strings.Contains(logs, `"jjHelpersLoaded": true`) {
+		t.Fatalf("expected runtime package workflow to confirm jj helper import, got logs: %s", logs)
+	}
+}
+
 func TestK3dSharedEnvCredentialReplacementAffectsNextJob(t *testing.T) {
 	if os.Getenv("FABRIK_K3D_E2E") != "1" {
 		t.Skip("set FABRIK_K3D_E2E=1 to run k3d integration tests")
@@ -982,6 +1045,47 @@ func writeSharedCredentialWorkflow(t *testing.T) string {
 	path := filepath.Join(t.TempDir(), "shared-credential-check.tsx")
 	if err := os.WriteFile(path, []byte(workflow), 0o644); err != nil {
 		t.Fatalf("write shared credential workflow fixture: %v", err)
+	}
+	return path
+}
+
+func writeRuntimePackageWorkflow(t *testing.T) string {
+	t.Helper()
+
+	workflow := "/** @jsxImportSource smithers-orchestrator */\n" +
+		"import { mkdirSync } from \"node:fs\";\n" +
+		"import { dirname } from \"node:path\";\n" +
+		"import { withCodexAuthPoolEnv } from \"@dtechvision/fabrik-runtime/codex-auth\";\n" +
+		"import { prepareWorkspaces } from \"@dtechvision/fabrik-runtime/jj-shell\";\n" +
+		"import { createSmithers, Workflow, Task } from \"smithers-orchestrator\";\n" +
+		"import { z } from \"zod\";\n\n" +
+		"const smithersDbPath = process.env.SMITHERS_DB_PATH ?? \"workflows/runtime-package-check.db\";\n" +
+		"mkdirSync(dirname(smithersDbPath), { recursive: true });\n\n" +
+		"const { smithers, outputs } = createSmithers(\n" +
+		"  {\n" +
+		"    report: z.object({ codexHomeSet: z.boolean(), jjHelpersLoaded: z.boolean() }),\n" +
+		"  },\n" +
+		"  { dbPath: smithersDbPath },\n" +
+		");\n\n" +
+		"export default smithers(() => (\n" +
+		"  <Workflow name=\"runtime-package-check\">\n" +
+		"    <Task id=\"verify-runtime-package\" output={outputs.report}>\n" +
+		"      {async () => {\n" +
+		"        const env = withCodexAuthPoolEnv({});\n" +
+		"        const report = {\n" +
+		"          codexHomeSet: typeof env.CODEX_HOME === \"string\" && env.CODEX_HOME.length > 0,\n" +
+		"          jjHelpersLoaded: typeof prepareWorkspaces === \"function\",\n" +
+		"        };\n" +
+		"        console.log(JSON.stringify(report, null, 2));\n" +
+		"        return report;\n" +
+		"      }}\n" +
+		"    </Task>\n" +
+		"  </Workflow>\n" +
+		"));\n"
+
+	path := filepath.Join(t.TempDir(), "runtime-package-check.tsx")
+	if err := os.WriteFile(path, []byte(workflow), 0o644); err != nil {
+		t.Fatalf("write runtime package workflow fixture: %v", err)
 	}
 	return path
 }

@@ -1,4 +1,5 @@
-import { createSmithers, CodexAgent, Task, Workflow } from "smithers-orchestrator";
+import { createSmithers, Task, Workflow } from "smithers-orchestrator";
+import { createCodexAgentWithPool } from "@dtechvision/fabrik-runtime/codex-auth";
 import { z } from "zod";
 
 const { smithers, outputs } = createSmithers(
@@ -12,7 +13,7 @@ const { smithers, outputs } = createSmithers(
   { dbPath: process.env.SMITHERS_DB_PATH ?? "/workspace/.smithers/state.db" },
 );
 
-const agent = new CodexAgent({
+const agent = createCodexAgentWithPool({
   model: process.env.SMITHERS_MODEL,
   sandbox: "workspace-write",
   skipGitRepoCheck: true,

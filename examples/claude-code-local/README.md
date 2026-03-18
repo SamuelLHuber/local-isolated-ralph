@@ -28,4 +28,4 @@ fabrik run \
   --interactive=false
 ```
 
-Credentials are mounted at `/etc/fabrik/credentials/` in the pod. See [`src/fabrik-runtime`](../../src/fabrik-runtime/) for runtime credential helpers.
+Credentials are mounted at `/etc/fabrik/credentials/` in the pod. Workflows should consume them via `@dtechvision/fabrik-runtime/...`; see [`src/fabrik-runtime`](../../src/fabrik-runtime/) for the runtime package surface.

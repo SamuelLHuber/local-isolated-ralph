@@ -129,6 +129,13 @@ Before publishing:
 
 Do not rely on implicit HEAD state or vague assumptions about what is being pushed.
 
+Release tags are part of publication and should follow the same discipline.
+
+- stable release tags like `v1.2.3` must point to a commit that is reachable from `master`
+- prerelease tags like `v1.2.3-rc.1` may be cut from feature branches when early distribution is intentional
+- release automation should enforce this rule instead of assuming a tag name alone is sufficient
+- if multiple artifacts share a release line, their published package or binary versions should stay aligned to the same tag version
+
 The publication step should make it obvious:
 
 - what change is being published,

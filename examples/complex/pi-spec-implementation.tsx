@@ -14,7 +14,11 @@ import { existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { z } from "zod";
-import { prepareWorkspaces, pushBookmark, snapshotChange } from "./utils/jj-shell";
+import {
+  prepareWorkspaces,
+  pushBookmark,
+  snapshotChange,
+} from "@dtechvision/fabrik-runtime/jj-shell";
 
 const WORKDIR_ROOT = process.cwd();
 const CONTROL_ROOT = "/workspace/.fabrik";
