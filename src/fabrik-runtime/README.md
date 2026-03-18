@@ -33,7 +33,69 @@ or:
 npm install @dtechvision/fabrik-runtime
 ```
 
+Smithers workflows also need their normal workflow dependencies in the consuming repo:
+
+```bash
+bun add smithers-orchestrator zod
+```
+
+or:
+
+```bash
+npm install smithers-orchestrator zod
+```
+
 Package releases follow the same `v*` tag version as the Fabrik CLI release flow.
+
+## Smithers Integration
+
+Use the package from ordinary Smithers workflows:
+
+```ts
+/** @jsxImportSource smithers-orchestrator */
+import { createSmithers, Task, Workflow } from "smithers-orchestrator";
+import { z } from "zod";
+import { withCodexAuthPoolEnv } from "@dtechvision/fabrik-runtime/codex-auth";
+import { prepareWorkspaces } from "@dtechvision/fabrik-runtime/jj-shell";
+
+const { smithers, outputs } = createSmithers(
+  {
+    report: z.object({
+      codexHomeSet: z.boolean(),
+      jjHelpersLoaded: z.boolean(),
+    }),
+  },
+  { dbPath: process.env.SMITHERS_DB_PATH ?? ".smithers/runtime-check.db" },
+);
+
+export default smithers(() => (
+  <Workflow name="runtime-package-check">
+    <Task id="verify" output={outputs.report}>
+      {async () => {
+        const env = withCodexAuthPoolEnv({});
+        return {
+          codexHomeSet: typeof env.CODEX_HOME === "string" && env.CODEX_HOME.length > 0,
+          jjHelpersLoaded: typeof prepareWorkspaces === "function",
+        };
+      }}
+    </Task>
+  </Workflow>
+));
+```
+
+Run it locally with Smithers from a repo that has installed:
+
+- `@dtechvision/fabrik-runtime`
+- `smithers-orchestrator`
+- `zod`
+
+Then:
+
+```bash
+bunx smithers run path/to/workflow.tsx --run-id runtime-package-check
+```
+
+The workflow file should live in the consuming project tree so normal Node/Bun package resolution can find the installed dependencies.
 
 ## Credentials
 
@@ -101,6 +163,17 @@ FABRIK_K3D_E2E=1 FABRIK_K3D_CLUSTER=dev-single \
 ```
 
 The complex sample in [examples/complex/README.md](/Users/samuel/git/local-isolated-ralph/examples/complex/README.md) shows how workflow code consumes the package surface in practice.
+
+Local Smithers CLI verification:
+
+```bash
+bunx smithers run path/to/workflow.tsx --run-id runtime-package-check
+```
+
+The expected result is a successful run whose output reports:
+
+- `codexHomeSet: true`
+- `jjHelpersLoaded: true`
 
 ## Precedence
 

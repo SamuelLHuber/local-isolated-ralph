@@ -1,6 +1,11 @@
-# Complex Sample: PI Spec Implementation
+# Complex Samples
 
-This sample demonstrates an end-to-end implementation pipeline using Fabrik CLI with external repo awareness, plus reusable workflow helpers from `@dtechvision/fabrik-runtime`.
+This directory contains end-to-end workflow samples for Fabrik CLI plus reusable workflow helpers from `@dtechvision/fabrik-runtime`.
+
+## Included Samples
+
+- `pi-spec-implementation.tsx`: PI-based multi-phase repo implementation pipeline
+- `codex-auth-rotation-sample.tsx`: minimal Codex workflow using the shared auth-pool helper
 
 ## What This Sample Demonstrates
 
@@ -8,6 +13,7 @@ This sample demonstrates an end-to-end implementation pipeline using Fabrik CLI 
 - **Deterministic JJ operations**: Uses helper utilities for workspace preparation and bookmark pushing
 - **Multi-phase validation**: Implements discover → implement → validate → review cycles
 - **Self-contained execution**: Only workflow code and direct imports are bundled; repo specs come from `--jj-repo`
+- **Codex auth rotation**: Codex workflows can import the runtime helper and rotate across mounted `auth.json` / `*.auth.json` pools
 
 ## Prerequisites
 
@@ -16,7 +22,7 @@ This sample demonstrates an end-to-end implementation pipeline using Fabrik CLI 
 - Fireworks API key (for the PI agent)
 - `fabrik-credentials` secret in `fabrik-system` with required API keys
 
-## Usage
+## PI Workflow Usage
 
 ```bash
 fabrik run \
@@ -34,6 +40,38 @@ fabrik run \
   --accept-filtered-sync \
   --wait
 ```
+
+## Codex Auth Rotation Usage
+
+Use this sample when you want the smallest checked-in workflow that proves `@dtechvision/fabrik-runtime/codex-auth` is available in the runtime image.
+
+Run with a cluster-shared credential bundle:
+
+```bash
+fabrik run \
+  --run-id codex-rotation-sample-$(date +%s) \
+  --spec specs/051-k3s-orchestrator.md \
+  --project codex-rotation-sample \
+  --env dev \
+  --workflow-path examples/complex/codex-auth-rotation-sample.tsx \
+  --input-json '{}' \
+  --image fabrik-smithers@sha256:<digest> \
+  --namespace fabrik-runs \
+  --accept-filtered-sync \
+  --wait
+```
+
+Verify the run afterwards:
+
+```bash
+fabrik runs inspect --id <run-id>
+fabrik run logs --id <run-id> --follow
+```
+
+In the logs you should see the runtime helper lines:
+
+- `codex auth rotation ...`
+- `codex auth pool summary: ...`
 
 ## Environment Contract
 
@@ -59,6 +97,7 @@ The workflow receives these Fabrik-injected variables:
 
 ```
 examples/complex/
+├── codex-auth-rotation-sample.tsx  # Minimal Codex sample using @dtechvision/fabrik-runtime/codex-auth
 ├── pi-spec-implementation.tsx    # Main workflow entry point
 └── utils/
     └── codex-auth-rotation.ts    # Backwards-compatible re-export from @dtechvision/fabrik-runtime/codex-auth
@@ -113,3 +152,10 @@ FABRIK_K3D_E2E=1 FABRIK_K3D_CLUSTER=dev-single \
 ```
 
 That test proves a workflow can import `@dtechvision/fabrik-runtime/...` from the rebuilt Smithers image inside k3d.
+
+Focused local bundle verification for the checked-in complex samples:
+
+```bash
+cd src/fabrik-cli
+go test ./internal/run -run 'TestComplexSampleBundleContents|TestCodexRotationSampleBundleContents' -v
+```

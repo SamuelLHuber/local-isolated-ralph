@@ -183,6 +183,36 @@ func TestComplexSampleBundleContents(t *testing.T) {
 	}
 }
 
+func TestCodexRotationSampleBundleContents(t *testing.T) {
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		t.Skipf("cannot find repo root: %v", err)
+	}
+
+	workflowPath := filepath.Join(repoRoot, "examples", "complex", "codex-auth-rotation-sample.tsx")
+	if _, err := os.Stat(workflowPath); err != nil {
+		t.Skipf("codex rotation sample workflow not found at %s: %v", workflowPath, err)
+	}
+
+	bundle, err := resolveWorkflowBundle(workflowPath)
+	if err != nil {
+		t.Fatalf("resolveWorkflowBundle failed for codex rotation sample: %v", err)
+	}
+
+	if bundle.WorkdirPath != "workflows/codex-auth-rotation-sample.tsx" {
+		t.Fatalf("unexpected workdir path %q, want workflows/codex-auth-rotation-sample.tsx", bundle.WorkdirPath)
+	}
+
+	gotEntries := untarNames(t, bundle.ArchiveBase64)
+	wantEntries := []string{
+		"workflows/codex-auth-rotation-sample.tsx",
+	}
+	sort.Strings(gotEntries)
+	if !reflect.DeepEqual(gotEntries, wantEntries) {
+		t.Fatalf("archive entries mismatch\nwant: %#v\ngot: %#v", wantEntries, gotEntries)
+	}
+}
+
 // TestComplexSampleBundleExcludesParentDirectoryImports verifies that
 // the bundle resolution rejects attempts to import files outside the
 // workflow directory, ensuring specs and other repo content must come
