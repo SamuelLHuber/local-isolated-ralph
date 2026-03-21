@@ -79,7 +79,6 @@ jobs:
 
       - name: Publish @dtechvision/fabrik-runtime
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           PACKAGE_VERSION: ${{ needs.validate-release-target.outputs.version }}
         run: |
           PACKAGE_VERSION="$PACKAGE_VERSION" node scripts/publish.mjs

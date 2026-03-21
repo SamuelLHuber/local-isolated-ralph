@@ -29,6 +29,8 @@ To test smithers for running workflows like coding a simple hello world page loc
 
 For the compiled `fabrik` CLI install path and release artifact names, see [`src/fabrik-cli/docs/getting-started.md`](/Users/samuel/git/local-isolated-ralph/src/fabrik-cli/docs/getting-started.md).
 
+For the published workflow runtime package, see [`src/fabrik-runtime/README.md`](/Users/samuel/git/local-isolated-ralph/src/fabrik-runtime/README.md) and npm package `@dtechvision/fabrik-runtime`.
+
 ## Releasing
 
 `fabrik` v0.1.0 is distributed through GitHub Releases.
