@@ -10,7 +10,7 @@ const (
 	sharedCredentialMountPath          = "/var/run/fabrik/credentials/shared"
 	sharedCredentialVolume             = "fabrik-credentials"
 	sharedCredentialSecretName         = sharedCredentialDefaultSecretName
-	defaultSharedCredentialHelperImage = "bitnami/kubectl:1.32.4"
+	defaultSharedCredentialHelperImage = "bitnami/kubectl:latest"
 	sharedCredentialHelperImageEnv     = "FABRIK_SHARED_CREDENTIAL_HELPER_IMAGE"
 	sharedCredentialSyncInterval       = "5"
 	sharedCredentialSyncMaxFailures    = "3"

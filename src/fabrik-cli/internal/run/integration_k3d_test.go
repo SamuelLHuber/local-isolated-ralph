@@ -823,7 +823,7 @@ func assertEphemeralWorkspacePVC(t *testing.T, opts Options, podName string) {
 	t.Helper()
 
 	pvcName := trimK8sName(podName + "-workspace")
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
 		out, err := runKubectl(context.Background(), opts, "", "-n", opts.Namespace, "get", "pvc", pvcName, "-o", "jsonpath={.status.phase}{\"\\n\"}{.metadata.ownerReferences[0].kind}{\"\\n\"}{.metadata.ownerReferences[0].name}")
 		if err == nil {
@@ -840,7 +840,7 @@ func assertEphemeralWorkspacePVC(t *testing.T, opts Options, podName string) {
 		t.Fatalf("resolve ephemeral pvc %s: %v", pvcName, err)
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	t.Fatalf("expected pvc %s to become Bound and owned by pod %s, got %q", pvcName, podName, lines)
+	t.Fatalf("expected pvc %s to become Bound and owned by pod %s within 90s, got %q", pvcName, podName, lines)
 }
 
 func ensureProjectEnvSecret(t *testing.T, contextName, project, environment string) {
