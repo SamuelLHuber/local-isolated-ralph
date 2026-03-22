@@ -7,6 +7,13 @@ import {
   getCredentialMountPath,
   type FailureKind,
 } from "./credential-pool";
+import {
+  recordCodexAuthExhausted,
+  recordCodexAuthFailure,
+  recordCodexAuthPoolSnapshot,
+  recordCodexAuthRotation,
+  type CodexAuthBlockedDetails,
+} from "./codex-auth-telemetry";
 
 const DEFAULT_CODEX_DIR = resolve(process.env.HOME ?? "", ".codex");
 
@@ -23,11 +30,12 @@ export const CODEX_AUTH_HOME = resolve(
 );
 
 const NOTIFY_WEBHOOK_URL = process.env.CODEX_AUTH_NOTIFY_WEBHOOK_URL?.trim() ?? "";
-const NOTIFY_CLUSTER = process.env.KUBERNETES_NAMESPACE?.trim() ?? "";
-const NOTIFY_RUN_ID = process.env.SMITHERS_RUN_ID?.trim() ?? "";
+
+const getNotifyCluster = () => process.env.KUBERNETES_NAMESPACE?.trim() ?? "";
+const getNotifyRunID = () => process.env.SMITHERS_RUN_ID?.trim() ?? "";
 
 const AUTH_ROTATE_PATTERN =
-  /no last agent message|usage limit|quota|rate limit|insufficient (?:credits|balance|quota)|payment required|billing|exceeded.*(quota|limit)|not signed in|please run 'codex login'|unauthorized|authentication required|authentication failed|forbidden|invalid (?:api key|token|credentials)|expired (?:token|credentials)/i;
+  /no last agent message|usage limit|quota|rate limit|insufficient (?:credits|balance|quota)|payment required|billing|exceeded.*(quota|limit)|not signed in|please run 'codex login'|unauthorized|authentication required|authentication failed|forbidden|invalid (?:api key|token|credentials)|expired (?:token|credentials)|refresh_token_reused|refresh token has already been used|could not be refreshed because your refresh token was already used/i;
 const AUTH_REFRESH_REUSED_PATTERN =
   /refresh_token_reused|refresh token has already been used|could not be refreshed because your refresh token was already used/i;
 
@@ -46,6 +54,31 @@ const ensureCodexHome = () => {
   }
 };
 
+export class CodexAuthBlockedError extends Error {
+  readonly code = "CODEX_AUTH_BLOCKED" as const;
+  readonly reason = "auth_pool_exhausted" as const;
+  readonly details: CodexAuthBlockedDetails;
+  readonly runId?: string;
+  readonly namespace?: string;
+
+  constructor(args: {
+    message?: string;
+    details: CodexAuthBlockedDetails;
+    runId?: string;
+    namespace?: string;
+    cause?: unknown;
+  }) {
+    super(args.message ?? "Codex auth pool exhausted");
+    this.name = "CodexAuthBlockedError";
+    this.details = args.details;
+    this.runId = args.runId;
+    this.namespace = args.namespace;
+    if (args.cause !== undefined) {
+      (this as Error & { cause?: unknown }).cause = args.cause;
+    }
+  }
+}
+
 let authPool = listAuthFiles();
 let authIndex = 0;
 let activeAuth = "";
@@ -58,12 +91,62 @@ export function resetCodexAuthStateForTests(): void {
   authFailures.clear();
 }
 
+const telemetryContext = () => ({
+  runId: getNotifyRunID() || undefined,
+  namespace: getNotifyCluster() || undefined,
+});
+
+const getBlockedDetails = (): CodexAuthBlockedDetails => {
+  authPool = listAuthFiles();
+  const failedAuths = authPool
+    .filter((path) => authFailures.has(path))
+    .map((path) => ({ authName: basename(path), kind: authFailures.get(path)! }));
+  return {
+    total: authPool.length,
+    failed: failedAuths.length,
+    remaining: Math.max(authPool.length - failedAuths.length, 0),
+    activeAuthName: activeAuth ? basename(activeAuth) : null,
+    failedAuths,
+  };
+};
+
+const writeBlockerArtifact = (details: CodexAuthBlockedDetails) => {
+  const smithersHome = resolve(process.env.SMITHERS_HOME ?? ".");
+  const blockerPath = resolve(smithersHome, ".smithers", "blockers", "codex-auth.json");
+  mkdirSync(resolve(blockerPath, ".."), { recursive: true });
+  writeFileSync(
+    blockerPath,
+    JSON.stringify(
+      {
+        kind: "auth_pool_exhausted",
+        resumeable: true,
+        runId: getNotifyRunID() || undefined,
+        namespace: getNotifyCluster() || undefined,
+        details,
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+};
+
 const setActiveAuth = (authPath: string, reason: string) => {
   ensureCodexHome();
+  const previousAuth = activeAuth ? basename(activeAuth) : undefined;
   const authContents = readFileSync(authPath, "utf8");
   writeFileSync(resolve(CODEX_AUTH_HOME, "auth.json"), authContents, "utf8");
   const previous = activeAuth ? ` from ${basename(activeAuth)}` : "";
   activeAuth = authPath;
+  recordCodexAuthRotation(
+    {
+      fromAuthName: previousAuth,
+      toAuthName: basename(authPath),
+      reason,
+    },
+    getBlockedDetails(),
+    telemetryContext(),
+  );
   console.error(
     `[fabrik-runtime] codex auth rotation${previous} -> ${basename(authPath)} (${reason})`,
   );
@@ -82,15 +165,12 @@ const initAuthPool = () => {
 };
 
 const logAuthSummary = () => {
-  const total = authPool.length;
-  const failed = [...authFailures.entries()].map(
-    ([path, status]) => `${basename(path)}:${status}`,
-  );
-  const failedCount = authFailures.size;
-  const remaining = Math.max(total - failedCount, 0);
-  const active = activeAuth ? basename(activeAuth) : "none";
+  const details = getBlockedDetails();
+  recordCodexAuthPoolSnapshot(details, telemetryContext());
+  const failed = details.failedAuths.map(({ authName, kind }) => `${authName}:${kind}`);
+  const active = details.activeAuthName ?? "none";
   console.error(
-    `[fabrik-runtime] codex auth pool summary: total=${total} failed=${failedCount} remaining=${remaining} active=${active}`,
+    `[fabrik-runtime] codex auth pool summary: total=${details.total} failed=${details.failed} remaining=${details.remaining} active=${active}`,
   );
   if (failed.length > 0) {
     console.error(`[fabrik-runtime] failed auths: ${failed.join(", ")}`);
@@ -205,6 +285,11 @@ export class RotatingCodexAgent {
         if (activeAuth) {
           const kind = classifyFailure(message);
           authFailures.set(activeAuth, kind);
+          recordCodexAuthFailure(
+            { authName: basename(activeAuth), kind },
+            getBlockedDetails(),
+            telemetryContext(),
+          );
           if (AUTH_REFRESH_REUSED_PATTERN.test(message)) {
             console.error("[fabrik-runtime] codex refresh token reused; re-auth required");
           }
@@ -215,17 +300,35 @@ export class RotatingCodexAgent {
               reason: "codex generate failed and rotation was requested",
               kind,
               message,
-              clusterNamespace: NOTIFY_CLUSTER || undefined,
-              runId: NOTIFY_RUN_ID || undefined,
+              clusterNamespace: getNotifyCluster() || undefined,
+              runId: getNotifyRunID() || undefined,
             },
             this.onAuthFailure,
           );
         }
         if (!rotateAuth("codex auth / usage failure")) {
-          break;
+          const details = getBlockedDetails();
+          recordCodexAuthExhausted(details, telemetryContext());
+          writeBlockerArtifact(details);
+          throw new CodexAuthBlockedError({
+            message: "Codex auth pool exhausted",
+            details,
+            runId: getNotifyRunID() || undefined,
+            namespace: getNotifyCluster() || undefined,
+            cause: err,
+          });
         }
       }
     }
-    throw lastError ?? new Error("Codex auth pool exhausted");
+    const details = getBlockedDetails();
+    recordCodexAuthExhausted(details, telemetryContext());
+    writeBlockerArtifact(details);
+    throw new CodexAuthBlockedError({
+      message: "Codex auth pool exhausted",
+      details,
+      runId: getNotifyRunID() || undefined,
+      namespace: getNotifyCluster() || undefined,
+      cause: lastError,
+    });
   }
 }

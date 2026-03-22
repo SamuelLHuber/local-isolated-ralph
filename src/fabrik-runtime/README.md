@@ -105,17 +105,30 @@ const rotated = await pool.handleError(err);
 Create a Codex agent with auth rotation:
 
 ```ts
-import { createCodexAgentWithPool } from "@dtechvision/fabrik-runtime/codex-auth";
+import {
+  CodexAuthBlockedError,
+  createCodexAgentWithPool,
+} from "@dtechvision/fabrik-runtime/codex-auth";
 
 const codex = createCodexAgentWithPool({
   model: "gpt-5",
   cwd: process.cwd(),
   env: {},
 });
+
+try {
+  await codex.generate({ prompt: "Hello" });
+} catch (err) {
+  if (err instanceof CodexAuthBlockedError) {
+    // resumable auth exhaustion; restore credentials and resume the run
+  }
+  throw err;
+}
 ```
 
 ## Notes
 
+- Codex auth rotation emits OTEL metrics/events when an OpenTelemetry SDK is configured.
 - Fabrik runtime images may already ship this package.
 - Package versions follow the same `v*` tag line as Fabrik releases.
 - Prefer aligned Fabrik image and package versions when both are in use.

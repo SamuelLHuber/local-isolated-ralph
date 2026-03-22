@@ -29,9 +29,11 @@ export {
   withCodexAuthPoolEnv,
   createCodexAgentWithPool,
   RotatingCodexAgent,
+  CodexAuthBlockedError,
   type AuthFailureKind,
   type AuthFailureEvent,
   type RotatingCodexAgentOptions,
+  type CodexAuthBlockedDetails,
 } from "./codex-auth";
 
 export {
