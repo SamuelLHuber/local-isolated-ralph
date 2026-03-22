@@ -22,6 +22,12 @@ type JjResult = {
   exitCode: number;
 };
 
+const PUSH_RETRY_LIMIT = 3;
+const STALE_REF_PATTERNS = [
+  "unexpectedly moved on the remote",
+  "reason: stale info",
+];
+
 async function jj(args: string[], cwd: string): Promise<JjResult> {
   const result = await $`jj ${args}`.cwd(cwd).nothrow().quiet();
   return {
@@ -30,6 +36,47 @@ async function jj(args: string[], cwd: string): Promise<JjResult> {
     stderr: result.stderr.toString().trim(),
     exitCode: result.exitCode,
   };
+}
+
+function isStaleRefPushFailure(result: JjResult): boolean {
+  const text = `${result.stdout}\n${result.stderr}`;
+  return STALE_REF_PATTERNS.some((pattern) => text.includes(pattern));
+}
+
+function summarizeJjResult(label: string, result: JjResult): string {
+  const details = [result.stdout, result.stderr].filter(Boolean).join(" | ");
+  return `${label} exit=${result.exitCode}${details ? ` ${details}` : ""}`;
+}
+
+async function hasConflicts(workspacePath: string): Promise<boolean> {
+  const conflicts = await jj(["log", "-r", "conflicts()", "--no-graph", "-T", "commit_id"], workspacePath);
+  if (!conflicts.ok) {
+    return true;
+  }
+  return conflicts.stdout.trim().length > 0;
+}
+
+async function trackRemoteBookmark(
+  workspacePath: string,
+  bookmarkName: string,
+): Promise<JjResult> {
+  return jj(["bookmark", "track", `glob:${bookmarkName}`, "--remote", "origin"], workspacePath);
+}
+
+async function setBookmarkToTarget(
+  workspacePath: string,
+  bookmarkName: string,
+  targetRev: string,
+): Promise<JjResult> {
+  const move = await jj(
+    ["bookmark", "set", bookmarkName, "-r", targetRev, "--allow-backwards"],
+    workspacePath,
+  );
+  if (move.ok) {
+    return move;
+  }
+
+  return jj(["bookmark", "create", "-r", targetRev, bookmarkName], workspacePath);
 }
 
 export async function prepareWorkspaces(
@@ -137,76 +184,131 @@ export async function pushBookmark(
   ticketId: string,
 ): Promise<ReportOutput> {
   const targetRev = "@-";
-  const track = await jj(
-    ["bookmark", "track", bookmarkName, "--remote", "origin"],
-    workspacePath,
-  );
+  const track = await trackRemoteBookmark(workspacePath, bookmarkName);
   const trackSummary =
     track.ok || track.stderr === ""
       ? ""
       : ` Tracking remote bookmark reported: ${track.stderr}`;
 
-  const targetCommit = await jj(
-    ["log", "-r", targetRev, "--no-graph", "-T", "commit_id"],
-    workspacePath,
-  );
-  if (!targetCommit.ok || !targetCommit.stdout) {
-    return {
-      ticketId,
-      status: "blocked",
-      summary: `Failed to resolve target revision for bookmark push: ${targetCommit.stderr}`,
-    };
-  }
+  let lastAttemptSummary = "";
 
-  const move = await jj(
-    ["bookmark", "set", bookmarkName, "-r", targetRev, "--allow-backwards"],
-    workspacePath,
-  );
+  for (let attempt = 1; attempt <= PUSH_RETRY_LIMIT; attempt += 1) {
+    if (attempt > 1) {
+      const fetch = await jj(["git", "fetch"], workspacePath);
+      if (!fetch.ok) {
+        return {
+          ticketId,
+          status: "blocked",
+          summary:
+            `Bookmark push retry ${attempt}/${PUSH_RETRY_LIMIT} failed during fetch: ${fetch.stderr || fetch.stdout}.` +
+            trackSummary +
+            (lastAttemptSummary ? ` Last push state: ${lastAttemptSummary}` : ""),
+        };
+      }
 
-  if (!move.ok) {
-    const create = await jj(
-      ["bookmark", "create", "-r", targetRev, bookmarkName],
+      const retryTrack = await trackRemoteBookmark(workspacePath, bookmarkName);
+      if (!retryTrack.ok && retryTrack.stderr !== "") {
+        lastAttemptSummary = `${lastAttemptSummary} ${summarizeJjResult("track", retryTrack)}`.trim();
+      }
+
+      const rebase = await jj(
+        ["rebase", "-s", `roots(${bookmarkName}@origin..${targetRev})`, "-d", `${bookmarkName}@origin`],
+        workspacePath,
+      );
+      if (!rebase.ok) {
+        return {
+          ticketId,
+          status: "blocked",
+          summary:
+            `Bookmark push retry ${attempt}/${PUSH_RETRY_LIMIT} failed during rebase: ${rebase.stderr || rebase.stdout}.` +
+            trackSummary +
+            (lastAttemptSummary ? ` Last push state: ${lastAttemptSummary}` : ""),
+        };
+      }
+
+      if (await hasConflicts(workspacePath)) {
+        return {
+          ticketId,
+          status: "blocked",
+          summary:
+            `Bookmark push retry ${attempt}/${PUSH_RETRY_LIMIT} stopped after rebase conflict on '${bookmarkName}'.` +
+            ` ${summarizeJjResult("rebase", rebase)}` +
+            trackSummary,
+        };
+      }
+    }
+
+    const targetCommit = await jj(
+      ["log", "-r", targetRev, "--no-graph", "-T", "commit_id"],
       workspacePath,
     );
-    if (!create.ok) {
+    if (!targetCommit.ok || !targetCommit.stdout) {
       return {
         ticketId,
         status: "blocked",
-        summary: `Failed to set bookmark '${bookmarkName}': ${create.stderr}`,
+        summary: `Failed to resolve target revision for bookmark push: ${targetCommit.stderr}`,
       };
     }
-  }
 
-  const push = await jj(
-    ["git", "push", "--bookmark", bookmarkName],
-    workspacePath,
-  );
-  if (!push.ok) {
+    const move = await setBookmarkToTarget(workspacePath, bookmarkName, targetRev);
+    if (!move.ok) {
+      return {
+        ticketId,
+        status: "blocked",
+        summary: `Failed to set bookmark '${bookmarkName}': ${move.stderr}`,
+      };
+    }
+
+    const push = await jj(
+      ["git", "push", "--bookmark", bookmarkName],
+      workspacePath,
+    );
+    if (!push.ok) {
+      lastAttemptSummary = [
+        `attempt ${attempt}/${PUSH_RETRY_LIMIT}`,
+        summarizeJjResult("push", push),
+      ].join(" ");
+
+      if (isStaleRefPushFailure(push) && attempt < PUSH_RETRY_LIMIT) {
+        continue;
+      }
+
+      const exhausted = isStaleRefPushFailure(push) && attempt === PUSH_RETRY_LIMIT;
+      return {
+        ticketId,
+        status: "blocked",
+        summary:
+          `${exhausted ? `Bookmark push retries exhausted for '${bookmarkName}'.` : "Bookmark set but push failed:"} ${push.stderr || push.stdout}` +
+          trackSummary +
+          (lastAttemptSummary ? ` Last attempt: ${lastAttemptSummary}` : ""),
+      };
+    }
+
+    const remote = await $`git ls-remote origin refs/heads/${bookmarkName}`
+      .cwd(workspacePath)
+      .nothrow()
+      .quiet();
+    const remoteCommit = remote.stdout.toString().trim().split(/\s+/)[0] ?? "";
+    if (remote.exitCode !== 0 || remoteCommit !== targetCommit.stdout) {
+      return {
+        ticketId,
+        status: "blocked",
+        summary:
+          `Bookmark push returned success but remote ${bookmarkName} is ${remoteCommit || "missing"} instead of ${targetCommit.stdout}.` +
+          trackSummary,
+      };
+    }
+
     return {
       ticketId,
-      status: "blocked",
-      summary: `Bookmark set but push failed: ${push.stderr}${trackSummary}`,
-    };
-  }
-
-  const remote = await $`git ls-remote origin refs/heads/${bookmarkName}`
-    .cwd(workspacePath)
-    .nothrow()
-    .quiet();
-  const remoteCommit = remote.stdout.toString().trim().split(/\s+/)[0] ?? "";
-  if (remote.exitCode !== 0 || remoteCommit !== targetCommit.stdout) {
-    return {
-      ticketId,
-      status: "blocked",
-      summary:
-        `Bookmark push returned success but remote ${bookmarkName} is ${remoteCommit || "missing"} instead of ${targetCommit.stdout}.` +
-        trackSummary,
+      status: "done",
+      summary: `Pushed bookmark '${bookmarkName}' to origin at ${targetCommit.stdout}.${trackSummary}`,
     };
   }
 
   return {
     ticketId,
-    status: "done",
-    summary: `Pushed bookmark '${bookmarkName}' to origin at ${targetCommit.stdout}.${trackSummary}`,
+    status: "blocked",
+    summary: `Bookmark push retries exhausted for '${bookmarkName}'.${trackSummary}${lastAttemptSummary ? ` Last attempt: ${lastAttemptSummary}` : ""}`,
   };
 }
