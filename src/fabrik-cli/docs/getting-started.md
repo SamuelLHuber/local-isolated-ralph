@@ -118,12 +118,14 @@ Workflow-backed runs do not need a manual `--image` when the Smithers runtime im
 
 The default behavior is:
 
-- publish `k8s/Dockerfile` to `ghcr.io/<github-owner>/fabrik-smithers`
+- publish `k8s/Dockerfile` to `ghcr.io/<image-owner>/fabrik-smithers`
 - tag the image with the default branch name (`main` or `master`) and a `sha-<commit>` tag
 - when `fabrik run --workflow-path ...` is used without `--image`, the CLI:
-  - derives the GitHub owner from the local `origin` remote
-  - derives the default branch from `origin/HEAD`
-  - resolves `ghcr.io/<owner>/fabrik-smithers:<default-branch>` to a registry digest
+  - first checks `FABRIK_SMITHERS_IMAGE` for an explicit immutable image reference override
+  - otherwise checks `FABRIK_SMITHERS_REPO` for an explicit GHCR repository override such as `samuellhuber/fabrik-smithers`
+  - otherwise derives the GitHub owner from the local `origin` remote and uses `ghcr.io/<owner>/fabrik-smithers`
+  - derives the default branch from `origin/HEAD`, and falls back to `git remote show origin` when `origin/HEAD` is not configured
+  - resolves `ghcr.io/<repo>:<default-branch>` to a registry digest
   - dispatches the Job with the immutable digest reference
 
 This keeps the operator UX simple without violating the immutable-image rule.
@@ -131,7 +133,16 @@ This keeps the operator UX simple without violating the immutable-image rule.
 Override behavior:
 
 - set `FABRIK_SMITHERS_IMAGE` to force a specific image reference
-- pass `--image` explicitly to override both the env var and auto-resolution
+- set `FABRIK_SMITHERS_REPO` to force the GHCR repository used for auto-resolution when the image owner differs from the repo owner
+- pass `--image` explicitly to override both env vars and auto-resolution
+
+If origin default-branch detection still cannot be resolved, either:
+
+- run `git remote set-head origin <branch>` in the checkout, or
+- pass `--image`, or
+- set `FABRIK_SMITHERS_IMAGE`
+
+For private GHCR packages, the CLI uses `GITHUB_TOKEN` or `GH_TOKEN` during GHCR bearer-token exchange when resolving the digest.
 
 Recommended usage for production-like runs:
 

@@ -286,6 +286,43 @@ func TestValidateOptionsRejectsInvalidEnvironmentName(t *testing.T) {
 	}
 }
 
+func TestValidateOptionsAggregatesMissingRequiredFlags(t *testing.T) {
+	err := validateOptions(Options{})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	got := err.Error()
+	for _, want := range []string{"--run-id", "--spec", "--project", "--image", "--namespace", "--pvc-size", "--wait-timeout", "--job-command"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected aggregated error to mention %s, got %q", want, got)
+		}
+	}
+}
+
+func TestValidateOptionsAggregatesWorkflowSpecificMissingFlags(t *testing.T) {
+	dir := t.TempDir()
+	workflowPath := filepath.Join(dir, "workflow.tsx")
+	if err := os.WriteFile(workflowPath, []byte("export default {};"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := validateOptions(Options{
+		WorkflowPath: workflowPath,
+	})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	got := err.Error()
+	for _, want := range []string{"--run-id", "--spec", "--project", "--image", "--namespace", "--pvc-size", "--wait-timeout", "--input-json"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected aggregated error to mention %s, got %q", want, got)
+		}
+	}
+	if strings.Contains(got, "--job-command") {
+		t.Fatalf("did not expect workflow mode to require --job-command, got %q", got)
+	}
+}
+
 func TestValidateOptionsRequiresEnvWhenEnvFileIsSet(t *testing.T) {
 	dir := t.TempDir()
 	envFile := filepath.Join(dir, ".env.dispatch")

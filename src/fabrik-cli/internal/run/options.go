@@ -53,15 +53,41 @@ type Options struct {
 const envSecretNamespace = "fabrik-system"
 
 func validateOptions(opts Options) error {
+	missingFlags := make([]string, 0, 8)
 	if strings.TrimSpace(opts.RunID) == "" {
-		return errors.New("missing required flag: --run-id")
+		missingFlags = append(missingFlags, "--run-id")
 	}
 	if strings.TrimSpace(opts.SpecPath) == "" {
-		return errors.New("missing required flag: --spec")
+		missingFlags = append(missingFlags, "--spec")
 	}
 	if strings.TrimSpace(opts.Project) == "" {
-		return errors.New("missing required flag: --project")
+		missingFlags = append(missingFlags, "--project")
 	}
+	if strings.TrimSpace(opts.Image) == "" {
+		missingFlags = append(missingFlags, "--image")
+	}
+	if strings.TrimSpace(opts.Namespace) == "" {
+		missingFlags = append(missingFlags, "--namespace")
+	}
+	if strings.TrimSpace(opts.PVCSize) == "" {
+		missingFlags = append(missingFlags, "--pvc-size")
+	}
+	if strings.TrimSpace(opts.WaitTimeout) == "" {
+		missingFlags = append(missingFlags, "--wait-timeout")
+	}
+	if strings.TrimSpace(opts.JobCommand) == "" && strings.TrimSpace(opts.WorkflowPath) == "" && !opts.RenderOnly && !opts.DryRun {
+		missingFlags = append(missingFlags, "--job-command")
+	}
+	if strings.TrimSpace(opts.WorkflowPath) != "" && strings.TrimSpace(opts.InputJSON) == "" {
+		missingFlags = append(missingFlags, "--input-json")
+	}
+	if len(missingFlags) == 1 {
+		return fmt.Errorf("missing required flag: %s", missingFlags[0])
+	}
+	if len(missingFlags) > 1 {
+		return fmt.Errorf("missing required flags: %s", strings.Join(missingFlags, ", "))
+	}
+
 	if !projectIDPattern.MatchString(opts.Project) || len(opts.Project) > 63 {
 		return errors.New("project ID must be DNS-1123 compliant: lowercase alphanumeric + hyphens, max 63 chars")
 	}
@@ -104,20 +130,8 @@ func validateOptions(opts Options) error {
 	if opts.DisableSharedCredentials && sharedCredentialSources > 0 {
 		return errors.New("--disable-shared-credentials cannot be combined with explicit shared credential selection")
 	}
-	if strings.TrimSpace(opts.Image) == "" {
-		return errors.New("missing required flag: --image")
-	}
 	if !opts.RenderOnly && !isImmutableImageReference(opts.Image) {
 		return errors.New("image must be immutable: use a digest reference like repo/image@sha256:<digest>")
-	}
-	if strings.TrimSpace(opts.Namespace) == "" {
-		return errors.New("missing required flag: --namespace")
-	}
-	if strings.TrimSpace(opts.PVCSize) == "" {
-		return errors.New("missing required flag: --pvc-size")
-	}
-	if strings.TrimSpace(opts.JobCommand) == "" && strings.TrimSpace(opts.WorkflowPath) == "" && !opts.RenderOnly && !opts.DryRun {
-		return errors.New("missing required flag: --job-command")
 	}
 	if opts.IsCron() {
 		if strings.TrimSpace(opts.CronSchedule) == "" {
@@ -131,15 +145,9 @@ func validateOptions(opts Options) error {
 		if _, err := os.Stat(opts.WorkflowPath); err != nil {
 			return fmt.Errorf("failed to read workflow path %q: %w", opts.WorkflowPath, err)
 		}
-		if strings.TrimSpace(opts.InputJSON) == "" {
-			return errors.New("missing required flag: --input-json when --workflow-path is set")
-		}
 		if !opts.RenderOnly && !opts.DryRun && !opts.AcceptFilteredSync && !opts.Interactive {
 			return errors.New("workflow dispatch requires explicit acknowledgement of filtered artifact sync: pass --accept-filtered-sync or run interactively")
 		}
-	}
-	if strings.TrimSpace(opts.WaitTimeout) == "" {
-		return errors.New("missing required flag: --wait-timeout")
 	}
 	if err := validateKubeContext(opts.KubeContext); err != nil {
 		return err

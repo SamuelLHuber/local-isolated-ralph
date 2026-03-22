@@ -48,7 +48,7 @@ func newRunCommand(runMode string) *cobra.Command {
 	flags.StringVar(&opts.SharedCredentialSecret, "shared-credential-secret", "", "Existing shared credential Secret in fabrik-system to mirror and mount for this run")
 	flags.StringVar(&opts.SharedCredentialFile, "shared-credential-file", "", "Local file to import into a run-scoped shared credential Secret override")
 	flags.StringVar(&opts.SharedCredentialDir, "shared-credential-dir", "", "Local directory to import into a run-scoped shared credential Secret override")
-	flags.StringVar(&opts.Image, "image", "", "Immutable image reference for the job; optional in workflow mode when GHCR auto-resolution is configured")
+	flags.StringVar(&opts.Image, "image", "", "Immutable image reference for the job; optional in workflow mode when GHCR auto-resolution is configured via FABRIK_SMITHERS_IMAGE or FABRIK_SMITHERS_REPO")
 	flags.StringVar(&opts.CronSchedule, "cron", "", "Cron schedule for a recurring CronJob instead of a one-shot Job")
 	flags.StringVar(&opts.WorkflowPath, "workflow-path", "", "Path to a local workflow file to mount into the job")
 	flags.StringVar(&opts.InputJSON, "input-json", "", "JSON input passed to Smithers when using --workflow-path")

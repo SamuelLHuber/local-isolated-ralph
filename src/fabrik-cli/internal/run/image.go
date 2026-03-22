@@ -15,6 +15,7 @@ import (
 const (
 	defaultWorkflowImageName = "fabrik-smithers"
 	defaultWorkflowImageEnv  = "FABRIK_SMITHERS_IMAGE"
+	defaultWorkflowRepoEnv   = "FABRIK_SMITHERS_REPO"
 )
 
 var manifestAcceptHeader = strings.Join([]string{
@@ -50,7 +51,7 @@ func resolveDefaultWorkflowImage(ctx context.Context) (string, error) {
 		return override, nil
 	}
 
-	owner, err := repositoryOwnerFromOrigin(ctx)
+	repository, err := defaultWorkflowRepository(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -60,8 +61,23 @@ func resolveDefaultWorkflowImage(ctx context.Context) (string, error) {
 		return "", err
 	}
 
-	repository := strings.ToLower(owner) + "/" + defaultWorkflowImageName
 	return resolveGHCRDigest(ctx, repository, tag)
+}
+
+func defaultWorkflowRepository(ctx context.Context) (string, error) {
+	if override := strings.TrimSpace(os.Getenv(defaultWorkflowRepoEnv)); override != "" {
+		repository := strings.Trim(strings.ToLower(override), "/")
+		if repository == "" {
+			return "", fmt.Errorf("%s is set but empty", defaultWorkflowRepoEnv)
+		}
+		return repository, nil
+	}
+
+	owner, err := repositoryOwnerFromOrigin(ctx)
+	if err != nil {
+		return "", err
+	}
+	return strings.ToLower(owner) + "/" + defaultWorkflowImageName, nil
 }
 
 func repositoryOwnerFromOrigin(ctx context.Context) (string, error) {
@@ -107,15 +123,35 @@ func ownerFromGitHubPath(path string) (string, error) {
 func defaultOriginBranchTag(ctx context.Context) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
 	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve origin HEAD branch: %w", err)
+	if err == nil {
+		return normalizeBranchTag(string(out))
 	}
 
-	value := strings.TrimSpace(string(out))
+	fallbackCmd := exec.CommandContext(ctx, "git", "remote", "show", "origin")
+	fallbackOut, fallbackErr := fallbackCmd.Output()
+	if fallbackErr == nil {
+		for _, line := range strings.Split(string(fallbackOut), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if !strings.HasPrefix(trimmed, "HEAD branch:") {
+				continue
+			}
+			branch := strings.TrimSpace(strings.TrimPrefix(trimmed, "HEAD branch:"))
+			if branch == "" || branch == "(unknown)" {
+				break
+			}
+			return normalizeBranchTag(branch)
+		}
+	}
+
+	return "", fmt.Errorf("failed to resolve origin default branch: origin/HEAD is not set; run 'git remote set-head origin <branch>' or pass --image/%s (symbolic-ref error: %w)", defaultWorkflowImageEnv, err)
+}
+
+func normalizeBranchTag(value string) (string, error) {
+	value = strings.TrimSpace(value)
 	value = strings.TrimPrefix(value, "origin/")
 	value = strings.ReplaceAll(value, "/", "-")
 	if value == "" {
-		return "", fmt.Errorf("origin HEAD branch is empty")
+		return "", fmt.Errorf("origin default branch is empty")
 	}
 	return value, nil
 }
@@ -360,6 +396,7 @@ func requestBearerToken(ctx context.Context, client *http.Client, challenge bear
 	if err != nil {
 		return "", fmt.Errorf("failed to create token request: %w", err)
 	}
+	applyRegistryTokenAuth(req, tokenURL)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -385,4 +422,23 @@ func requestBearerToken(ctx context.Context, client *http.Client, challenge bear
 	}
 
 	return token, nil
+}
+
+func applyRegistryTokenAuth(req *http.Request, tokenURL *url.URL) {
+	if req == nil || tokenURL == nil {
+		return
+	}
+	if !strings.EqualFold(tokenURL.Hostname(), "ghcr.io") {
+		return
+	}
+
+	token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
+	if token == "" {
+		token = strings.TrimSpace(os.Getenv("GH_TOKEN"))
+	}
+	if token == "" {
+		return
+	}
+
+	req.SetBasicAuth("x-access-token", token)
 }

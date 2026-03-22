@@ -101,7 +101,7 @@ func resolveWorkflowInputs(ctx context.Context, opts Options) (Options, error) {
 	if strings.TrimSpace(opts.Image) == "" {
 		opts.Image, err = resolveDefaultWorkflowImage(ctx)
 		if err != nil {
-			return Options{}, err
+			return Options{}, fmt.Errorf("resolve default workflow image: %w", err)
 		}
 	}
 	return opts, nil

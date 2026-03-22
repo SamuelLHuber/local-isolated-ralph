@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strings"
 	"testing"
 )
@@ -51,6 +53,56 @@ func TestParseImageReferenceDockerHubLibraryImage(t *testing.T) {
 	}
 	if ref.Reference != "3.20" {
 		t.Fatalf("expected tag 3.20, got %q", ref.Reference)
+	}
+}
+
+func TestDefaultWorkflowRepositoryUsesOverride(t *testing.T) {
+	if err := os.Setenv(defaultWorkflowRepoEnv, "Samuellhuber/custom-smithers"); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Unsetenv(defaultWorkflowRepoEnv)
+
+	repository, err := defaultWorkflowRepository(context.Background())
+	if err != nil {
+		t.Fatalf("expected success, got error: %v", err)
+	}
+	if repository != "samuellhuber/custom-smithers" {
+		t.Fatalf("expected normalized repository override, got %q", repository)
+	}
+}
+
+func TestNormalizeBranchTag(t *testing.T) {
+	tag, err := normalizeBranchTag("origin/feature/test")
+	if err != nil {
+		t.Fatalf("expected success, got error: %v", err)
+	}
+	if tag != "feature-test" {
+		t.Fatalf("expected feature-test, got %q", tag)
+	}
+}
+
+func TestApplyRegistryTokenAuthUsesGitHubTokenForGHCR(t *testing.T) {
+	if err := os.Setenv("GITHUB_TOKEN", "ghp_test_token"); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Unsetenv("GITHUB_TOKEN")
+
+	req, err := http.NewRequest(http.MethodGet, "https://ghcr.io/token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenURL, err := url.Parse("https://ghcr.io/token?service=ghcr.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	applyRegistryTokenAuth(req, tokenURL)
+	user, pass, ok := req.BasicAuth()
+	if !ok {
+		t.Fatal("expected basic auth to be set")
+	}
+	if user != "x-access-token" || pass != "ghp_test_token" {
+		t.Fatalf("unexpected basic auth credentials %q/%q", user, pass)
 	}
 }
 
