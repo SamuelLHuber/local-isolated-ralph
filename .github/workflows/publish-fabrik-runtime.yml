@@ -12,7 +12,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   validate-release-target:
@@ -80,5 +79,7 @@ jobs:
       - name: Publish @dtechvision/fabrik-runtime
         env:
           PACKAGE_VERSION: ${{ needs.validate-release-target.outputs.version }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "false"
         run: |
           PACKAGE_VERSION="$PACKAGE_VERSION" node scripts/publish.mjs
