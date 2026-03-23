@@ -121,14 +121,25 @@ try {
 } catch (err) {
   if (err instanceof CodexAuthBlockedError) {
     // resumable auth exhaustion; restore credentials and resume the run
+    console.log(err.details); // { total, failed, remaining, activeAuthName, failedAuths }
   }
   throw err;
 }
 ```
 
+Read the auth home directory at runtime (lazy, respects `CODEX_AUTH_HOME` env var):
+
+```ts
+import { getCodexAuthHome } from "@dtechvision/fabrik-runtime/codex-auth";
+
+const home = getCodexAuthHome(); // e.g. /tmp/codex-auth-pool
+```
+
 ## Notes
 
-- Codex auth rotation emits OTEL metrics/events when an OpenTelemetry SDK is configured.
+- Each `RotatingCodexAgent` instance owns its own pool state. Multiple agents in the same process do not interfere with each other.
+- Auth failures are tracked by file path + content hash, so replacing a credential file on disk clears its failure history.
+- Codex auth rotation emits OTEL metrics/events when an OpenTelemetry SDK is configured (events are attached to the active span, not standalone).
 - Fabrik runtime images may already ship this package.
 - Package versions follow the same `v*` tag line as Fabrik releases.
 - Prefer aligned Fabrik image and package versions when both are in use.

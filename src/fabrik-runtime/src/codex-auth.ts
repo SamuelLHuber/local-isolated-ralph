@@ -15,8 +15,15 @@ import {
   type CodexAuthBlockedDetails,
 } from "./codex-auth-telemetry";
 
+export type { CodexAuthBlockedDetails } from "./codex-auth-telemetry";
+
 const DEFAULT_CODEX_DIR = resolve(process.env.HOME ?? "", ".codex");
 
+// Resolution order:
+// 1. CODEX_AUTH_SOURCE_DIR — test/dev override
+// 2. FABRIK_SHARED_CREDENTIALS_DIR — production (set by fabrik-cli dispatch)
+// 3. credential mount path — fallback if directory exists
+// 4. ~/.codex — local dev default
 function getCodexAuthSourceDir(): string {
   const sourceDir =
     process.env.CODEX_AUTH_SOURCE_DIR ??
@@ -25,19 +32,20 @@ function getCodexAuthSourceDir(): string {
   return resolve(sourceDir);
 }
 
-export const CODEX_AUTH_HOME = resolve(
-  process.env.CODEX_AUTH_HOME ?? resolve(tmpdir(), "codex-auth-pool"),
-);
+export function getCodexAuthHome(): string {
+  return resolve(process.env.CODEX_AUTH_HOME ?? resolve(tmpdir(), "codex-auth-pool"));
+}
 
-const NOTIFY_WEBHOOK_URL = process.env.CODEX_AUTH_NOTIFY_WEBHOOK_URL?.trim() ?? "";
 
+const getNotifyWebhookUrl = () => process.env.CODEX_AUTH_NOTIFY_WEBHOOK_URL?.trim() ?? "";
 const getNotifyCluster = () => process.env.KUBERNETES_NAMESPACE?.trim() ?? "";
 const getNotifyRunID = () => process.env.SMITHERS_RUN_ID?.trim() ?? "";
 
-const AUTH_ROTATE_PATTERN =
-  /no last agent message|usage limit|quota|rate limit|insufficient (?:credits|balance|quota)|payment required|billing|exceeded.*(quota|limit)|not signed in|please run 'codex login'|unauthorized|authentication required|authentication failed|forbidden|invalid (?:api key|token|credentials)|expired (?:token|credentials)|refresh_token_reused|refresh token has already been used|could not be refreshed because your refresh token was already used/i;
-const AUTH_REFRESH_REUSED_PATTERN =
-  /refresh_token_reused|refresh token has already been used|could not be refreshed because your refresh token was already used/i;
+type AuthEntry = {
+  path: string;
+  authName: string;
+  contents: string;
+};
 
 const listAuthFiles = (): string[] => {
   const sourceDir = getCodexAuthSourceDir();
@@ -48,9 +56,9 @@ const listAuthFiles = (): string[] => {
     .sort();
 };
 
-const ensureCodexHome = () => {
-  if (!existsSync(CODEX_AUTH_HOME)) {
-    mkdirSync(CODEX_AUTH_HOME, { recursive: true });
+const ensureDir = (dir: string) => {
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
   }
 };
 
@@ -68,47 +76,18 @@ export class CodexAuthBlockedError extends Error {
     namespace?: string;
     cause?: unknown;
   }) {
-    super(args.message ?? "Codex auth pool exhausted");
+    super(args.message ?? "Codex auth pool exhausted", { cause: args.cause });
     this.name = "CodexAuthBlockedError";
     this.details = args.details;
     this.runId = args.runId;
     this.namespace = args.namespace;
-    if (args.cause !== undefined) {
-      (this as Error & { cause?: unknown }).cause = args.cause;
-    }
   }
-}
-
-let authPool = listAuthFiles();
-let authIndex = 0;
-let activeAuth = "";
-const authFailures = new Map<string, FailureKind>();
-
-export function resetCodexAuthStateForTests(): void {
-  authPool = [];
-  authIndex = 0;
-  activeAuth = "";
-  authFailures.clear();
 }
 
 const telemetryContext = () => ({
   runId: getNotifyRunID() || undefined,
   namespace: getNotifyCluster() || undefined,
 });
-
-const getBlockedDetails = (): CodexAuthBlockedDetails => {
-  authPool = listAuthFiles();
-  const failedAuths = authPool
-    .filter((path) => authFailures.has(path))
-    .map((path) => ({ authName: basename(path), kind: authFailures.get(path)! }));
-  return {
-    total: authPool.length,
-    failed: failedAuths.length,
-    remaining: Math.max(authPool.length - failedAuths.length, 0),
-    activeAuthName: activeAuth ? basename(activeAuth) : null,
-    failedAuths,
-  };
-};
 
 const writeBlockerArtifact = (details: CodexAuthBlockedDetails) => {
   const smithersHome = resolve(process.env.SMITHERS_HOME ?? ".");
@@ -119,7 +98,7 @@ const writeBlockerArtifact = (details: CodexAuthBlockedDetails) => {
     JSON.stringify(
       {
         kind: "auth_pool_exhausted",
-        resumeable: true,
+        resumable: true,
         runId: getNotifyRunID() || undefined,
         namespace: getNotifyCluster() || undefined,
         details,
@@ -131,72 +110,9 @@ const writeBlockerArtifact = (details: CodexAuthBlockedDetails) => {
   );
 };
 
-const setActiveAuth = (authPath: string, reason: string) => {
-  ensureCodexHome();
-  const previousAuth = activeAuth ? basename(activeAuth) : undefined;
-  const authContents = readFileSync(authPath, "utf8");
-  writeFileSync(resolve(CODEX_AUTH_HOME, "auth.json"), authContents, "utf8");
-  const previous = activeAuth ? ` from ${basename(activeAuth)}` : "";
-  activeAuth = authPath;
-  recordCodexAuthRotation(
-    {
-      fromAuthName: previousAuth,
-      toAuthName: basename(authPath),
-      reason,
-    },
-    getBlockedDetails(),
-    telemetryContext(),
-  );
-  console.error(
-    `[fabrik-runtime] codex auth rotation${previous} -> ${basename(authPath)} (${reason})`,
-  );
-};
-
-const initAuthPool = () => {
-  ensureCodexHome();
-  authPool = listAuthFiles();
-  if (authPool.length === 0 || activeAuth) return;
-  const defaultAuth = resolve(getCodexAuthSourceDir(), "auth.json");
-  if (existsSync(defaultAuth)) {
-    setActiveAuth(defaultAuth, "initial");
-    return;
-  }
-  setActiveAuth(authPool[0]!, "initial");
-};
-
-const logAuthSummary = () => {
-  const details = getBlockedDetails();
-  recordCodexAuthPoolSnapshot(details, telemetryContext());
-  const failed = details.failedAuths.map(({ authName, kind }) => `${authName}:${kind}`);
-  const active = details.activeAuthName ?? "none";
-  console.error(
-    `[fabrik-runtime] codex auth pool summary: total=${details.total} failed=${details.failed} remaining=${details.remaining} active=${active}`,
-  );
-  if (failed.length > 0) {
-    console.error(`[fabrik-runtime] failed auths: ${failed.join(", ")}`);
-  }
-};
-
-const rotateAuth = (reason: string): boolean => {
-  authPool = listAuthFiles();
-  if (authPool.length === 0) return false;
-  for (let i = 0; i < authPool.length; i += 1) {
-    const next = authPool[authIndex % authPool.length];
-    authIndex += 1;
-    if (next && next !== activeAuth && !authFailures.has(next)) {
-      setActiveAuth(next, reason);
-      logAuthSummary();
-      return true;
-    }
-  }
-  console.error("[fabrik-runtime] no codex auth left to rotate to");
-  logAuthSummary();
-  return false;
-};
-
 export const withCodexAuthPoolEnv = (env: Record<string, string>) => ({
   ...env,
-  CODEX_HOME: CODEX_AUTH_HOME,
+  CODEX_HOME: getCodexAuthHome(),
 });
 
 export type AuthFailureKind = FailureKind;
@@ -222,9 +138,10 @@ const notifyAuthFailure = async (
   if (onAuthFailure) {
     await onAuthFailure(event);
   }
-  if (!NOTIFY_WEBHOOK_URL) return;
+  const webhookUrl = getNotifyWebhookUrl();
+  if (!webhookUrl) return;
   try {
-    const response = await fetch(NOTIFY_WEBHOOK_URL, {
+    const response = await fetch(webhookUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(event),
@@ -255,6 +172,10 @@ export const createCodexAgentWithPool = (
 export class RotatingCodexAgent {
   private readonly inner: CodexAgent;
   private readonly onAuthFailure?: RotatingCodexAgentOptions["onAuthFailure"];
+  private authPool: AuthEntry[] = [];
+  private authIndex = 0;
+  private activeAuth: AuthEntry | null = null;
+  private readonly authFailures = new Map<string, FailureKind>();
 
   constructor(inner: CodexAgent, opts: RotatingCodexAgentOptions = {}) {
     this.inner = inner;
@@ -269,9 +190,136 @@ export class RotatingCodexAgent {
     return this.inner.tools;
   }
 
+  private failureKey(entry: AuthEntry): string {
+    return `${entry.path}:${entry.contents.length}:${Bun.hash(entry.contents)}`;
+  }
+
+  private scanAuthPool(): AuthEntry[] {
+    return listAuthFiles().map((path) => ({
+      path,
+      authName: basename(path),
+      contents: readFileSync(path, "utf8"),
+    }));
+  }
+
+  private refreshAuthPool(): void {
+    this.authPool = this.scanAuthPool();
+    if (!this.activeAuth) return;
+    const nextActive = this.authPool.find((entry) => entry.path === this.activeAuth?.path) ?? null;
+    this.activeAuth = nextActive;
+  }
+
+  private getBlockedDetails(): CodexAuthBlockedDetails {
+    this.refreshAuthPool();
+    const failedAuths = this.authPool
+      .filter((entry) => this.authFailures.has(this.failureKey(entry)))
+      .map((entry) => ({
+        authName: entry.authName,
+        kind: this.authFailures.get(this.failureKey(entry))!,
+      }));
+    return {
+      total: this.authPool.length,
+      failed: failedAuths.length,
+      remaining: Math.max(this.authPool.length - failedAuths.length, 0),
+      activeAuthName: this.activeAuth?.authName ?? null,
+      failedAuths,
+    };
+  }
+
+  private logAuthSummary(): void {
+    const details = this.getBlockedDetails();
+    recordCodexAuthPoolSnapshot(details, telemetryContext());
+    const failed = details.failedAuths.map(({ authName, kind }) => `${authName}:${kind}`);
+    const active = details.activeAuthName ?? "none";
+    console.error(
+      `[fabrik-runtime] codex auth pool summary: total=${details.total} failed=${details.failed} remaining=${details.remaining} active=${active}`,
+    );
+    if (failed.length > 0) {
+      console.error(`[fabrik-runtime] failed auths: ${failed.join(", ")}`);
+    }
+  }
+
+  /** Write the active auth file to the codex auth home dir without emitting telemetry or logs. */
+  private syncActiveAuthFile(entry: AuthEntry): void {
+    const home = getCodexAuthHome();
+    ensureDir(home);
+    writeFileSync(resolve(home, "auth.json"), entry.contents, "utf8");
+  }
+
+  /** Activate a credential: write file, update state, emit telemetry + log. */
+  private setActiveAuth(entry: AuthEntry, reason: string): void {
+    this.syncActiveAuthFile(entry);
+    const previousAuth = this.activeAuth?.authName;
+    const previous = previousAuth ? ` from ${previousAuth}` : "";
+    this.activeAuth = entry;
+    recordCodexAuthRotation(
+      {
+        fromAuthName: previousAuth,
+        toAuthName: entry.authName,
+        reason,
+      },
+      this.getBlockedDetails(),
+      telemetryContext(),
+    );
+    console.error(
+      `[fabrik-runtime] codex auth rotation${previous} -> ${entry.authName} (${reason})`,
+    );
+  }
+
+  private ensureActiveAuth(): void {
+    const home = getCodexAuthHome();
+    ensureDir(home);
+    this.refreshAuthPool();
+    if (this.authPool.length === 0) return;
+    const currentFailed =
+      this.activeAuth && this.authFailures.has(this.failureKey(this.activeAuth));
+    if (this.activeAuth && !currentFailed) {
+      // Re-sync file if contents changed on disk (operator rotated credentials),
+      // or if the file doesn't exist yet. No telemetry — this is not a rotation.
+      const authFile = resolve(home, "auth.json");
+      const onDisk = existsSync(authFile) ? readFileSync(authFile, "utf8") : null;
+      if (onDisk !== this.activeAuth.contents) {
+        this.syncActiveAuthFile(this.activeAuth);
+      }
+      return;
+    }
+    const defaultAuth = resolve(getCodexAuthSourceDir(), "auth.json");
+    const initial =
+      this.authPool.find((entry) => entry.path === defaultAuth && !this.authFailures.has(this.failureKey(entry))) ??
+      this.authPool.find((entry) => !this.authFailures.has(this.failureKey(entry)));
+    if (!initial) {
+      this.activeAuth = this.authPool.find((entry) => entry.path === this.activeAuth?.path) ?? null;
+      return;
+    }
+    const reason = this.activeAuth ? "refresh" : "initial";
+    this.setActiveAuth(initial, reason);
+    this.authIndex = this.authPool.findIndex((entry) => entry.path === initial.path) + 1;
+  }
+
+  private rotateAuth(reason: string): boolean {
+    this.refreshAuthPool();
+    if (this.authPool.length === 0) return false;
+    for (let i = 0; i < this.authPool.length; i += 1) {
+      const next = this.authPool[this.authIndex % this.authPool.length];
+      this.authIndex += 1;
+      if (
+        next &&
+        next.path !== this.activeAuth?.path &&
+        !this.authFailures.has(this.failureKey(next))
+      ) {
+        this.setActiveAuth(next, reason);
+        this.logAuthSummary();
+        return true;
+      }
+    }
+    console.error("[fabrik-runtime] no codex auth left to rotate to");
+    this.logAuthSummary();
+    return false;
+  }
+
   async generate(args: Parameters<CodexAgent["generate"]>[0]) {
-    initAuthPool();
-    const attempts = Math.max(authPool.length, 1);
+    this.ensureActiveAuth();
+    const attempts = Math.max(this.authPool.length, 1);
     let lastError: unknown = null;
     for (let i = 0; i < attempts; i += 1) {
       try {
@@ -279,24 +327,24 @@ export class RotatingCodexAgent {
       } catch (err) {
         lastError = err;
         const message = err instanceof Error ? err.message : String(err);
-        if (!AUTH_ROTATE_PATTERN.test(message)) {
+        const kind = classifyFailure(message);
+        if (kind === "unknown") {
           throw err;
         }
-        if (activeAuth) {
-          const kind = classifyFailure(message);
-          authFailures.set(activeAuth, kind);
+        if (this.activeAuth) {
+          this.authFailures.set(this.failureKey(this.activeAuth), kind);
           recordCodexAuthFailure(
-            { authName: basename(activeAuth), kind },
-            getBlockedDetails(),
+            { authName: this.activeAuth.authName, kind },
+            this.getBlockedDetails(),
             telemetryContext(),
           );
-          if (AUTH_REFRESH_REUSED_PATTERN.test(message)) {
+          if (kind === "refresh_token_reused") {
             console.error("[fabrik-runtime] codex refresh token reused; re-auth required");
           }
           await notifyAuthFailure(
             {
-              authPath: activeAuth,
-              authName: basename(activeAuth),
+              authPath: this.activeAuth.path,
+              authName: this.activeAuth.authName,
               reason: "codex generate failed and rotation was requested",
               kind,
               message,
@@ -306,8 +354,8 @@ export class RotatingCodexAgent {
             this.onAuthFailure,
           );
         }
-        if (!rotateAuth("codex auth / usage failure")) {
-          const details = getBlockedDetails();
+        if (!this.rotateAuth("codex auth / usage failure")) {
+          const details = this.getBlockedDetails();
           recordCodexAuthExhausted(details, telemetryContext());
           writeBlockerArtifact(details);
           throw new CodexAuthBlockedError({
@@ -320,7 +368,7 @@ export class RotatingCodexAgent {
         }
       }
     }
-    const details = getBlockedDetails();
+    const details = this.getBlockedDetails();
     recordCodexAuthExhausted(details, telemetryContext());
     writeBlockerArtifact(details);
     throw new CodexAuthBlockedError({

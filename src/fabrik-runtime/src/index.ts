@@ -25,7 +25,7 @@ export {
 } from "./credential-pool";
 
 export {
-  CODEX_AUTH_HOME,
+  getCodexAuthHome,
   withCodexAuthPoolEnv,
   createCodexAgentWithPool,
   RotatingCodexAgent,

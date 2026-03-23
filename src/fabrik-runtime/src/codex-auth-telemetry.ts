@@ -22,7 +22,6 @@ type CodexAuthTelemetrySink = {
 
 const createOtelSink = (): CodexAuthTelemetrySink => {
   const meter = otel.metrics.getMeter("@dtechvision/fabrik-runtime/codex-auth");
-  const tracer = otel.trace.getTracer("@dtechvision/fabrik-runtime/codex-auth");
 
   const counters = new Map<string, ReturnType<typeof meter.createCounter>>();
   const gauges = new Map<string, ReturnType<typeof meter.createGauge>>();
@@ -53,10 +52,10 @@ const createOtelSink = (): CodexAuthTelemetrySink => {
       getGauge(name).record(value, attrs);
     },
     event(name, attrs) {
-      tracer.startActiveSpan(name, (span) => {
+      const span = otel.trace.getActiveSpan();
+      if (span) {
         span.addEvent(name, attrs);
-        span.end();
-      });
+      }
     },
   };
 };

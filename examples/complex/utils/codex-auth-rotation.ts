@@ -1,5 +1,5 @@
 export {
-  CODEX_AUTH_HOME,
+  getCodexAuthHome,
   withCodexAuthPoolEnv,
   createCodexAgentWithPool,
   RotatingCodexAgent,

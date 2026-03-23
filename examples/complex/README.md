@@ -100,7 +100,7 @@ examples/complex/
 ├── codex-auth-rotation-sample.tsx  # Minimal Codex sample using @dtechvision/fabrik-runtime/codex-auth
 ├── pi-spec-implementation.tsx    # Main workflow entry point
 └── utils/
-    └── codex-auth-rotation.ts    # Backwards-compatible re-export from @dtechvision/fabrik-runtime/codex-auth
+    └── codex-auth-rotation.ts    # Re-export from @dtechvision/fabrik-runtime/codex-auth
 ```
 
 ## Bundle Contract Guarantees

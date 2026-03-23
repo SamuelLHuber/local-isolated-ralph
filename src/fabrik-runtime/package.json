@@ -15,6 +15,7 @@
     "src/index.ts",
     "src/credential-pool.ts",
     "src/codex-auth.ts",
+    "src/codex-auth-telemetry.ts",
     "src/k8s-jobs.ts",
     "src/jj-shell.ts",
     "README.md"
