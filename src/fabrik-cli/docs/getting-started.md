@@ -14,19 +14,19 @@ The first development target is local `k3d`, because that gives us fast feedback
 
 ## Install From GitHub Releases
 
-`fabrik` v0.1.0 is distributed through GitHub Releases for this repository:
+`fabrik` v0.1.1 is distributed through GitHub Releases for this repository:
 
 - <https://github.com/SamuelLHuber/local-isolated-ralph/releases>
 
-GitHub Releases is the canonical binary install source for v0.1.0.
+GitHub Releases is the canonical binary install source for v0.1.1.
 
 To install, download the binary that matches your OS and CPU, mark it executable, move it onto your `PATH`, and verify the embedded build metadata with `fabrik version`.
 
 macOS arm64 example:
 
 ```bash
-curl -L -o fabrik-darwin-arm64 https://github.com/SamuelLHuber/local-isolated-ralph/releases/download/v0.1.0/fabrik-darwin-arm64
-curl -L -o fabrik-sha256.txt https://github.com/SamuelLHuber/local-isolated-ralph/releases/download/v0.1.0/fabrik-sha256.txt
+curl -L -o fabrik-darwin-arm64 https://github.com/SamuelLHuber/local-isolated-ralph/releases/download/v0.1.1/fabrik-darwin-arm64
+curl -L -o fabrik-sha256.txt https://github.com/SamuelLHuber/local-isolated-ralph/releases/download/v0.1.1/fabrik-sha256.txt
 shasum -a 256 -c fabrik-sha256.txt --ignore-missing
 chmod +x fabrik-darwin-arm64
 mv fabrik-darwin-arm64 /usr/local/bin/fabrik
@@ -36,8 +36,8 @@ fabrik version
 Linux x64 example:
 
 ```bash
-curl -L -o fabrik-linux-x64 https://github.com/SamuelLHuber/local-isolated-ralph/releases/download/v0.1.0/fabrik-linux-x64
-curl -L -o fabrik-sha256.txt https://github.com/SamuelLHuber/local-isolated-ralph/releases/download/v0.1.0/fabrik-sha256.txt
+curl -L -o fabrik-linux-x64 https://github.com/SamuelLHuber/local-isolated-ralph/releases/download/v0.1.1/fabrik-linux-x64
+curl -L -o fabrik-sha256.txt https://github.com/SamuelLHuber/local-isolated-ralph/releases/download/v0.1.1/fabrik-sha256.txt
 sha256sum -c fabrik-sha256.txt --ignore-missing
 chmod +x fabrik-linux-x64
 sudo mv fabrik-linux-x64 /usr/local/bin/fabrik
@@ -46,7 +46,7 @@ fabrik version
 
 Expected `fabrik version` output includes:
 
-- the release tag such as `0.1.0` or the default `dev` value for non-release builds
+- the release tag such as `0.1.1` or the default `dev` value for non-release builds
 - the Git commit SHA
 - the build timestamp in UTC
 - the compiled platform
