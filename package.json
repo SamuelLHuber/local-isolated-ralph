@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@dtechvision/fabrik-runtime": "workspace:*",
-    "smithers-orchestrator": "0.9.1"
+    "smithers-orchestrator": "0.12.3"
   },
   "devDependencies": {
     "@changesets/changelog-github": "0.6.0",
