@@ -1063,8 +1063,8 @@ func TestExecuteRenderOnlyIncludesTmpVolumeAndMount(t *testing.T) {
 	if !strings.Contains(rendered, "emptyDir:") {
 		t.Fatalf("expected rendered manifest to include emptyDir volume")
 	}
-	if !strings.Contains(rendered, "sizeLimit: 1Gi") {
-		t.Fatalf("expected rendered manifest to include emptyDir sizeLimit: 1Gi")
+	if !strings.Contains(rendered, "sizeLimit: 5Gi") {
+		t.Fatalf("expected rendered manifest to include emptyDir sizeLimit: 5Gi")
 	}
 }
 

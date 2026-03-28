@@ -446,7 +446,7 @@ func writePodTemplate(b *strings.Builder, indent string, opts Options, sharedBun
 	writeWorkspaceVolume(b, indent+"      ", opts, labels, pvcName)
 	b.WriteString(indent + "      - name: tmp\n")
 	b.WriteString(indent + "        emptyDir:\n")
-	b.WriteString(indent + "          sizeLimit: 1Gi\n")
+	b.WriteString(indent + "          sizeLimit: 5Gi\n")
 	if envSecretName != "" {
 		b.WriteString(indent + "      - name: project-env\n")
 		b.WriteString(indent + "        secret:\n")
