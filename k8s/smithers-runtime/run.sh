@@ -18,9 +18,11 @@ fi
 
 export HOME="$RUNTIME_HOME"
 export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
+export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$XDG_CACHE_HOME/ms-playwright}"
 export GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL:-$HOME/.gitconfig}"
 
-mkdir -p "$WORKDIR" "$(dirname "$DB_PATH")" "$LOG_DIR" "$PI_AGENT_DIR" "$HOME" "$XDG_CONFIG_HOME"
+mkdir -p "$WORKDIR" "$(dirname "$DB_PATH")" "$LOG_DIR" "$PI_AGENT_DIR" "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$PLAYWRIGHT_BROWSERS_PATH"
 
 ensure_js_runtime() {
   target_dir="$1"
