@@ -4,7 +4,9 @@ ARG JJ_VERSION=0.37.0
 ARG GO_VERSION=1.26.1
 ARG FABRIK_RUNTIME_VERSION=
 
-RUN apk add --no-cache bash curl git kubectl make tar
+RUN apk add --no-cache bash curl git kubectl make tar \
+  chromium nss freetype harfbuzz ca-certificates ttf-freefont \
+  && echo "System chromium installed for Playwright fallback"
 
 RUN arch="$(apk --print-arch)" \
   && case "${arch}" in \
@@ -53,6 +55,17 @@ RUN node -e 'const fs=require("fs"); const path=process.env.SMITHERS_RUNTIME_DIR
 RUN cd ${SMITHERS_RUNTIME_DIR} && npm install --no-audit --no-fund
 RUN ln -sfn ${SMITHERS_RUNTIME_DIR}/node_modules ${SMITHERS_RUNTIME_DIR}/vendor/fabrik-runtime/node_modules
 RUN chmod +x ${SMITHERS_RUNTIME_DIR}/run.sh
+
+# Pre-install Playwright browsers so workflow processes find them without network.
+# The bootstrap script exports PLAYWRIGHT_BROWSERS_PATH=$HOME/.cache/ms-playwright
+# at runtime; at build time we install into the default cache location and the
+# bootstrap mkdir + env export makes them discoverable.
+ENV PLAYWRIGHT_BROWSERS_PATH=/workspace/.cache/ms-playwright
+RUN mkdir -p ${PLAYWRIGHT_BROWSERS_PATH} \
+  && cd ${SMITHERS_RUNTIME_DIR} \
+  && npx playwright install chromium 2>&1 \
+  && ls -la ${PLAYWRIGHT_BROWSERS_PATH}/ \
+  && echo "Playwright browsers installed at ${PLAYWRIGHT_BROWSERS_PATH}"
 
 WORKDIR ${SMITHERS_WORKDIR}
 ENTRYPOINT ["/opt/smithers-runtime/run.sh"]
