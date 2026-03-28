@@ -1,35 +1,43 @@
-FROM node:20-alpine
+FROM node:20-bookworm-slim
 
 ARG JJ_VERSION=0.37.0
 ARG GO_VERSION=1.26.1
 ARG FABRIK_RUNTIME_VERSION=
 
-RUN apk add --no-cache bash curl git kubectl make tar \
-  chromium nss freetype harfbuzz ca-certificates ttf-freefont \
-  && echo "System chromium installed for Playwright fallback"
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    bash curl git make tar ca-certificates wget \
+    # Shared libraries for headless Chromium (Playwright, Puppeteer, etc.)
+    libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+    libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libgbm1 \
+    libpango-1.0-0 libcairo2 libasound2 libxshmfence1 libglib2.0-0 \
+    libxfixes3 fonts-liberation \
+  && rm -rf /var/lib/apt/lists/*
 
-RUN arch="$(apk --print-arch)" \
-  && case "${arch}" in \
-    x86_64) go_arch="amd64" ;; \
-    aarch64) go_arch="arm64" ;; \
-    *) echo "unsupported apk architecture: ${arch}" >&2; exit 1 ;; \
-  esac \
-  && wget -qO- "https://go.dev/dl/go${GO_VERSION}.linux-${go_arch}.tar.gz" \
+# kubectl
+RUN arch="$(dpkg --print-architecture)" \
+  && curl -fsSL "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/${arch}/kubectl" \
+    -o /usr/local/bin/kubectl \
+  && chmod +x /usr/local/bin/kubectl
+
+# Go
+RUN arch="$(dpkg --print-architecture)" \
+  && wget -qO- "https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz" \
     | tar -xz -C /usr/local \
   && ln -sf /usr/local/go/bin/go /usr/local/bin/go \
   && ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 
-RUN arch="$(apk --print-arch)" \
+# JJ (jujutsu)
+RUN arch="$(dpkg --print-architecture)" \
   && case "${arch}" in \
-    x86_64) jj_arch="x86_64" ;; \
-    aarch64) jj_arch="aarch64" ;; \
-    *) echo "unsupported apk architecture: ${arch}" >&2; exit 1 ;; \
+    amd64) jj_arch="x86_64" ;; \
+    arm64) jj_arch="aarch64" ;; \
+    *) echo "unsupported architecture: ${arch}" >&2; exit 1 ;; \
   esac \
   && wget -qO- "https://github.com/jj-vcs/jj/releases/download/v${JJ_VERSION}/jj-v${JJ_VERSION}-${jj_arch}-unknown-linux-musl.tar.gz" \
     | tar -xz -C /usr/local/bin ./jj
 
-RUN git --version \
-  && jj --version
+RUN git --version && jj --version
 
 # Smithers CLI requires Bun at runtime (shebang: /usr/bin/env bun).
 RUN npm install --global \
@@ -55,17 +63,6 @@ RUN node -e 'const fs=require("fs"); const path=process.env.SMITHERS_RUNTIME_DIR
 RUN cd ${SMITHERS_RUNTIME_DIR} && npm install --no-audit --no-fund
 RUN ln -sfn ${SMITHERS_RUNTIME_DIR}/node_modules ${SMITHERS_RUNTIME_DIR}/vendor/fabrik-runtime/node_modules
 RUN chmod +x ${SMITHERS_RUNTIME_DIR}/run.sh
-
-# Pre-install Playwright browsers so workflow processes find them without network.
-# The bootstrap script exports PLAYWRIGHT_BROWSERS_PATH=$HOME/.cache/ms-playwright
-# at runtime; at build time we install into the default cache location and the
-# bootstrap mkdir + env export makes them discoverable.
-ENV PLAYWRIGHT_BROWSERS_PATH=/workspace/.cache/ms-playwright
-RUN mkdir -p ${PLAYWRIGHT_BROWSERS_PATH} \
-  && cd ${SMITHERS_RUNTIME_DIR} \
-  && npx playwright install chromium 2>&1 \
-  && ls -la ${PLAYWRIGHT_BROWSERS_PATH}/ \
-  && echo "Playwright browsers installed at ${PLAYWRIGHT_BROWSERS_PATH}"
 
 WORKDIR ${SMITHERS_WORKDIR}
 ENTRYPOINT ["/opt/smithers-runtime/run.sh"]
