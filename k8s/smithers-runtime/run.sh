@@ -19,9 +19,11 @@ fi
 export HOME="$RUNTIME_HOME"
 export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
+export PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-$XDG_CACHE_HOME/ms-playwright}"
+export NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-$XDG_CACHE_HOME/npm}"
 export GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL:-$HOME/.gitconfig}"
 
-mkdir -p "$WORKDIR" "$(dirname "$DB_PATH")" "$LOG_DIR" "$PI_AGENT_DIR" "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"
+mkdir -p "$WORKDIR" "$(dirname "$DB_PATH")" "$LOG_DIR" "$PI_AGENT_DIR" "$HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$PLAYWRIGHT_BROWSERS_PATH" "$NPM_CONFIG_CACHE"
 
 ensure_js_runtime() {
   target_dir="$1"
@@ -48,7 +50,38 @@ fi
 
 export PI_CODING_AGENT_DIR="$PI_AGENT_DIR"
 
-if [ -n "${FIREWORKS_API_KEY:-}" ]; then
+if [ -n "${CODEX_LB_API_KEY:-}" ] && [ -n "${CODEX_LB_BASE_URL:-}" ]; then
+  PI_PROVIDER_NAME="${PI_PROVIDER:-codex-lb}"
+  PI_MODEL_ID="${PI_MODEL:-gpt-5-codex}"
+  cat >"${PI_AGENT_DIR}/models.json" <<EOF
+{
+  "providers": {
+    "${PI_PROVIDER_NAME}": {
+      "baseUrl": "${CODEX_LB_BASE_URL%/}/v1",
+      "api": "openai-completions",
+      "apiKey": "CODEX_LB_API_KEY",
+      "authHeader": true,
+      "models": [
+        {
+          "id": "${PI_MODEL_ID}",
+          "name": "${PI_MODEL_ID} (codex-lb)",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 272000,
+          "maxTokens": 32768,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        }
+      ]
+    }
+  }
+}
+EOF
+elif [ -n "${FIREWORKS_API_KEY:-}" ]; then
   cat >"${PI_AGENT_DIR}/models.json" <<'EOF'
 {
   "providers": {
