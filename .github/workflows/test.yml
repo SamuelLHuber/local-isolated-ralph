@@ -9,29 +9,17 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    
+
     steps:
       - uses: actions/checkout@v6
-      
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
-      
+          bun-version: "1.3.5"
+
       - name: Install dependencies
-        run: bun install
-      
-      - name: Run workflow compile tests
-        run: bun test ./src/fabrik/__tests__/workflow-compile.test.ts
-      
-      - name: Run markdown spec tests
-        run: bun test ./src/fabrik/__tests__/markdown-spec.test.ts
-      
-      - name: Run learning system tests
-        run: bun test ./src/fabrik/__tests__/learning.test.ts
-      
-      - name: Verify build
-        run: bun run build
-      
-      - name: Test CLI help
-        run: ./dist/fabrik --help
+        run: bun install --frozen-lockfile
+
+      - name: Run fabrik-runtime unit tests
+        run: bun run --filter @dtechvision/fabrik-runtime test
