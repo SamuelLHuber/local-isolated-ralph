@@ -79,3 +79,21 @@ scripts/k3d/cluster.sh delete dev-multi
 
 If you omit the cluster name, `single` defaults to `dev-single` and `multi` defaults to `dev-multi`.
 The default registry ports are `5111` for `single` and `5112` for `multi`, so both example clusters can run at the same time.
+
+## Codex Credentials Sync
+
+Use `scripts/cluster-codex-update-credentials.sh` to sync named local Codex auth profiles (`~/.codex/*.auth.json`) into the in-cluster credentials secret (`fabrik-system/fabrik-credentials` by default).
+
+```bash
+# Preview without changing the cluster
+./scripts/cluster-codex-update-credentials.sh --kubeconfig ~/.kube/<cluster> --dry-run
+
+# Apply update
+./scripts/cluster-codex-update-credentials.sh --kubeconfig ~/.kube/<cluster>
+```
+
+Optional overrides:
+
+- `CODEX_DIR` (default: `~/.codex`)
+- `FABRIK_CREDENTIALS_SECRET` (default: `fabrik-credentials`)
+- `FABRIK_CREDENTIALS_NS` (default: `fabrik-system`)
