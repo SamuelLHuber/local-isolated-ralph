@@ -4,7 +4,7 @@
 - `050-k3s-infrastructure` - Terraform/OpenTofu + NixOS provisioning for k3s clusters (Hetzner-first).
 - `051-k3s-orchestrator` - K8s-native execution model for Fabrik Jobs/CronJobs, storage, secrets, observability.
 - `052-k3s-orchestrator-dashboard` - Web + TUI dashboards that talk directly to the K8s API.
-- `054-cron-monitoring` - Missed-run detection and duration/health alerts for CronJobs.
+- `054-run-health-controller` - Unified, stateless health supervision for Fabrik runs with automated triage, healing, and full OTel observability (replaces cron-monitoring).
 - `055-run-analytics` - Collect/run analytics to improve specs, resources, and success rates.
 - `056-cost-management` - Infra + LLM cost tracking, estimation, and budget alerts.
 - `057-k3s-local-testing` - k3d-based local/CI k3s clusters for repeatable tests.
