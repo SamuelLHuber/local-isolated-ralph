@@ -28,6 +28,20 @@ where run_id = ?
 order by started_at_ms;
 ```
 
+## Active progress check (stuck vs slow)
+
+```sql
+select node_id, iteration, attempt, state, started_at_ms, finished_at_ms, error_json
+from _smithers_attempts
+where run_id = ?
+order by started_at_ms desc
+limit 10;
+```
+
+Interpretation:
+- iteration increasing over time => healthy progress (possibly slow)
+- same node+iteration repeated with failures => retry loop / potential stuck state
+
 ## Failure attempts for one run
 
 ```sql

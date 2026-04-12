@@ -4,7 +4,7 @@ description: Investigate and explain Smithers workflow runs on Fabrik Kubernetes
 compatibility: Requires kubectl access to the target cluster/namespace, permission to read Jobs/Pods/PVCs/logs and exec temporary inspector Pods, plus git and either sqlite3 or python3 for DB queries.
 metadata:
   author: fabrik
-  version: "1.0.0"
+  version: "1.1.0"
   category: operations
 ---
 
@@ -57,6 +57,21 @@ If inputs are incomplete, ask once, then proceed with best-effort discovery.
   - terminal error
 - If there are multiple pods from retries, compare both quickly.
 
+### 2b) Handle pod restarts/replacements explicitly
+
+If `kubectl get pods` shows unexpected pod names for the run or `RESTARTS > 0`:
+
+1. Inspect termination/restart evidence on the current pod:
+   - `kubectl describe pod <NEW_POD>` and review `State`, `Last State`, and `Events`.
+2. If previous pod/container logs are gone, pivot to durable evidence:
+   - Smithers DB (`_smithers_attempts`, `_smithers_events`) for full attempt history
+   - workspace PVC (`/workspace/.smithers/state.db`, execution logs)
+   - remote VCS branch/bookmark state (commits may already be pushed)
+3. Classify likely restart cause and include in conclusion:
+   - `OOMKilled` → memory limits too low
+   - image pull failures → verify image digest/tag exists and is accessible
+   - node pressure/eviction → inspect node resource pressure and scheduling events
+
 ### 3) Inspect workspace PVC
 
 Mount the run PVC into a short-lived inspector pod.
@@ -100,6 +115,36 @@ If available evidence is partial, explicitly state Loki would add:
 - cross-pod/time-window log continuity
 - richer search across runs
 
+### 7) Active run monitoring (stuck vs slow)
+
+Use this when the run is still in progress and the user asks whether it is healthy.
+
+1. Check iteration advancement in `_smithers_attempts`:
+   - if iteration increases over time, it is usually progressing (even if slow)
+   - if same node+iteration keeps retrying, it may be stuck in a retry loop
+2. Compare elapsed time to rough expectations (model-dependent):
+   - discover: ~1–3 min
+   - implement (Codex/lb): ~3–10 min
+   - implement (Pi/Fireworks): ~30–60 min
+   - validate: ~1–2 min
+   - review (Codex/lb): ~2–5 min
+   - review (Pi/Fireworks): ~15–40 min
+3. Stuck indicators to call out explicitly:
+   - same node running for >2× expected duration
+   - repeated failed attempts on same node/iteration
+   - `reviewApproved=false` and no new commits after review attempts
+
+### 8) Agent configuration debugging (early discover failures)
+
+When runs fail immediately in `discover` with provider/init errors (for example unknown provider):
+
+- Inspect pod env for agent selection and provider vars:
+  - `AGENT_TYPE`, `PI_PROVIDER`, `PI_MODEL`, `PI_CODING_AGENT_DIR`, `CODEX_*`
+- Verify model/provider config files exist in the runtime filesystem:
+  - `ls $PI_CODING_AGENT_DIR/models.json`
+- For Pi + Fireworks, verify provider entry exists and base URL/model IDs are valid.
+- For Codex agent, verify required API key env vars are present and endpoint is reachable.
+
 ---
 
 ## Output format for users
@@ -116,6 +161,32 @@ Return concise sections:
 Always separate observed facts from inferences.
 
 ---
+
+## Mergable convergence criteria (optional audit)
+
+Use this section when the user asks whether output is truly merge-ready (not just “run completed”).
+
+A task is converged only when all required gates pass:
+
+| Gate | How to Verify | Failure Action |
+|---|---|---|
+| Tests pass | project test command exits 0 (for JS/TS often `bun run test`) | Block merge, fix tests |
+| Typecheck clean | typecheck command exits 0 (often `bun run typecheck`) | Block merge, fix type errors |
+| Lint clean | lint command exits 0 (often `bun run lint`) | Block merge, fix lint errors |
+| No TODO/FIXME left in delivered diff | scan diff for TODO/FIXME markers | Block merge or explicitly resolve |
+| Review approved | review output indicates approval | Continue review loop |
+| Validation passed | validation node/result is success | Continue fix→validate loop |
+| Branch/bookmark pushed | remote ref exists at expected commit | Push/sync before claiming done |
+
+If repeated iterations fail to converge:
+1. escalate to human review (for example after ~10 iterations),
+2. reduce scope to a smaller mergeable slice,
+3. attach full diagnostic bundle (logs + DB + workspace status).
+
+Optional mergeability conflict precheck in workspace repo:
+- `git fetch origin main`
+- `git merge-tree $(git merge-base HEAD origin/main) origin/main HEAD`
+- treat conflicts as not merge-ready.
 
 ## Guardrails
 
