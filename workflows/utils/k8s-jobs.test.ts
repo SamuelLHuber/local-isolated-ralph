@@ -8,7 +8,7 @@ test("verification jobs receive required parent environment", () => {
     namespace: "fabrik-runs",
     serviceAccountName: "fabrik-runner-demo",
     pvcName: "data-demo",
-    nodeName: "hoth",
+    nodeName: "node-a",
     workspacePath: "/workspace/workdir",
     commands: ["echo ok"],
   });
@@ -19,7 +19,7 @@ test("verification jobs receive required parent environment", () => {
       { name: "FABRIK_RUN_IMAGE", value: "ghcr.io/example/fabrik@sha256:abc123" },
       { name: "KUBERNETES_NAMESPACE", value: "fabrik-runs" },
       { name: "FABRIK_WORKSPACE_PVC", value: "data-demo" },
-      { name: "KUBERNETES_NODE_NAME", value: "hoth" },
+      { name: "KUBERNETES_NODE_NAME", value: "node-a" },
     ]),
   );
 });

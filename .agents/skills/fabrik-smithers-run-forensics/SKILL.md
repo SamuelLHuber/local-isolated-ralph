@@ -27,7 +27,7 @@ Goal: produce a high-confidence run narrative from **four sources of truth**:
 
 ## Required inputs to ask for (if missing)
 
-- kubeconfig path (example: `~/.kube/hoth`)
+- kubeconfig path (example: `~/.kube/<cluster>`)
 - namespace (default usually `fabrik-runs`)
 - run id or job name prefix (example: `onefootball-codefabrik-20260411-1725`)
 - expected remote branch/bookmark (if user wants publish verification)

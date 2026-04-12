@@ -63,7 +63,7 @@ Optional runtime inputs:
 - `SMITHERS_JJ_BOOKMARK` via `--jj-bookmark`
 - `MAX_TODO_ITEMS` in the env file if you want the planner to consider more than the default single-item selection window
 
-Operational learnings from Hoth:
+Operational learnings from production clusters:
 
 - dispatch-time workflow and manifest fixes only require a new `fabrik run` dispatch; do not rebuild the Smithers image unless runtime contents changed
 - verifier gates should stay deterministic and stable; exploratory cluster and CLI-against-cluster checks belong in implementation/review as supporting evidence

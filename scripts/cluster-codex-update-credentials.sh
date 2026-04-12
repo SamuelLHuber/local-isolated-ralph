@@ -2,9 +2,9 @@
 # Update the Codex auth pool in a Kubernetes cluster from local ~/.codex profiles.
 #
 # Usage:
-#   KUBECONFIG=~/.kube/hoth ./scripts/cluster-codex-update-credentials.sh
-#   ./scripts/cluster-codex-update-credentials.sh --kubeconfig ~/.kube/hoth
-#   ./scripts/cluster-codex-update-credentials.sh --kubeconfig ~/.kube/hoth --dry-run
+#   KUBECONFIG=~/.kube/<cluster> ./scripts/cluster-codex-update-credentials.sh
+#   ./scripts/cluster-codex-update-credentials.sh --kubeconfig ~/.kube/<cluster>
+#   ./scripts/cluster-codex-update-credentials.sh --kubeconfig ~/.kube/<cluster> --dry-run
 #
 # Reads all *.auth.json files from ~/.codex (or CODEX_DIR) and upserts them
 # into the fabrik-credentials secret. Only named pool files are synced —
@@ -45,8 +45,8 @@ done
 
 if [[ -z "$KUBE" ]]; then
   echo "error: KUBECONFIG not set" >&2
-  echo "usage: KUBECONFIG=~/.kube/hoth $0" >&2
-  echo "       $0 --kubeconfig ~/.kube/hoth" >&2
+  echo "usage: KUBECONFIG=~/.kube/<cluster> $0" >&2
+  echo "       $0 --kubeconfig ~/.kube/<cluster>" >&2
   exit 1
 fi
 

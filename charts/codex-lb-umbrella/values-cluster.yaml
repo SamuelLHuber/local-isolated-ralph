@@ -1,0 +1,14 @@
+# Example cluster overlay (non-secret)
+#
+# Replace hostnames and parentRefs for your target cluster.
+
+codex-lb:
+  replicaCount: 1
+
+  gatewayApi:
+    enabled: true
+    hostnames:
+      - ai.example.internal
+    parentRefs:
+      - name: cluster-gateway
+        namespace: istio-system

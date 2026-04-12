@@ -627,7 +627,7 @@ Workflow-backed validation is now cluster-native.
 This means:
 
 - local development still uses `k3d` as the fast cluster proof
-- cloud runs on `k3s`/`hoth` do not need nested `k3d`
+- cloud runs on `k3s` clusters do not need nested `k3d`
 - workflow validation should fail if a required verifier Job cannot be created or if its required checks do not pass
 
 ## Implementation Guidance

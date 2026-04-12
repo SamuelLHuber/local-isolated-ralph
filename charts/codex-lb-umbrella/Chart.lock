@@ -1,0 +1,6 @@
+dependencies:
+- name: codex-lb
+  repository: oci://ghcr.io/soju06/charts
+  version: 1.12.0
+digest: sha256:5cb8325a0884ecf9caf44f42c5f3049e2ebd924cdfcb71e1bfaf39423b42b5c7
+generated: "2026-04-13T01:09:25.473546+02:00"

@@ -28,3 +28,10 @@ k8s/job-sync/*
 it-k3d-*/
 
 .pi/browser/
+
+# local nested checkouts (e.g. upstream repos used for reference only)
+external/
+
+# helm dependency artifacts and local secret overlays
+charts/*/charts/
+charts/*/*.secrets.yaml

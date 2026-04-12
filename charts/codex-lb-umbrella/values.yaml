@@ -1,0 +1,28 @@
+# Canonical non-secret defaults for codex-lb.
+#
+# Keep this file free of secrets.
+# Secret material (db password, bootstrap token, encryption key) must be supplied
+# via a separate untracked values file or external secret management.
+
+codex-lb:
+  replicaCount: 1
+
+  config:
+    databaseMigrateOnStartup: true
+
+  migration:
+    enabled: false
+    schemaGate:
+      enabled: false
+
+  gatewayApi:
+    enabled: false
+
+  postgresql:
+    auth:
+      # Non-secret default placeholder only; override in secret values file.
+      password: ""
+
+  auth:
+    # Keep empty in git.
+    dashboardBootstrapToken: ""

@@ -1,0 +1,10 @@
+apiVersion: v2
+name: codex-lb-umbrella
+description: Fabrik-managed umbrella chart for codex-lb
+version: 0.1.0
+type: application
+
+dependencies:
+  - name: codex-lb
+    version: 1.12.0
+    repository: oci://ghcr.io/soju06/charts
