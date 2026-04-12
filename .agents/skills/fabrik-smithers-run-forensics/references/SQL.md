@@ -28,6 +28,20 @@ where run_id = ?
 order by started_at_ms;
 ```
 
+## Active progress check (stuck vs slow)
+
+```sql
+select node_id, iteration, attempt, state, started_at_ms, finished_at_ms, error_json
+from _smithers_attempts
+where run_id = ?
+order by started_at_ms desc
+limit 10;
+```
+
+Interpretation:
+- iteration increasing over time => healthy progress (possibly slow)
+- same node+iteration repeated with failures => retry loop / potential stuck state
+
 ## Failure attempts for one run
 
 ```sql
@@ -79,4 +93,12 @@ for row in cur.execute(
         except Exception:
             pass
     print(d)
+```
+
+## Alternative: Using bun:sqlite (available in smithers image)
+
+When sqlite3/python is unavailable, use bun runtime:
+
+```bash
+kubectl exec pod/<POD> -c fabrik -- sh -lc 'bun -e '\''import { Database } from "bun:sqlite"; const db=new Database("/workspace/.smithers/state.db", {readonly:true}); const rows=db.query("select node_id, iteration, attempt, state from _smithers_attempts where run_id=? order by started_at_ms desc limit 10").all("<run>"); for (const r of rows) console.log(JSON.stringify(r));'\'''
 ```
