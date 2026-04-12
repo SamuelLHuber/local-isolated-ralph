@@ -80,3 +80,13 @@ for row in cur.execute(
             pass
     print(d)
 ```
+
+## Alternative: Using bun:sqlite (available in smithers image)
+
+When sqlite3/python unavailable, use bun runtime:
+
+```bash
+kubectl exec pod/<POD> -c fabrik -- sh -lc 'bun -e '\''import { Database } from "bun:sqlite"; const db=new Database("/workspace/.smithers/state.db",
+{readonly:true}); const rows=db.query("select node_id, iteration, attempt, state from _smithers_attempts where run_id=? order by started_at_ms desc limit
+10").all("<run>"); for (const r of rows) console.log(JSON.stringify(r));'\'''
+```

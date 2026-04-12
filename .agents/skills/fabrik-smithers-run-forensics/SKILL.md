@@ -127,6 +127,82 @@ Always separate observed facts from inferences.
 
 ---
 
+## Mergable Convergence Criteria
+
+Work is only considered "done" when it is **mergable** — ready for PR and merge to main. The workflow enforces this through explicit gates that block iteration completion until production-readiness is achieved.
+
+### The Convergence Flow
+
+```
+implement → validate → review
+                          ↓
+              ┌─ NO ─→ fix (if validation failed)
+              ↓
+        slice approved? (review + validation pass)
+                          ↓
+              ┌─ NO ─→ mergable check fails
+              ↓
+        mergable? (lint clean, typecheck clean, no TODOs in diff)
+                          ↓
+              ┌─ NO ─→ mergableFix task (mandatory cleanup)
+              ↓
+         commit → push → discover next
+```
+
+### Mergable Gates (Enforced by Workflow)
+
+| Gate | Verification Command | Failure Action |
+|------|------------------------|----------------|
+| **TypeCheck clean** | `bun run typecheck` | Block commit, trigger mergableFix |
+| **Lint clean** | `bun run lint` | Block commit, trigger mergableFix |
+| **No TODOs in diff** | `git diff` → grep for `TODO\|FIXME\|XXX\|HACK` | Block commit, trigger mergableFix |
+| **Review approved** | `review.approved === true` | Loop review→fix→implement |
+| **Validation passed** | `validation.success === true` | Loop fix→implement→validate |
+
+Key principle: `sliceApproved` (review + validation) is necessary but **not sufficient**. The code must also be **mergable** (no lint/type/TODO debt).
+
+### Investigating Convergence Failures
+
+When runs iterate many times without completing:
+
+1. **Check iteration counts by node:**
+   ```sql
+   SELECT node_id, COUNT(*) as attempts, MAX(iteration) as max_iter
+   FROM _smithers_attempts
+   WHERE run_id = ?
+   GROUP BY node_id
+   ORDER BY attempts DESC;
+   ```
+   - High `fix` or `mergableFix` counts → convergence struggle
+   - High `review` with `approved=false` → review rejection loop
+
+2. **Check for mergable blockers in logs:**
+   Look for: `[codefabrik] Slice approved but NOT mergable:`
+   
+3. **Verify in workspace:**
+   ```bash
+   # In PVC inspector pod
+   cd /workspace/repo
+   bun run typecheck 2>&1 | head -20
+   bun run lint 2>&1 | head -20
+   git diff | grep -i "todo\|fixme" | head -10
+   ```
+
+4. **Common convergence blockers:**
+   - Type errors in changed files (often from incomplete refactors)
+   - Lint violations (unused imports, formatting)
+   - TODOs left as "reminders" instead of being resolved
+   - Test failures that validation catches but fix doesn't resolve
+
+### Escalation Thresholds
+
+If a ticket exceeds these iteration counts, suggest human review:
+- `fix` > 8 attempts: Likely fundamental issue
+- `mergableFix` > 3 attempts: Code quality discipline problem
+- `review` > 5 attempts with `approved=false`: Specification mismatch
+
+---
+
 ## Quick references
 
 - For step-by-step command skeletons: `references/COMMANDS.md`
