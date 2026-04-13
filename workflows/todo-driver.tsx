@@ -189,6 +189,9 @@ function piReadAt(workdir: string): PiAgent {
     systemPrompt: SYSTEM_PROMPT,
     cwd: workdir,
     env: PI_ENV,
+    // Timeouts: hard limit 4 hours, idle limit 5 minutes (catches hung API calls)
+    timeoutMs: 14_400_000,
+    idleTimeoutMs: 300_000,
   });
 }
 
@@ -203,6 +206,9 @@ function piWriteAt(workdir: string): PiAgent {
     systemPrompt: SYSTEM_PROMPT,
     cwd: workdir,
     env: PI_ENV,
+    // Timeouts: hard limit 4 hours, idle limit 5 minutes (catches hung API calls)
+    timeoutMs: 14_400_000,
+    idleTimeoutMs: 300_000,
   });
 }
 
@@ -217,6 +223,9 @@ function piReviewAt(workdir: string): PiAgent {
     systemPrompt: REVIEW_SYSTEM_PROMPT,
     cwd: workdir,
     env: PI_ENV,
+    // Timeouts: hard limit 4 hours, idle limit 5 minutes (catches hung API calls)
+    timeoutMs: 14_400_000,
+    idleTimeoutMs: 300_000,
   });
 }
 
